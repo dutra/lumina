@@ -14,6 +14,11 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      # JAX keeps every compiled function on disk, so a later run loads it instead of compiling it again.
+      JAX_COMPILATION_CACHE_DIR: ${{ github.workspace }}/.jax_cache
+      JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
+      JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "-1"
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +31,33 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e . pytest
+          pip install -e . pytest pytest-xdist
+
+      # Compiled code is specific to the CPU, so the key carries the runner's CPU flags.
+      - name: Key of the compilation cache
+        id: jax-cache
+        run: echo "key=jax-${{ runner.os }}-$(grep -m1 '^flags' /proc/cpuinfo | sha256sum | cut -c1-16)-${{ hashFiles('pyproject.toml') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the compilation cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .jax_cache
+          key: ${{ steps.jax-cache.outputs.key }}-${{ github.run_id }}
+          restore-keys: ${{ steps.jax-cache.outputs.key }}-
 
       - name: Run tests
-        run: pytest -m "not slow" -q
+        run: pytest -m "not slow" -q -n auto
+
+      # Entries of code that no longer exists are never removed, so a cache past 2 GB starts again from empty.
+      - name: Bound the compilation cache
+        if: github.ref == 'refs/heads/main'
+        run: |
+          if [ "$(du -sm .jax_cache | cut -f1)" -gt 2000 ]; then rm -rf .jax_cache; mkdir .jax_cache; fi
+
+      # Only main saves, so pull requests read main's cache and do not fill the repository's quota.
+      - name: Save the compilation cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: .jax_cache
+          key: ${{ steps.jax-cache.outputs.key }}-${{ github.run_id }}

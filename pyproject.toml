@@ -41,5 +41,5 @@ kappaccino = ["plotting/style.mplstyle", "data/*.csv", "data/*.json"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 markers = [
-    "slow: validation tests that run inference or require a full JAX runtime, and wall-clock timing tests",
+    "slow: validation tests that run inference or require a full JAX runtime, end-to-end pipeline runs, and wall-clock timing tests",
 ]
