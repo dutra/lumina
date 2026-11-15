@@ -12,8 +12,18 @@ concurrency:
 
 jobs:
   pytest:
+    name: pytest (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: fast
+            markers: "not slow"
+          # The wall-clock timing tests depend on the machine, so they stay off the shared runners.
+          - name: slow
+            markers: "slow and not timing"
     env:
       # JAX keeps every compiled function on disk, so a later run loads it instead of compiling it again.
       JAX_COMPILATION_CACHE_DIR: ${{ github.workspace }}/.jax_cache
@@ -36,7 +46,7 @@ jobs:
       # Compiled code is specific to the CPU, so the key carries the runner's CPU flags.
       - name: Key of the compilation cache
         id: jax-cache
-        run: echo "key=jax-${{ runner.os }}-$(grep -m1 '^flags' /proc/cpuinfo | sha256sum | cut -c1-16)-${{ hashFiles('pyproject.toml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=jax-${{ matrix.name }}-${{ runner.os }}-$(grep -m1 '^flags' /proc/cpuinfo | sha256sum | cut -c1-16)-${{ hashFiles('pyproject.toml') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore the compilation cache
         uses: actions/cache/restore@v4
@@ -46,7 +56,7 @@ jobs:
           restore-keys: ${{ steps.jax-cache.outputs.key }}-
 
       - name: Run tests
-        run: pytest -m "not slow" -q -n auto
+        run: pytest -m "${{ matrix.markers }}" -q -n auto
 
       # Entries of code that no longer exists are never removed, so a cache past 2 GB starts again from empty.
       - name: Bound the compilation cache
