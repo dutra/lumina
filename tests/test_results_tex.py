@@ -157,3 +157,20 @@ def test_truth_magnification_macros(tmp_path):
     # Without a field the tables carry the parametric lens only, which is then the model of each draw.
     pd.read_csv(tmp_path / 'tables/magnification_scatter.csv').query('model == "parametric"').to_csv(tmp_path / 'tables/magnification_scatter.csv', index=False)
     assert r'\HeraMagnificationScatterMuTenPercent}{39}' in write_run_results(tmp_path, name='hera').read_text()
+
+
+def test_error_budget_adds_the_scales_in_quadrature_per_draw(tmp_path):
+    final = tmp_path / 'final'
+    (final / 'artifacts').mkdir(parents=True)
+    (tmp_path / 'init/artifacts').mkdir(parents=True)
+    (final / 'artifacts/summary.json').write_text('{}')
+    assert r'\HeraSigmaTotal}{\textnormal{not available}}' in write_run_results(final, name='hera').read_text()
+    names = ['images.sigma_grf', 'images.sigma_gp', 'images.sigma_meas']
+    (tmp_path / 'init/artifacts/state.json').write_text(json.dumps({'parameter_specs': [{'name': n} for n in names]}))
+    save_arrays(final / 'artifacts/posterior.h5', physical=np.array([[.3, .4, 0.]] * 3 + [[.4, .3, 0.]] * 2))
+    text = write_run_results(final, name='hera').read_text()
+    assert r'\HeraSigmaTotal}{0.500}' in text and r'\HeraSigmaTotalInterval}{{0.500_{-0.000}^{+0.000}}}' in text
+    assert r'\HeraGRFVariancePercent}{36}' in text
+    (tmp_path / 'init/artifacts/state.json').write_text(json.dumps({'parameter_specs': [{'name': 'x'}, {'name': names[1]}, {'name': names[2]}]}))
+    text = write_run_results(final, name='hera').read_text()
+    assert r'\HeraSigmaTotal}{0.400}' in text and r'\HeraGRFVariancePercent}{\textnormal{not available}}' in text

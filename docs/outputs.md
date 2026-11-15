@@ -193,6 +193,10 @@ lens without the GRF), written for math mode, e.g. `$\HeraRMS''$`. The image cou
 recover it; its model position, residual and magnification are medians over the draws that do. Extra images are
 those found in at least half the draws.
 
+`\HeraSigmaTotal` is the quadrature sum of `\HeraSigmaGRF`, `\HeraSigmaGP` and `\HeraSigmaMeas` taken per posterior draw
+(arcsec, per coordinate, for an image at `\HeraGRFReferenceRedshift`), and `\HeraGRFVariancePercent` the share of the GRF in
+that variance; both are medians over the draws with `...Interval` macros for the 16–84% range.
+
 Simulated clusters with a truth map also get the truth recovery within the image footprint: `\HeraFootprintMassRatio`
 and `\HeraFootprintKappaRatio` (mean model/true ratio of the enclosed mass and of the azimuthally averaged
 convergence, uniform in log R from `\HeraFootprintInnerArcsec` to `\HeraFootprintOuterArcsec`, the outermost
