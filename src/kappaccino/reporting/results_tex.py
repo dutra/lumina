@@ -220,6 +220,36 @@ def truth_magnification_metrics(final):
     return result
 
 
+def error_budget_metrics(final):
+    """Total positional scatter per coordinate and the share of its variance in the GRF, from the saved posterior.
+
+    ``SigmaTotal`` (arcsec) is the quadrature sum of ``images.sigma_grf``, ``images.sigma_gp`` and
+    ``images.sigma_meas`` of each posterior draw (those the run samples), for an image at the GRF reference redshift;
+    ``GRFVariancePercent`` is ``sigma_grf^2`` over that sum of squares, in per cent.  Both are the median over the draws,
+    with ``...Interval`` the 16-84% range for math mode; "not available" without ``final/artifacts/posterior.h5``,
+    ``init/artifacts/state.json`` or any of the three scales (the share also needs ``sigma_grf``)."""
+    import numpy as np
+    result = {key: number(None) for key in ('SigmaTotal', 'SigmaTotalInterval', 'GRFVariancePercent', 'GRFVariancePercentInterval')}
+    posterior_path, state_path = final / 'artifacts/posterior.h5', final.parent / 'init/artifacts/state.json'
+    if not posterior_path.exists() or not state_path.exists():
+        return result
+    index = {spec['name']: i for i, spec in enumerate(_read(state_path).get('parameter_specs', []))}
+    physical = np.asarray(load_arrays(posterior_path)['physical'], float)
+    squares = {name: physical[:, index['images.' + name]]**2 for name in ('sigma_grf', 'sigma_gp', 'sigma_meas') if 'images.' + name in index}
+    if not squares:
+        return result
+    total = sum(squares.values())
+
+    def spread(prefix, values, decimals):
+        low, median, high = np.percentile(values, [16, 50, 84])
+        result[prefix] = number(median, decimals)
+        result[prefix + 'Interval'] = interval(median, median - low, high - median, decimals)
+    spread('SigmaTotal', np.sqrt(total), 3)
+    if 'sigma_grf' in squares:
+        spread('GRFVariancePercent', 100 * squares['sigma_grf'] / total, 0)
+    return result
+
+
 def count_metrics(suffix, values, decimals=0):
     """``<suffix>`` (the median over draws) and ``<suffix>Interval`` (median with its 16-84% range, for math mode)
     from ``{"median", "q16", "q84"}``; "not available" without it."""
@@ -288,7 +318,8 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
     ``PositionCoverageTwoSigmaPercent`` and ``NPositionCoverage``); likelihood-noise posterior
     medians and intervals (``SigmaGP``, ``SigmaMeas``,
     ``EllGP``, ``SigmaGRF``, ``LambdaB``;
-    angular scales in arcsec); convergence (``MaxRhat``, ``MinESS``); run time
+    angular scales in arcsec), their quadrature sum per draw ``SigmaTotal`` and the
+    share of the GRF in its variance ``GRFVariancePercent`` (``error_budget_metrics``); convergence (``MaxRhat``, ``MinESS``); run time
     (``Runtime``, ``SamplingRuntime`` as h/min/s, plus ``...Seconds`` and
     ``...Hours``); and ``ApertureMassRatio...`` macros when the aperture
     histogram exists; and, for a simulated cluster, the magnification against
@@ -376,6 +407,7 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
         if parameter in parameters.index and {'p16', 'p84'}.issubset(parameters.columns):
             row = parameters.loc[parameter]
             metrics[suffix+'Interval'] = interval(value, value-row.p16, row.p84-value, decimals)
+    metrics.update(error_budget_metrics(final))
     metrics['GRFReferenceRedshift'] = number(cfg.get('likelihood', {}).get('gp_reference_redshift'), 1)
     rms_path = final / 'tables/posterior_image_rms.csv'
     metrics['NPosteriorRMSDraws'] = number(None, 0)
@@ -425,6 +457,8 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
                    '(after Raney et al. 2020); SourceAreaRatioMu...: median over draws of the source-plane area magnified above 3, 10 or 30, over the true area.',
                    'Both at the truth-map source redshift; no prefix is parametric plus the GRF realization of each draw, LensOnly the same draws without the GRF.',
                    'GP and GRF parameter macros are posterior medians; angular scales are in arcseconds.',
+                   'SigmaTotal: quadrature sum of SigmaGRF, SigmaGP and SigmaMeas per posterior draw, per coordinate, for an image at GRFReferenceRedshift;',
+                   'GRFVariancePercent: share of SigmaGRF^2 in that sum of squares; both medians over the draws with ...Interval the 16-84% range.',
                    'ApertureMassRatio macros, when present: galaxy-distribution median and quartiles, not posterior intervals.',
                    'Apertures use twice the estimated effective radius; normalization is Re at F160W=20 in kpc.',
                    'ImageFootprint means galaxy centers inside the observed-image convex hull. Score is -log10(IQR*abs(median-1)).',
