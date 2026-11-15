@@ -24,7 +24,7 @@ likelihood:
   lambda_b_prior: lognormal(20.0, 1.0) in [0.5, 80.0]
   lambda_b_start_arcsec: 20.0
   # The rms deflection error of the substructure at z_ref: 0.08" median, 0.05-0.13" at 1 sigma.
-  sigma_grf_prior: lognormal(0.08, 0.5) in [1.0e-4, 0.5]
+  sigma_grf_prior: lognormal(0.08, 0.5) in [1.0e-4, 1.0]
   sigma_grf_start_arcsec: 0.08
   # The image-plane GP's correlation length near the measurement scale: fitted free it went to 4.4" and did the mass
   # field's work.
