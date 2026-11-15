@@ -42,4 +42,5 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 markers = [
     "slow: validation tests that run inference or require a full JAX runtime, end-to-end pipeline runs, and wall-clock timing tests",
+    "timing: wall-clock timing tests, which depend on the machine and are not run on shared runners",
 ]
