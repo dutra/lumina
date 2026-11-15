@@ -144,11 +144,19 @@ def equation(fig, y, pieces, size=11, pad=.016):
 
 
 def bracket(fig, extent, y, color, text, centre=None):
-    """Bracket under one piece of the equation with what it means; returns where an arrow can leave the text."""
+    """Bracket under one piece of the equation with what it means: one string, or (text, colour) pieces set on one line."""
     x0, x1 = extent
     fig.add_artist(Line2D([x0, x0, x1, x1], [y + .007, y, y, y + .007], color=color, lw=.9, transform=fig.transFigure))
     centre = .5 * (x0 + x1) if centre is None else centre
-    fig.text(centre, y - .011, text, color=color, fontsize=8.5, ha="center", va="top")
+    pieces = [(text, color)] if isinstance(text, str) else text
+    texts = [fig.text(0, y - .034, piece, color=shade, fontsize=8.5, ha="left", va="baseline") for piece, shade in pieces]
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    widths = [t.get_window_extent(renderer).width / fig.bbox.width for t in texts]
+    x = centre - .5 * (sum(widths) + .005 * (len(widths) - 1))
+    for label, width in zip(texts, widths):
+        label.set_x(x)
+        x += width + .005
 
 
 def draw_matrices(fig, boxes, color_box, toy):
@@ -212,7 +220,7 @@ def main():
         (r"$\times$", INK),
         (r"$\mathcal{N}\!\left(\boldsymbol{F}_i(\boldsymbol{\theta}_i^{\rm true});\,\mathbf{C}_{{\rm model},i}\right)\,\left|\det\mathbf{A}_i\right|$", MODEL)])
     y_bracket = y_eq - .034
-    bracket(fig, extents[1], y_bracket, SHADE_INK, "marginalized")
+    bracket(fig, extents[1], y_bracket, SHADE_INK, [("marginalized over", SHADE_INK), (r"$\boldsymbol{\theta}_i^{\rm true}$", SHADE_INK)])
     bracket(fig, extents[2], y_bracket, MEAS, "measurement")
     bracket(fig, extents[4], y_bracket, MODEL, "lens model")
     # Between the planes: one deflection per image, and the change of area.
