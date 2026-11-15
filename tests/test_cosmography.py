@@ -135,6 +135,7 @@ def test_cluster_cosmography_profiles(folder, om0, monkeypatch):
     assert load_run(folder, ["fast", "cosmography"], ["paths.run_name=t"]).validate().likelihood.gp_blocks == "system"
 
 
+@pytest.mark.slow                       # full pipeline run: about two minutes
 def test_cosmography_end_to_end(synthetic_config):
     """Both stages with Om0 and w0 sampled: the search, NUTS, the outputs and resume."""
     config = replace(cosmography(synthetic_config), runtime=RuntimeConfig(seed=3, chains=2, nuts_chain_method="sequential", resume=True),

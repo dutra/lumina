@@ -22,6 +22,7 @@ def _fast(config):
                    reporting=ReportingConfig(draws=2))
 
 
+@pytest.mark.slow                       # full pipeline run: about two minutes
 def test_single_stage_end_to_end(synthetic_config, monkeypatch):
     """NUTS smoke test: two chains of a few draws through both stages, the saved artifacts, the adaptation
     diagnostics and resume."""
