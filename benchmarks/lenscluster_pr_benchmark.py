@@ -74,7 +74,7 @@ def hera_config(catalog_root: Path, likelihood: str, output_dir: str) -> LensClu
                          DPIEHaloConfig.cluster_scale("2", 0.001, 0.003, 0.507, v_disp=700.0),
                          ShearHaloConfig.free("S1", 0.507)),
             member_populations=(MemberPopulationConfig.bergamini2019("potfile_1", str(catalog_root / "catalogs/hera/members.yaml"), 0.507,
-                                                                     prior_mag0=19.82),),
+                                                                     mag0=19.82),),
             image_constraints=ImageConstraintsConfig(catalog_path=str(catalog_root / "catalogs/hera/images.yaml"))),
         likelihood=LikelihoodConfig(likelihood_mode=mode, gp_kernel=kernel),
         paths=RunPathsConfig(output_dir=output_dir, run_name="benchmark")).validate()
