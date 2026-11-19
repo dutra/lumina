@@ -1,6 +1,7 @@
 """Exact image prediction for diagnostics: solve the lens equation per family and match images."""
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
@@ -11,7 +12,8 @@ from scipy.optimize import linear_sum_assignment
 
 from ..config import ImageDiagnosticsConfig
 from ..likelihood.evaluator import Evaluator
-from ..core.model import FamilyData, PackedLensState
+from ..core.model import (CORED_POWER_LAW_PROFILE, DP_IE_PROFILE, MASS_SHEET_PROFILE, NFW_PROFILE, SHEAR_PROFILE, FamilyData,
+                          PackedLensState)
 
 _TRUST_RADIUS_DEFAULT = 0.3
 _LM_DAMPING_RELATIVE = 1.0e-3
@@ -22,6 +24,28 @@ _DET_GUARD = 1.0e-30
 MERGE_ARCSEC = 1.0e-9
 # Largest Newton step (arcsec) while polishing a candidate root: keeps a polish inside the basin it started in.
 POLISH_STEP_ARCSEC = 0.01
+# Profiles whose deflection is linear in the source's lensing efficiency (dPIE and cored power-law sigma0, NFW alpha_rs,
+# mass-sheet kappa): at one lens plane their fields at any source redshift are those at a reference redshift times one
+# scalar.  The external shear (SHEAR_PROFILE) does not depend on the source and is evaluated apart.
+SCALED_PROFILES = frozenset({DP_IE_PROFILE, CORED_POWER_LAW_PROFILE, NFW_PROFILE, MASS_SHEET_PROFILE})
+# Largest difference allowed, relative to the field's size, between the lens at a family's redshift and the scaled
+# reference lens at the probe points of the per-draw check; the scaling holds to ~1e-15, a missing term fails by %.
+SCALING_CHECK_RTOL = 1.0e-10
+
+
+def scaled_lens_factors(evaluator: Evaluator, redshifts, reference: float) -> np.ndarray | None:
+    """The factors s(z) = (dPIE lensing factor at z) / (at ``reference``), one per entry of ``redshifts``, that take
+    the scaled components (``SCALED_PROFILES``) of the lens at ``reference`` to each redshift at one lens plane; the
+    external shear (``SHEAR_PROFILE``) is added unscaled.  None when the lens does not scale so: a sampled cosmology or
+    a profile outside ``SCALED_PROFILES`` and the shear."""
+    codes = frozenset(int(code) for code in np.unique(np.asarray(evaluator.state.packed_lens_spec.profile_type)))
+    if evaluator.cosmology_sampled or not codes <= SCALED_PROFILES | {SHEAR_PROFILE}:
+        return None
+    from ..likelihood.grf_fields import _sigma0_factor
+    redshifts = [float(z) for z in np.atleast_1d(np.asarray(redshifts, dtype=float))]
+    reference = float(reference)
+    factor = {z: _sigma0_factor(evaluator.state, z) for z in sorted(set(redshifts) | {reference})}
+    return np.array([factor[z] / factor[reference] for z in redshifts])
 
 
 def astropy_cosmology(cosmo_config: dict[str, Any]):
@@ -33,7 +57,17 @@ def astropy_cosmology(cosmo_config: dict[str, Any]):
 
 
 class ExactImageSolver:
-    """Solve the lens equation for every family at a latent vector and match the model images."""
+    """Solve the lens equation for every family at a latent vector and match the model images.
+
+    One solver may serve several threads at once (the posterior draws of ``image_recovery``).  ``timing`` then sums
+    the time of every call over all threads (seconds of solver time, more than the wall time of the threads together),
+    and ``grid_points``, ``seed_count`` and ``search_path`` are those of the calling thread's last global search.
+    ``search_counts`` counts the global searches by path (``"shared"``, ``"per_redshift"``).
+    """
+
+    # The global search uses one lattice and one batch over all families when the lens scales with the source
+    # redshift (``solve_all_global``); False forces the search per source redshift (kept for comparison and tests).
+    shared_lattice = True
 
     def __init__(self, evaluator: Evaluator, config: ImageDiagnosticsConfig) -> None:
         self.evaluator = evaluator
@@ -41,6 +75,46 @@ class ExactImageSolver:
         self.timing: dict[str, float] = {"exact_solver": 0.0, "global_grid": 0.0, "global_refine": 0.0}
         self.all_components = np.arange(evaluator.n_components, dtype=np.int32)
         self._per_image_fields = None
+        self._lock = threading.Lock()
+        self._last_search = threading.local()
+        self.search_counts = {"shared": 0, "per_redshift": 0}
+        profile = np.asarray(evaluator.state.packed_lens_spec.profile_type)
+        self._scaled_components = np.flatnonzero(profile != SHEAR_PROFILE).astype(np.int32)
+        self._shear_components = np.flatnonzero(profile == SHEAR_PROFILE).astype(np.int32)
+        self._profile_codes = frozenset(int(code) for code in np.unique(profile))
+
+        def split(points, packed_state):
+            """Summed deflection and Jacobian of the scaled components and of the shear, separately."""
+            out = []
+            for components in (self._scaled_components, self._shear_components):
+                if components.size:
+                    alpha_rows, u_rows = evaluator.component_rows(points, packed_state, components)
+                    out += [jnp.sum(alpha_rows, axis=0), jnp.sum(u_rows, axis=0)]
+                else:
+                    out += [jnp.zeros((points.shape[0], 2)), jnp.zeros((points.shape[0], 2, 2))]
+            return tuple(out)
+        self._split_fields_jit = jax.jit(split)          # created here, before any worker thread calls it
+
+    def _add_time(self, key: str, started: float) -> None:
+        """Add the time since ``started`` to ``timing[key]`` (under a lock: threads share the solver)."""
+        elapsed = time.perf_counter() - started
+        with self._lock:
+            self.timing[key] += elapsed
+
+    @property
+    def grid_points(self) -> int:
+        """Points ray-shot by the calling thread's last global search (coarse grid plus fine sub-grids)."""
+        return getattr(self._last_search, "grid_points", 0)
+
+    @property
+    def seed_count(self) -> int:
+        """Seeds refined by the calling thread's last global search."""
+        return getattr(self._last_search, "seed_count", 0)
+
+    @property
+    def search_path(self) -> str:
+        """``"shared"`` or ``"per_redshift"``: how the calling thread's last global search ran ("" before any)."""
+        return getattr(self._last_search, "path", "")
 
     # ------------------------------------------------------------------ lens fields at arbitrary points
     def ray_shoot_and_jacobian(self, packed: PackedLensState, x: np.ndarray, y: np.ndarray):
@@ -52,13 +126,14 @@ class ExactImageSolver:
     def ray_shoot_and_jacobian_per_image(self, packed_images: PackedLensState, x: np.ndarray, y: np.ndarray):
         """As ray_shoot_and_jacobian, for the N constrained images at once with the per-image packed state (normalizations of
         shape (component, image), so every point carries its own source redshift); one jitted call per iteration."""
-        if self._per_image_fields is None:
-            components = self.all_components
+        with self._lock:
+            if self._per_image_fields is None:
+                components = self.all_components
 
-            def fields(xy, packed_state):
-                alpha_rows, u_rows = self.evaluator.component_rows(xy, packed_state, components)
-                return jnp.sum(alpha_rows, axis=0), jnp.sum(u_rows, axis=0)
-            self._per_image_fields = jax.jit(fields)
+                def fields(xy, packed_state):
+                    alpha_rows, u_rows = self.evaluator.component_rows(xy, packed_state, components)
+                    return jnp.sum(alpha_rows, axis=0), jnp.sum(u_rows, axis=0)
+                self._per_image_fields = jax.jit(fields)
         xy = jnp.stack((jnp.asarray(x, dtype=jnp.float64), jnp.asarray(y, dtype=jnp.float64)), -1)
         alpha, u = self._per_image_fields(xy, packed_images)
         alpha, a = np.asarray(alpha), np.eye(2) - np.asarray(u)
@@ -150,9 +225,11 @@ class ExactImageSolver:
         return dict(x=x, y=y, converged=converged, finite=finite, identification_pass=identified,
                     iterations=iterations, final_step_arcsec=root_error, final_source_residual_arcsec=source_residual)
 
-    def _refine_merged(self, packed, source_x, source_y, start_x, start_y, groups, correction) -> dict[str, np.ndarray]:
+    def _refine_merged(self, packed, source_x, source_y, start_x, start_y, groups, correction, shoot_rows=None) -> dict[str, np.ndarray]:
         """``_refine`` for many starts sharing one packed state: each iteration evaluates only the starts still moving,
-        and starts of one group at the same position (rounded to ``MERGE_ARCSEC``) follow a single representative."""
+        and starts of one group at the same position (rounded to ``MERGE_ARCSEC``) follow a single representative.
+        ``shoot_rows(x, y, index)``, when given, replaces the packed state and the correction: it returns the source
+        positions and A at the starts ``index`` (each start may then have its own lens, e.g. its family's redshift)."""
         cfg = self.config
         x, y = np.array(start_x, dtype=float), np.array(start_y, dtype=float)
         n = x.size
@@ -165,6 +242,8 @@ class ExactImageSolver:
         source_tol = max(cfg.exact_image_identification_tol_arcsec, cfg.exact_image_precision_limit)
 
         def shoot(index):
+            if shoot_rows is not None:
+                return shoot_rows(x[index], y[index], index)
             bx, by, a00, a01, a10, a11 = self.ray_shoot_and_jacobian(packed, x[index], y[index])
             if correction is not None:
                 dx, dy, j00, j01, j10, j11 = correction(x[index], y[index], index)
@@ -208,12 +287,12 @@ class ExactImageSolver:
         return dict(x=x, y=y, converged=converged, finite=finite, identification_pass=identified,
                     iterations=iterations, final_step_arcsec=root_error, final_source_residual_arcsec=source_residual)
 
-    def _polish(self, packed, source_x, source_y, x, y, correction) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _polish(self, packed, source_x, source_y, x, y, correction, shoot_rows=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Undamped Newton iterations (steps capped at ``POLISH_STEP_ARCSEC``) on candidate roots sharing one packed state,
         each until its source residual stops falling; returns the positions and the final source residual.  Damped steps
         stall near a critical curve, where A is nearly singular; a Newton step converges quadratically at a true root and
         cannot lower the residual of a point stuck on the critical curve below the caustic offset.
-        ``correction(x, y, index)`` takes the candidate indices."""
+        ``correction(x, y, index)`` takes the candidate indices; ``shoot_rows`` is as in ``_refine_merged``."""
         x, y = np.array(x, dtype=float), np.array(y, dtype=float)
         residual = np.full(x.size, np.inf)
         active = np.isfinite(x) & np.isfinite(y)
@@ -221,10 +300,13 @@ class ExactImageSolver:
             index = np.flatnonzero(active)
             if not index.size:
                 break
-            bx, by, a00, a01, a10, a11 = self.ray_shoot_and_jacobian(packed, x[index], y[index])
-            if correction is not None:
-                dx, dy, j00, j01, j10, j11 = correction(x[index], y[index], index)
-                bx, by, a00, a01, a10, a11 = bx - dx, by - dy, a00 - j00, a01 - j01, a10 - j10, a11 - j11
+            if shoot_rows is not None:
+                bx, by, a00, a01, a10, a11 = shoot_rows(x[index], y[index], index)
+            else:
+                bx, by, a00, a01, a10, a11 = self.ray_shoot_and_jacobian(packed, x[index], y[index])
+                if correction is not None:
+                    dx, dy, j00, j01, j10, j11 = correction(x[index], y[index], index)
+                    bx, by, a00, a01, a10, a11 = bx - dx, by - dy, a00 - j00, a01 - j01, a10 - j10, a11 - j11
             rx, ry = bx - source_x[index], by - source_y[index]
             r = np.hypot(rx, ry)
             improved = np.isfinite(r) & (r < residual[index])
@@ -279,7 +361,7 @@ class ExactImageSolver:
             return self.solve_local_lm(family, packed, source_x, source_y,
                                        adaptive=(finder == "local-lm-adaptive") if adaptive is None else bool(adaptive))
         finally:
-            self.timing["exact_solver"] += time.perf_counter() - started
+            self._add_time("exact_solver", started)
 
     # ------------------------------------------------------------------ matching
     def match(self, x_pred: np.ndarray, y_pred: np.ndarray, family: FamilyData) -> dict[str, Any]:
@@ -359,17 +441,53 @@ class ExactImageSolver:
     def solve_all_global(self, families: list[FamilyData], physical: np.ndarray, sources: np.ndarray, correction=None) -> list[tuple[np.ndarray, np.ndarray]]:
         """Every image of every family at one model.
 
-        Each family's search window (its images' span plus a margin) is ray-shot on a coarse grid, with families at the
-        same source redshift sharing one packed state and one field evaluation.  A cell can hold an image when the source
-        lies within the cell's mapped reach, |beta - beta_source| below a few pitches times the local stretch ||A||, so
-        demagnified images count too.  Seeds are the coarse local minima of that distance, plus, where such cells lie
-        close to a critical curve (small |det A|) and image pairs can sit closer than the coarse pitch, the points of a
-        fine sub-grid that pass the same reach test on their own fields.  The seeds of each source redshift are refined in
-        one batched Levenberg-Marquardt solve that iterates only the seeds still moving and merges seeds of one family
-        that reach the same position (``_refine``); distinct converged roots inside each window are
-        the images.  Returns (x, y) per family, in order.  ``correction(x, y, family_index)`` adds a deflection field per
-        family (a realization of the GRF), with family_index the position in
-        ``families``."""
+        Each family's search window (its images' span plus a margin) is ray-shot on a coarse grid.  A cell can hold an
+        image when the source lies within the cell's mapped reach, |beta - beta_source| below a few pitches times the
+        local stretch ||A||, so demagnified images count too.  Seeds are the coarse local minima of that distance, plus,
+        where such cells lie close to a critical curve (small |det A|) and image pairs can sit closer than the coarse
+        pitch, the points of a fine sub-grid that pass the same reach test on their own fields.  The seeds are refined
+        in a batched Levenberg-Marquardt solve that iterates only the seeds still moving and merges seeds of one family
+        that reach the same position (``_refine``), then polished; distinct roots inside each window are the images.
+        Returns (x, y) per family, in order.  ``correction(x, y, family_index)`` adds a deflection field per family (a
+        realization of the GRF), with family_index the position in ``families``.
+
+        When the lens at every family's redshift is the lens at the first family's redshift times one scalar per family
+        (plus the external shear, which does not scale; :meth:`_redshift_scaling` checks it at every call), all families
+        share one coarse lattice (``_solve_shared``): the windows are snapped outward onto it, every lattice point and
+        every distinct fine point is evaluated once for all families, and all seeds are refined in one batch.
+        Otherwise, or with ``shared_lattice`` False, each source redshift is searched on its own
+        (``_solve_per_redshift``).  The two place the grid points differently, so their seeds differ and a root close
+        to the limit of the coarse search can be found by one and not the other."""
+        plan = self._redshift_scaling(families, physical, correction) if self.shared_lattice else None
+        path = "per_redshift" if plan is None else "shared"
+        self._last_search.path = path
+        with self._lock:
+            self.search_counts[path] += 1
+        if plan is None:
+            return self._solve_per_redshift(families, physical, sources, correction)
+        return self._solve_shared(families, sources, correction, plan)
+
+    def _distinct_roots(self, windows, seed_family, x, y, residual) -> list[tuple[np.ndarray, np.ndarray]]:
+        """The images of each family from the polished seeds: a root must solve the lens equation to round-off (points
+        stuck on a critical curve reach only the caustic offset) and lie in the family's window; roots closer than the
+        root separation are one image, the best kept."""
+        cfg = self.config
+        root = np.isfinite(x) & np.isfinite(y) & (residual <= float(cfg.exact_image_root_residual_arcsec))
+        separation = float(cfg.exact_image_root_separation_arcsec)
+        solutions = []
+        for k, (cx, cy, half) in enumerate(windows):
+            keep = root & (seed_family == k) & (np.abs(x - cx) <= half) & (np.abs(y - cy) <= half)
+            px, py, quality = x[keep], y[keep], residual[keep]
+            distinct: list[int] = []
+            for i in np.argsort(quality):
+                if all(np.hypot(px[i] - px[j], py[i] - py[j]) > separation for j in distinct):
+                    distinct.append(int(i))
+            solutions.append((px[distinct], py[distinct]))
+        return solutions
+
+    def _solve_per_redshift(self, families, physical, sources, correction) -> list[tuple[np.ndarray, np.ndarray]]:
+        """``solve_all_global`` one source redshift at a time: each family's window on its own coarse grid, the
+        families of one redshift sharing one packed state and one field evaluation, one refinement per redshift."""
         cfg = self.config
         coarse, fine = float(cfg.exact_image_grid_pitch_arcsec), float(cfg.exact_image_fine_pitch_arcsec)
         reach = float(cfg.exact_image_seed_tolerance_pitches)
@@ -396,7 +514,7 @@ class ExactImageSolver:
 
         started = time.perf_counter()
         seed_x, seed_y, seed_family = [], [], []
-        self.grid_points = 0
+        grid_points = 0
         for z, group in by_z.items():
             grids = []
             for k in group:
@@ -405,7 +523,7 @@ class ExactImageSolver:
                 grids.append(np.meshgrid(cx + np.linspace(-half, half, n), cy + np.linspace(-half, half, n)))
             points = np.concatenate([np.column_stack([xx.ravel(), yy.ravel()]) for xx, yy in grids])
             point_family = np.concatenate([np.full(xx.size, k) for k, (xx, _) in zip(group, grids)])
-            self.grid_points += points.shape[0]
+            grid_points += points.shape[0]
             beta, det, stretch = mapped(points, z, point_family)
             fine_points, fine_family = [], []
             offset = 0
@@ -424,7 +542,7 @@ class ExactImageSolver:
             if fine_points:
                 # The fine sub-grid is screened on its own fields: one cheap evaluation instead of a solve per point.
                 fine_points, fine_family = np.concatenate(fine_points), np.concatenate(fine_family)
-                self.grid_points += fine_points.shape[0]
+                grid_points += fine_points.shape[0]
                 beta_f, _, stretch_f = mapped(fine_points, z, fine_family)
                 distance_f = np.sqrt(np.sum(np.square(beta_f - sources[fine_family]), axis=1))
                 # Every fine point that passes the reach test is a seed: images of a tight multiplet near a critical
@@ -432,10 +550,10 @@ class ExactImageSolver:
                 # point is dropped; the refinement merges the seeds that reach the same position.
                 keep = distance_f <= reach * fine * stretch_f
                 seed_x.append(fine_points[keep, 0]); seed_y.append(fine_points[keep, 1]); seed_family.append(fine_family[keep])
-        self.timing["global_grid"] += time.perf_counter() - started
+        self._add_time("global_grid", started)
         seed_x, seed_y = np.concatenate(seed_x), np.concatenate(seed_y)
         seed_family = np.concatenate(seed_family).astype(int)
-        self.seed_count = int(seed_x.size)
+        self._last_search.grid_points, self._last_search.seed_count = grid_points, int(seed_x.size)
         solutions = [(np.asarray([], dtype=float), np.asarray([], dtype=float)) for _ in families]
         if seed_x.size == 0:
             return solutions
@@ -462,20 +580,224 @@ class ExactImageSolver:
             px, py, pr = self._polish(packed_by_z[z], sources[cf, 0], sources[cf, 1], part["x"][candidate], part["y"][candidate],
                                       None if correction is None else (lambda xx, yy, i, cf=cf: correction(xx, yy, cf[i])))
             x[rows[candidate]], y[rows[candidate]], residual[rows[candidate]] = px, py, pr
-        self.timing["global_refine"] += time.perf_counter() - started
-        # A root must solve the lens equation to round-off: points stuck on a critical curve reach only the caustic
-        # offset.  Two roots closer than the root separation are one image.
-        root = np.isfinite(x) & np.isfinite(y) & (residual <= float(cfg.exact_image_root_residual_arcsec))
-        separation = float(cfg.exact_image_root_separation_arcsec)
-        for k, (cx, cy, half) in enumerate(windows):
-            keep = root & (seed_family == k) & (np.abs(x - cx) <= half) & (np.abs(y - cy) <= half)
-            px, py, quality = x[keep], y[keep], residual[keep]
-            distinct: list[int] = []
-            for i in np.argsort(quality):
-                if all(np.hypot(px[i] - px[j], py[i] - py[j]) > separation for j in distinct):
-                    distinct.append(int(i))
-            solutions[k] = (px[distinct], py[distinct])
-        return solutions
+        self._add_time("global_refine", started)
+        return self._distinct_roots(windows, seed_family, x, y, residual)
+
+    # ------------------------------------------------------------------ one lattice for all families
+    def _split_fields(self, xy: np.ndarray, packed: PackedLensState) -> tuple[np.ndarray, ...]:
+        """Deflection (P, 2) and Jacobian (P, 2, 2) of the scaled components and of the shear at ``xy`` (P, 2), in
+        chunks as ``Evaluator.total_fields_at`` (the same block sizes)."""
+        xy = np.asarray(xy, dtype=float).reshape(-1, 2)
+        n = xy.shape[0]
+        chunk = int(min(16384, max(64, 1 << max(0, int(n - 1)).bit_length())))
+        out = [np.empty((n, 2)), np.empty((n, 2, 2)), np.empty((n, 2)), np.empty((n, 2, 2))]
+        for start in range(0, n, chunk):
+            block = xy[start:start + chunk]
+            pad = chunk - block.shape[0]
+            values = self._split_fields_jit(jnp.asarray(np.pad(block, ((0, pad), (0, 0))) if pad else block), packed)
+            for array, value in zip(out, values):
+                array[start:start + chunk] = np.asarray(value)[:block.shape[0]]
+        return tuple(out)
+
+    def _redshift_scaling(self, families, physical, correction) -> dict[str, Any] | None:
+        """How the lens of every family follows from one evaluation at the first family's redshift, or None when it
+        does not and the search must run per redshift.
+
+        The scaled components (``SCALED_PROFILES``) are linear in the lensing efficiency of the source, so at one lens
+        plane with a fixed cosmology their fields at a family's redshift are those at the reference redshift times the
+        ratio of the dPIE factors; the external shear is added unscaled.  A field realization with ``unweighted`` and
+        ``weights`` (``plotting.grf.FieldRealization``) is evaluated once, unweighted, and weighted per family; any
+        other correction is called per family.  None for an unknown profile or a sampled cosmology, and when the
+        scaled lens differs from the lens at any family's redshift (or a weighted field from the correction itself) by
+        more than ``SCALING_CHECK_RTOL`` at the corners and centres of the windows."""
+        evaluator = self.evaluator
+        if not families or not self._profile_codes <= SCALED_PROFILES | {SHEAR_PROFILE}:
+            return None
+        redshift = np.array([float(family.z_source) for family in families])
+        reference = float(redshift[0])
+        scale = scaled_lens_factors(evaluator, redshift, reference)
+        if scale is None:
+            return None
+        physical = jnp.asarray(physical, dtype=jnp.float64)
+        packed = evaluator.packed_state_for_z(physical, reference)
+        windows = np.asarray(self.search_windows(families))
+        probes = np.concatenate([windows[:, :2]] + [windows[:, :2] + windows[:, 2:] * np.asarray(sign) for sign in ((-1, -1), (1, 1))])
+        probes = probes[np.linspace(0, len(probes) - 1, min(len(probes), 12)).round().astype(int)]
+
+        def close(value, expected):
+            return bool(np.all(np.isfinite(value)) and np.all(np.isfinite(expected))
+                        and np.abs(value - expected).max() <= SCALING_CHECK_RTOL * max(1.0, float(np.abs(expected).max())))
+
+        checked = sorted({float(z) for z in redshift} - {reference})
+        if checked:
+            scaled_alpha, scaled_u, shear_alpha, shear_u = self._split_fields(probes, packed)
+            for z in checked:
+                alpha, u = evaluator.total_fields_at(probes, evaluator.packed_state_for_z(physical, z), self.all_components)
+                s = float(scale[np.flatnonzero(redshift == z)[0]])
+                if not (close(s * scaled_alpha + shear_alpha, alpha) and close(s * scaled_u + shear_u, u)):
+                    return None
+        weights = None
+        if correction is not None and callable(getattr(correction, "unweighted", None)) and getattr(correction, "weights", None) is not None:
+            weights = np.asarray(correction.weights, dtype=float)
+            if len(weights) < len(families):
+                return None
+            weights = weights[:len(families)]
+            unweighted = correction.unweighted(probes[:, 0], probes[:, 1])
+            for k in sorted({0, int(np.argmax(np.abs(weights - weights[0])))}):
+                direct = np.column_stack(correction(probes[:, 0], probes[:, 1], np.full(len(probes), k)))
+                if not close(weights[k] * unweighted, direct):
+                    return None
+        return dict(packed=packed, scale=scale, weights=weights)
+
+    def _lens_pieces(self, points: np.ndarray, plan, correction, grid=None) -> dict[str, np.ndarray]:
+        """The parts of the lens shared by every family at ``points`` (P, 2): scaled components and shear at the
+        reference redshift and, for a field realization, its unweighted field (P, 6).  ``grid`` = (gx, gy, used) says
+        that the points are the ``used`` nodes (row-major) of the meshgrid of gx and gy, so the field is summed by rows
+        and columns."""
+        scaled_alpha, scaled_u, shear_alpha, shear_u = self._split_fields(points, plan["packed"])
+        pieces = dict(points=points, scaled_alpha=scaled_alpha, scaled_u=scaled_u, shear_alpha=shear_alpha, shear_u=shear_u, field=None)
+        if correction is not None and plan["weights"] is not None:
+            if grid is not None:
+                gx, gy, used = grid
+                xx, yy = np.meshgrid(gx, gy)
+                pieces["field"] = correction.unweighted(xx, yy, select=used)
+            else:
+                pieces["field"] = correction.unweighted(points[:, 0], points[:, 1])
+        return pieces
+
+    def _family_lens(self, pieces, rows, families, plan, correction) -> tuple[np.ndarray, np.ndarray]:
+        """Source positions (P, 2) and A = I - d alpha / d theta (P, 2, 2) at the points ``rows`` of ``pieces``, each
+        for the family ``families`` (an index into the plan, per row or one for all)."""
+        families = np.broadcast_to(np.asarray(families, dtype=int), np.shape(rows))
+        points = pieces["points"][rows]
+        s = plan["scale"][families]
+        alpha = s[:, None] * pieces["scaled_alpha"][rows] + pieces["shear_alpha"][rows]
+        u = s[:, None, None] * pieces["scaled_u"][rows] + pieces["shear_u"][rows]
+        if pieces["field"] is not None:
+            w = plan["weights"][families]
+            field = pieces["field"][rows]
+            alpha = alpha + w[:, None] * field[:, :2]
+            u = u + w[:, None, None] * field[:, 2:].reshape(-1, 2, 2)
+        elif correction is not None:
+            dx, dy, j00, j01, j10, j11 = correction(points[:, 0], points[:, 1], families)
+            alpha = alpha + np.column_stack([dx, dy])
+            u = u + np.stack([np.stack([j00, j01], -1), np.stack([j10, j11], -1)], -2)
+        return points - alpha, np.eye(2) - u
+
+    @staticmethod
+    def lattice_boxes(windows, pitch: float) -> np.ndarray:
+        """The node range (i0, i1, j0, j1) of each window (x centre, y centre, half side) on the lattice of nodes at
+        integer multiples of ``pitch``: the window snapped outward, so its nodes cover it."""
+        windows = np.asarray(windows, dtype=float).reshape(-1, 3)
+        cx, cy, half = windows.T
+        return np.column_stack([np.floor((cx - half) / pitch), np.ceil((cx + half) / pitch),
+                                np.floor((cy - half) / pitch), np.ceil((cy + half) / pitch)]).astype(np.int64)
+
+    def search_extent(self, families: list[FamilyData]) -> np.ndarray:
+        """Corners (2 per family, (point, 2), arcsec) of the squares holding every grid point the global search
+        evaluates: each window snapped outward onto the coarse lattice (``lattice_boxes``) and widened by half a coarse
+        pitch, the reach of the fine sub-grid around an edge node.  They hold the grids of both search paths (the
+        per-redshift grids span the windows themselves); the refinement's iterates are not bounded by them."""
+        coarse = float(self.config.exact_image_grid_pitch_arcsec)
+        i0, i1, j0, j1 = (v * coarse for v in self.lattice_boxes(self.search_windows(families), coarse).T)
+        return np.concatenate([np.column_stack([i0, j0]) - .5 * coarse, np.column_stack([i1, j1]) + .5 * coarse])
+
+    def _solve_shared(self, families, sources, correction, plan) -> list[tuple[np.ndarray, np.ndarray]]:
+        """``solve_all_global`` on one coarse lattice shared by all families (nodes at integer multiples of the pitch,
+        each window snapped outward onto it), the fine sub-grids on the matching global fine lattice with every distinct
+        point evaluated once, and one refinement and polish over the seeds of all families."""
+        cfg = self.config
+        coarse, fine = float(cfg.exact_image_grid_pitch_arcsec), float(cfg.exact_image_fine_pitch_arcsec)
+        reach = float(cfg.exact_image_seed_tolerance_pitches)
+        sources = np.asarray(sources, dtype=float)
+        windows = self.search_windows(families)
+        started = time.perf_counter()
+        boxes = self.lattice_boxes(windows, coarse)
+        i_min, j_min = boxes[:, 0].min(), boxes[:, 2].min()
+        used = np.zeros((boxes[:, 3].max() - j_min + 1, boxes[:, 1].max() - i_min + 1), dtype=bool)
+        for i0, i1, j0, j1 in boxes:
+            used[j0 - j_min:j1 - j_min + 1, i0 - i_min:i1 - i_min + 1] = True
+        gx, gy = (np.arange(i_min, i_min + used.shape[1]) * coarse, np.arange(j_min, j_min + used.shape[0]) * coarse)
+        jj, ii = np.nonzero(used)
+        index = np.full(used.shape, -1)
+        index[jj, ii] = np.arange(jj.size)
+        pieces = self._lens_pieces(np.column_stack([gx[ii], gy[jj]]), plan, correction, grid=(gx, gy, used))
+        grid_points = int(jj.size)
+        seed_x, seed_y, seed_family = [], [], []
+        centre_i, centre_j, centre_family = [], [], []
+        for k, (i0, i1, j0, j1) in enumerate(boxes):
+            rows = index[j0 - j_min:j1 - j_min + 1, i0 - i_min:i1 - i_min + 1]
+            shape = rows.shape
+            beta, jac = self._family_lens(pieces, rows.ravel(), k, plan, correction)
+            det = (jac[:, 0, 0] * jac[:, 1, 1] - jac[:, 0, 1] * jac[:, 1, 0]).reshape(shape)
+            stretch = np.maximum(1.0, np.sqrt(np.sum(np.square(jac), axis=(1, 2)))).reshape(shape)
+            distance = np.sqrt(np.sum(np.square(beta - sources[k]), axis=1)).reshape(shape)
+            within = distance <= reach * coarse * stretch
+            padded = np.pad(distance, 1, constant_values=np.inf)
+            minima = within & (distance <= np.min([padded[a:a + shape[0], b:b + shape[1]] for a in range(3) for b in range(3)], axis=0))
+            node_x, node_y = gx[i0 - i_min:i1 - i_min + 1], gy[j0 - j_min:j1 - j_min + 1]
+            mj, mi = np.nonzero(minima)
+            seed_x.append(node_x[mi]); seed_y.append(node_y[mj]); seed_family.append(np.full(mi.size, k))
+            cj, ci = np.nonzero(within & (np.abs(det) <= float(cfg.exact_image_critical_det_threshold)))
+            centre_i.append(ci + i0); centre_j.append(cj + j0); centre_family.append(np.full(ci.size, k))
+        centre_i, centre_j, centre_family = (np.concatenate(v).astype(np.int64) for v in (centre_i, centre_j, centre_family))
+        if centre_i.size:
+            # Fine points: offsets sub[a] (x) and sub[b] (y) from each critical node.  When the coarse pitch is a whole
+            # number R of fine pitches, the sub-grids of neighbouring nodes share their edge points: node i offset a is
+            # fine-lattice point i R + a, and each distinct point is evaluated once for every family that asks for it.
+            sub = np.arange(-0.5 * coarse, 0.5 * coarse + 1e-9, fine)
+            ratio = coarse / fine
+            step = int(round(ratio)) if abs(ratio - round(ratio)) < 1e-9 else sub.size
+            b, a = (v.ravel() for v in np.meshgrid(np.arange(sub.size), np.arange(sub.size), indexing="ij"))
+            key = np.column_stack([(centre_i[:, None] * step + a[None]).ravel(), (centre_j[:, None] * step + b[None]).ravel()])
+            fine_family = np.repeat(centre_family, a.size)
+            fine_xy = np.column_stack([(centre_i[:, None] * coarse + sub[a][None]).ravel(), (centre_j[:, None] * coarse + sub[b][None]).ravel()])
+            _, first, inverse = np.unique(key, axis=0, return_index=True, return_inverse=True)
+            inverse = inverse.ravel()
+            fine_pieces = self._lens_pieces(fine_xy[first], plan, correction)
+            grid_points += int(first.size)
+            for k in np.unique(fine_family):
+                rows = inverse[fine_family == k]
+                beta, jac = self._family_lens(fine_pieces, rows, k, plan, correction)
+                stretch = np.maximum(1.0, np.sqrt(np.sum(np.square(jac), axis=(1, 2))))
+                # Every fine point that passes the reach test is a seed: images of a tight multiplet near a critical
+                # curve can share one local minimum at this pitch (Hera, family 10: three images within 0.3"), so no
+                # point is dropped; the refinement merges the seeds that reach the same position.
+                keep = np.sqrt(np.sum(np.square(beta - sources[k]), axis=1)) <= reach * fine * stretch
+                points = fine_pieces["points"][rows[keep]]
+                seed_x.append(points[:, 0]); seed_y.append(points[:, 1]); seed_family.append(np.full(int(keep.sum()), k))
+        del pieces
+        self._add_time("global_grid", started)
+        seed_x, seed_y = np.concatenate(seed_x), np.concatenate(seed_y)
+        seed_family = np.concatenate(seed_family).astype(int)
+        self._last_search.grid_points, self._last_search.seed_count = grid_points, int(seed_x.size)
+        if seed_x.size == 0:
+            return [(np.asarray([], dtype=float), np.asarray([], dtype=float)) for _ in families]
+        started = time.perf_counter()
+
+        def shooter(family_of_row):
+            def shoot(x, y, index):
+                beta, a = self._family_lens(self._lens_pieces(np.column_stack([x, y]), plan, correction), np.arange(len(x)),
+                                            family_of_row[index], plan, correction)
+                return beta[:, 0], beta[:, 1], a[:, 0, 0], a[:, 0, 1], a[:, 1, 0], a[:, 1, 1]
+            return shoot
+        fam = seed_family
+        part = self._refine_merged(None, sources[fam, 0], sources[fam, 1], seed_x, seed_y, fam, None, shoot_rows=shooter(fam))
+        x, y = np.full(seed_x.shape, np.nan), np.full(seed_y.shape, np.nan)
+        residual = np.full(seed_x.shape, np.inf)
+        # Candidates: finite end points near a root.  One polish per distinct end point (to MERGE_ARCSEC).
+        loose = max(float(cfg.exact_image_identification_tol_arcsec), float(cfg.exact_image_precision_limit))
+        candidate = np.flatnonzero(np.asarray(part["finite"]) & (np.asarray(part["final_source_residual_arcsec"]) <= loose))
+        if candidate.size:
+            key = np.column_stack([fam[candidate], np.round(part["x"][candidate] / MERGE_ARCSEC), np.round(part["y"][candidate] / MERGE_ARCSEC)])
+            _, first = np.unique(key, axis=0, return_index=True)
+            candidate = candidate[np.sort(first)]
+            cf = fam[candidate]
+            px, py, pr = self._polish(None, sources[cf, 0], sources[cf, 1], part["x"][candidate], part["y"][candidate], None,
+                                      shoot_rows=shooter(cf))
+            x[candidate], y[candidate], residual[candidate] = px, py, pr
+        self._add_time("global_refine", started)
+        return self._distinct_roots(windows, seed_family, x, y, residual)
 
     def predict_all_global(self, images, families: list[FamilyData], physical: np.ndarray, sources: np.ndarray, correction=None) -> list[dict[str, Any]]:
         """Family predictions from the global search: matched positions, extra images, magnifications at the observed and
@@ -483,7 +805,7 @@ class ExactImageSolver:
         ``correction`` (see ``solve_all_global``) is part of the lens: it moves the positions and enters the magnifications."""
         started = time.perf_counter()
         solutions = self.solve_all_global(families, physical, sources, correction)
-        self.timing["exact_solver"] += time.perf_counter() - started
+        self._add_time("exact_solver", started)
         packed_images = self.evaluator.packed_state(jnp.asarray(physical, dtype=jnp.float64))[0]
         x_obs, y_obs = np.asarray(images.x_obs, dtype=float), np.asarray(images.y_obs, dtype=float)
         family_index = np.asarray(images.family_index_per_image, dtype=int)
@@ -523,7 +845,7 @@ class ExactImageSolver:
                               correction=per_image)
         _, _, a00, a01, a10, a11 = shoot(packed_images, x0, y0)
         mu = 1.0 / (a00 * a11 - a01 * a10)
-        self.timing["exact_solver"] += time.perf_counter() - started
+        self._add_time("exact_solver", started)
         details = []
         separation = float(self.config.exact_image_min_separation_arcsec)
         for f, family in enumerate(families):
