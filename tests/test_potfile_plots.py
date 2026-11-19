@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 import json
+from kappaccino.io import store
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -48,7 +49,7 @@ def test_run_outputs_create_potfile_corner(tmp_path, monkeypatch):
     for kind in ("corner",):
         path = paths.figures / f"hera_potfile_members_{kind}.pdf"
         assert path.read_bytes().startswith(b"%PDF")
-        summary = json.loads(path.with_suffix(".json").read_text())
+        summary = store.read_figure_record(path)
         assert summary["population"] == "potfile_members"
         assert summary["draws"] == len(samples)
     assert not (paths.figures / 'hera_potfile_members_prior_posterior.pdf').exists()
@@ -92,7 +93,7 @@ def test_corner_traces_preserve_chain_order(tmp_path):
     grouped = samples.reshape(3, 100, 2)
     path = tmp_path / 'corner_with_traces.pdf'
     potfile.plot_potfile_corner(samples, specs, 'potfile_members', path, grouped_physical=grouped)
-    metadata = json.loads(path.with_suffix('.json').read_text())
+    metadata = store.read_figure_record(path)
     assert metadata['trace_chains'] == 3 and metadata['trace_draws_per_chain'] == 100
     with pytest.raises(ValueError, match='chain-ordered'):
         potfile.plot_potfile_corner(samples, specs, 'potfile_members', tmp_path/'bad.pdf', grouped_physical=grouped[::-1])
@@ -106,7 +107,7 @@ def test_uniform_global_prior_and_coordinate_transforms(tmp_path):
     draws = np.random.default_rng(4).uniform(-.8, .8, (100, 2))
     path = plot_corner(draws, specs, tmp_path/'global.pdf')
     assert path.is_file()
-    assert 'support boundary' in json.loads(path.with_suffix('.json').read_text())['uniform_joint_prior']
+    assert 'support boundary' in store.read_figure_record(path)['uniform_joint_prior']
     spec = make_spec('halo.v', 'v', dist.LogNormal(0., 1.))
     prior = DisplayPrior(spec)
     np.testing.assert_allclose(prior.pdf(0.), np.log(10)/np.sqrt(2*np.pi))
@@ -128,6 +129,6 @@ def test_corner_headers_physical_with_log_axes(tmp_path, monkeypatch):
     path = plot_parameter_corner(samples, [(0,spec,r'$\sigma_{\rm def}$')], tmp_path/'corner.pdf')
     assert any(r'\sigma_{\rm def}=0.010' in text for text in captured)
     assert any(r'\log(' in text for text in captured)
-    metadata = json.loads(path.with_suffix('.json').read_text())
+    metadata = store.read_figure_record(path)
     assert metadata['marginal_summary_coordinates'] == 'physical'
     assert metadata['coordinates'].startswith('log10')

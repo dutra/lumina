@@ -1,7 +1,6 @@
 """Potfile-only posterior figures shared by run outputs and regeneration tools."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import matplotlib
@@ -10,6 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator
 import numpy as np
+from ..io import store
 from scipy import stats
 
 from ..diagnostics.priors import saved_prior
@@ -54,9 +54,9 @@ def plot_potfile_corner(samples, specs, population, path, *, grouped_physical=No
     samples, selection = _selection(samples, specs, population)
     result = plot_parameter_corner(samples, selection, path, grouped_physical=grouped_physical)
     if result is not None:
-        metadata = json.loads(path.with_suffix('.json').read_text())
+        metadata = store.read_figure_record(path)
         metadata['population'] = population
-        path.with_suffix('.json').write_text(json.dumps(metadata, indent=2))
+        store.write_figure_record(path, metadata)
     return result
 
 
@@ -139,10 +139,10 @@ def plot_potfile_prior_posterior(samples, specs, population, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, bbox_inches="tight", pad_inches=.04)
     plt.close(fig)
-    path.with_suffix(".json").write_text(json.dumps({
+    store.write_figure_record(path, {
         "population": population, "draws": len(samples),
         "density_coordinate": "ln(parameter) for log axes; parameter otherwise",
-        "parameters": summary}, indent=2) + "\n")
+        "parameters": summary})
     return path
 
 

@@ -32,3 +32,16 @@ def test_rebinned_grid_holds_block_means_at_block_centres():
     np.testing.assert_allclose(coarse.world_to_pixel_values(ra, dec), [4., 3.], atol=1e-9)
     np.testing.assert_allclose(binned[3, 4], values[6:8, 8:10].mean())
     np.testing.assert_allclose(np.abs(coarse.wcs.cdelt), 2 * np.abs(wcs.wcs.cdelt))
+
+
+def test_the_cache_keeps_tables_with_list_cells(tmp_path):
+    import pandas as pd
+    from kappaccino.plotting import zeta_masses as zm
+    table = pd.DataFrame({'member_id': ['a', 'b'], 'kinematics': [[], [1.0]], 'truth_zeta_msun': [1.0, 2.0]})
+    model = {'full': {'zeta': np.ones((2, 2)), 'contrast': np.zeros((2, 2))}}
+    zm.save_cache(tmp_path, {'10kpc': (table, model)}, 'key')
+    loaded = zm.load_cache(tmp_path, 'key')
+    assert loaded['10kpc'][0].kinematics.tolist() == ['[]', '[1.0]']
+    np.testing.assert_array_equal(loaded['10kpc'][0].truth_zeta_msun, [1.0, 2.0])
+    np.testing.assert_array_equal(loaded['10kpc'][1]['full']['zeta'], np.ones((2, 2)))
+    assert zm.load_cache(tmp_path, 'other') is None

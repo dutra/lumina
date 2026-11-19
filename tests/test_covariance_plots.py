@@ -1,5 +1,6 @@
 from dataclasses import replace
 import json
+from kappaccino.io import store
 from types import SimpleNamespace
 
 import jax
@@ -31,10 +32,10 @@ def test_covariance_outputs_with_one_draw(synthetic_config, tmp_path, selection)
     outputs = write_covariance_plots(config, state, reporting_draws(config, evaluator, posterior), posterior, paths, log=lambda _: None)
     assert len(outputs) == 2 and all(p.is_file() for p in outputs)
     assert dict(plt.rcParams) == style
-    metadata = json.loads((paths.tables / 'covariance_errors_both_planes.json').read_text())
+    metadata = store.read_record(paths.tables, 'covariance_errors_both_planes')
     assert len(metadata['posterior_draw_indices']) == 1
     assert metadata['plane'] == 'both'
-    table = pd.read_csv(paths.tables / 'covariance_errors_both_planes.csv')
+    table = store.read_table(paths.tables, 'covariance_errors_both_planes')
     source = table[table.plane == 'source'].reset_index(drop=True)
     image = table[table.plane == 'image'].reset_index(drop=True)
     for component in ['measurement', 'selection', 'model', 'total']:
@@ -43,7 +44,7 @@ def test_covariance_outputs_with_one_draw(synthetic_config, tmp_path, selection)
     np.testing.assert_allclose(table.total_p16_arcsec, table.total_p84_arcsec)
     if not selection:
         assert (table.selection_arcsec == 0).all()
-    corner = json.loads((paths.tables / 'covariance_corner.json').read_text())
+    corner = store.read_record(paths.tables, 'covariance_corner')
     assert ('images.lambda_sel' in corner['parameters']) == selection
 
 

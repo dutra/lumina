@@ -1,6 +1,7 @@
 from dataclasses import asdict
 from types import SimpleNamespace as NS
 import json
+from kappaccino.io import store
 
 import numpy as np
 import pytest
@@ -52,7 +53,7 @@ def test_writer_uses_saved_panels_and_preserves_selector_order(tmp_path, monkeyp
     assert calls[0][0]['systems'][0]['labels']==['K6B.a','K6B.b']
     assert calls[1][0]['images'][0]['label']=='K34.b'
     np.testing.assert_allclose([entry[1][0] for entry in calls],[0,1/3,2/3])
-    assert json.loads(paths[0].with_suffix('.json').read_text())['selectors']==list(selections)
+    assert store.read_figure_record(paths[0])['selectors']==list(selections)
 
 
 def test_empty_selections_do_not_load_diagnostics(tmp_path, monkeypatch):

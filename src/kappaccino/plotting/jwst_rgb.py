@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from .grf import PLOT_FIELD_VERSION
-from ..io.hdf5 import load_arrays, save_arrays
+from ..io import store
 from ..likelihood.grf_fields import shared_field_evaluator, shared_grf_label
 from ..diagnostics.position_contours import PROBABILITIES
 
@@ -102,9 +102,10 @@ def recovered_contour_segments(contours):
 @plt.rc_context()
 def render_rgb_critical(config, state, draws, catalog, extra, imaging, output, tables, *, log=print):
     """Render the z = 9 critical curve (zero contour of the per-pixel median det A over the reporting draws) and its
-    16-84% band on the RGB overview.  Computes and saves what the picture needs in ``tables`` (``<stem>.h5``,
-    ``<stem>_band.json``, the position contours and ``<stem>_stretch_directions.csv``) and draws it with
-    :func:`draw_rgb_critical`."""
+    16-84% band on the RGB overview.  Computes and saves what the picture needs in the stage's results (the arrays
+    ``<stem>``, the record ``<stem>_band``, the position contours and the table ``<stem>_stretch_directions``; ``tables``
+    is the stage folder or its ``tables``) and draws it with :func:`draw_rgb_critical`; :func:`redraw_rgb_critical`
+    draws it again from those entries."""
     output,tables=Path(output),Path(tables)
     from .mass_figure import overview_geometry, arc_direction_table
     from ..imaging import cutouts
@@ -113,24 +114,26 @@ def render_rgb_critical(config, state, draws, catalog, extra, imaging, output, t
     stem=rgb_overview_stem(config.image_catalog, bands)
     reference_image=images[cutouts.rgb_reference_band(bands)]
     band_geometry=overview_geometry(reference_image,catalog,extra,state.reference)
-    determinants=draws.grid_maps('overview',band_geometry['x'],band_geometry['y'],9.,log=log)['detA']
+    from ..reporting.draws import OVERVIEW_QUANTITIES
+    determinants=draws.grid_maps('overview',band_geometry['x'],band_geometry['y'],9.,quantities=OVERVIEW_QUANTITIES,
+                               reference=True,log=log)['detA']
     lower,det,upper=critical_quantile_summary(determinants)
     band=(lower<0)&(upper>0)
     fingerprint=draws.key
     band_info=dict(draw_indices=draws.indices.tolist(),resolution=int(det.shape[0]),
                    definition='Zero contour of pointwise median determinant; shaded where its 16-84% interval contains zero; parametric + conditional GRF realization of each draw',
                    selection='The reporting draws: random posterior draws over all chains (run seed)')
-    tables.mkdir(parents=True, exist_ok=True)
-    (tables/f'{stem}_band.json').write_text(json.dumps(band_info,indent=2)+'\n')
-    save_arrays(tables/f'{stem}.h5',determinant=det,lower=lower,upper=upper,band=band,
-                        fingerprint=fingerprint,z_source=9.,draw_indices=draws.indices,
-                        central_statistic='pointwise posterior median determinant')
+    with store.batch(tables):
+        store.write_record(tables,f'{stem}_band',band_info)
+        store.write_arrays(tables,stem,determinant=det,lower=lower,upper=upper,band=band,
+                            fingerprint=fingerprint,z_source=9.,draw_indices=draws.indices,
+                            central_statistic='pointwise posterior median determinant')
     from ..diagnostics.position_contours import load_or_compute_contours
     recovered_contours = load_or_compute_contours(config, state, draws, extra, tables, log=log)
     # The stretch direction at each observed image and its own redshift: the eigenvector of the smallest |eigenvalue|
     # of the median A over the draws (A is symmetric, so this is its minimum singular vector).
     arc_directions = arc_direction_table(draws, catalog)
-    arc_directions.to_csv(tables/f'{stem}_stretch_directions.csv', index=False)
+    store.write_table(tables, f'{stem}_stretch_directions', arc_directions)
     draw_rgb_critical(config, state.reference, catalog, extra, imaging, output, tables, determinant=det, lower=lower,
                       upper=upper, contours=recovered_contours, stretch_directions=arc_directions, fingerprint=fingerprint,
                       reporting_draws=len(draws), shared_grf=shared_field_evaluator(draws.evaluator) is not None,
@@ -140,14 +143,14 @@ def render_rgb_critical(config, state, draws, catalog, extra, imaging, output, t
 
 @plt.rc_context()
 def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables, *, determinant, lower, upper, contours,
-                      stretch_directions, fingerprint, reporting_draws, shared_grf, grf_field, log=print):
+                      stretch_directions, fingerprint, reporting_draws, shared_grf, grf_field, redrawn=False, log=print):
     """Draw the RGB critical overview (and, for M0416, its ``_candidates`` variant) from computed inputs: the
     median ``determinant`` of det A with its 16th/84th percentiles ``lower``/``upper``, the position ``contours``
     (:func:`~kappaccino.diagnostics.position_contours.load_or_compute_contours`), the ``stretch_directions`` at the
     observed images (``image_label``, ``e_arc_x``, ``e_arc_y``; None draws no sticks), the draws' ``fingerprint`` and
     count, whether the run has a ``shared_grf`` (a knee mass field shared by every image) and the ``grf_field``
-    provenance label (:func:`~kappaccino.likelihood.grf_fields.shared_grf_label`).  Writes the PDFs, a JSON record beside
-    each and the marker tables in ``tables``; returns the PDF paths."""
+    provenance label (:func:`~kappaccino.likelihood.grf_fields.shared_grf_label`).  Writes the PDFs, their figure
+    records and the marker tables (in the results of the stage of ``tables``); returns the PDF paths."""
     output,tables=Path(output),Path(tables)
     from .mass_figure import overview_geometry, aligned_rgb, grid_pixels, ARC_STICK_LENGTH_ARCSEC
     from ..imaging import cutouts
@@ -254,7 +257,7 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
             all_px.extend(cx);all_py.extend(cy)
             overlay_rows.extend(rows)
         if overlay_rows:
-            pd.DataFrame(overlay_rows).to_csv(tables/f'{stem}_candidate_overlays.csv',index=False)
+            store.write_table(tables,f'{stem}_candidate_overlays',pd.DataFrame(overlay_rows))
         # Include both fitted images and proposed candidates, with 3 arcsec padding.
         pad=3./geometry['size']*n
         limits=[float(min(all_px)-pad),float(max(all_px)+pad),float(min(all_py)-pad),float(max(all_py)+pad)]
@@ -309,7 +312,7 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
                     xytext=(0, 5), textcoords='offset points', ha='center',
                     va='bottom', color='white', fontsize=12, zorder=30)
         assert np.all((px>limits[0])&(px<limits[1])&(py>limits[2])&(py<limits[3]))
-        marker_table.to_csv(tables/(('hst_rgb_markers' if stem.startswith('hst') else 'jwst_rgb_marker_magnitudes') + ('_candidates' if show_candidates else '') + '.csv'),index=False)
+        store.write_table(tables,('hst_rgb_markers' if stem.startswith('hst') else 'jwst_rgb_marker_magnitudes') + ('_candidates' if show_candidates else ''),marker_table)
         log(f'[outputs] magnitude-scaled RGB markers: {valid.sum()}/{len(valid)}')
         ra,dec=ax.coords
         ra.set_axislabel('R.A. (J2000)');dec.set_axislabel('Dec. (J2000)')
@@ -328,10 +331,231 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
         plt.close(fig)
         stretch_text=(f'eigenvector of the smallest |eigenvalue| of the median A over the draws at each observed image and its own redshift; {ARC_STICK_LENGTH_ARCSEC:g} arcsec sticks'
                       if sticks else 'not drawn: no saved stretch directions')
-        output.with_suffix('.json').write_text(json.dumps(dict(run=config.paths.run_name,image_position_marker='square',recovered_position_probability=RECOVERED_CONTOUR_PROBABILITY,recovered_position_contour_scale=RECOVERED_CONTOUR_SCALE,recovered_position_contour_centre='mean of the finite per-draw positions of the image',recovered_position_contours=contoured,not_recovered_images=int(missed.sum()),extra_images=int(len(extra)) if has_extra else 0,stretch_direction=stretch_text,stretch_sticks=sticks,insets=inset_info,candidate_marker='diamond' if show_candidates else None,central_statistic='zero contour of pointwise posterior median determinant; same draws as band',z_source=9.,reporting_draws=int(reporting_draws),model='parametric + conditional GRF realization of each draw; no GP displacement' if shared_grf else 'parametric only; no shared GRF available',grf_field=grf_field,grf_derivatives=PLOT_FIELD_VERSION,bands=list(bands),catalog_images=len(catalog),resolution=n,determinant_resolution=int(det.shape[0]),critical_definition='median over draws of det(I - Hessian_draw) = 0',cache_fingerprint=str(fingerprint),marker_photometry=str(photpath) if photpath else None,magnitude_band=sorted(set(marker_table.loc[valid, 'magnitude_band'])),marker_photometry_catalog=str(getattr(getattr(getattr(config, 'model', None), 'image_constraints', None), 'catalog_path', '')),matched_magnitudes=int(valid.sum()),missing_magnitude_policy='minimum marker area 9 pt^2',marker_area='clip(16*10**(-0.2*(m-26)),9,64) pt^2',crop_padding_arcsec=3.,crop_pixel_limits=limits,candidate_catalog=str(candidate_path) if candidate_path else None,candidate_overlays=[r['id'] for r in overlay_rows]),indent=2)+'\n')
+        store.write_figure_record(output, dict(run=config.paths.run_name,image_position_marker='square',recovered_position_probability=RECOVERED_CONTOUR_PROBABILITY,recovered_position_contour_scale=RECOVERED_CONTOUR_SCALE,recovered_position_contour_centre='mean of the finite per-draw positions of the image',recovered_position_contours=contoured,not_recovered_images=int(missed.sum()),extra_images=int(len(extra)) if has_extra else 0,stretch_direction=stretch_text,stretch_sticks=sticks,redrawn_from_tables=bool(redrawn),insets=inset_info,candidate_marker='diamond' if show_candidates else None,central_statistic='zero contour of pointwise posterior median determinant; same draws as band',z_source=9.,reporting_draws=int(reporting_draws),model='parametric + conditional GRF realization of each draw; no GP displacement' if shared_grf else 'parametric only; no shared GRF available',grf_field=grf_field,grf_derivatives=PLOT_FIELD_VERSION,bands=list(bands),catalog_images=len(catalog),resolution=n,determinant_resolution=int(det.shape[0]),critical_definition='median over draws of det(I - Hessian_draw) = 0',cache_fingerprint=str(fingerprint),marker_photometry=str(photpath) if photpath else None,magnitude_band=sorted(set(marker_table.loc[valid, 'magnitude_band'])),marker_photometry_catalog=str(getattr(getattr(getattr(config, 'model', None), 'image_constraints', None), 'catalog_path', '')),matched_magnitudes=int(valid.sum()),missing_magnitude_policy='minimum marker area 9 pt^2',marker_area='clip(16*10**(-0.2*(m-26)),9,64) pt^2',crop_padding_arcsec=3.,crop_pixel_limits=limits,candidate_catalog=str(candidate_path) if candidate_path else None,candidate_overlays=[r['id'] for r in overlay_rows]))
         log(f"[outputs] RGB critical overview written: {output}")
         written.append(output)
     return written
+
+
+# The redraw from a finished run's saved tables: no posterior, evaluator or determinant maps.
+
+# The columns of the in-memory image tables that are strings (a family id "1" must stay "1", not become 1).
+CATALOG_TEXT_COLUMNS = ('family_id', 'image_label', 'image_recovery_status')
+
+
+def read_saved_csv(path, text_columns=CATALOG_TEXT_COLUMNS):
+    """A table saved as CSV by an old run, with ``text_columns`` read as the strings they were written from (no NA
+    parsing), the other columns as pandas infers them."""
+    frame = pd.read_csv(path)
+    present = [c for c in text_columns if c in frame.columns]
+    if present:
+        text = pd.read_csv(path, usecols=present, dtype=str, keep_default_na=False)
+        for column in present:
+            frame[column] = text[column]
+    return frame
+
+
+def read_saved_table(tables, name, text_columns=CATALOG_TEXT_COLUMNS):
+    """The saved table ``name`` of the stage of ``tables`` as the pipeline held it: exactly as stored, or, for an old
+    run, its CSV with ``text_columns`` as strings (:func:`read_saved_csv`)."""
+    return store.read_table(tables, name, legacy_csv=lambda path: read_saved_csv(path, text_columns))
+
+
+def read_saved_extra_images(tables):
+    """The table ``image_recovery_extra_images`` as the pipeline holds it; the empty table if missing or empty."""
+    from ..diagnostics.image_recovery import common_extra_images
+    try:
+        return read_saved_table(tables, 'image_recovery_extra_images', ('family_id',))
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        return common_extra_images(pd.DataFrame(), 1)
+
+
+def read_saved_stretch_directions(tables, stem, *, log=print):
+    """The stretch directions the overview drew (table ``<stem>_stretch_directions``), else the mass figure's
+    ``image_catalog_arc_directions*`` (the same table at the observed images), else None."""
+    saved = store.entries(tables)[store.TABLES]
+    candidates = [f'{stem}_stretch_directions'] + sorted(name for name in saved if name.startswith('image_catalog_arc_directions'))
+    for name in candidates:
+        if name in saved:
+            log(f'[redraw] stretch directions from {name}')
+            return read_saved_table(tables, name, ('image_label',))
+    log('[redraw] no saved stretch directions: the figure is drawn without sticks')
+    return None
+
+
+def saved_section(saved, name, path):
+    """The section ``name`` (dotted, e.g. ``model.image_constraints``) of the saved configuration ``saved`` read from
+    ``path``; a ValueError naming both when it is missing."""
+    value = saved
+    for key in name.split('.'):
+        if not isinstance(value, dict) or key not in value:
+            raise ValueError(f'{path} has no {name}; the redraw cannot check or describe the run\'s picture without it')
+        value = value[key]
+    return value
+
+
+def read_saved_config(run_dir):
+    """The run's own configuration, ``final/artifacts/config.json``, as the dict it was saved as."""
+    return json.loads((Path(run_dir) / 'final' / 'artifacts' / 'config.json').read_text())
+
+
+def saved_grf_field(saved, path='final/artifacts/config.json'):
+    """``(shared, label)`` of the run saved as ``saved`` (its ``config.json``): whether its evaluator has a knee mass
+    field shared by every image, and :func:`~kappaccino.likelihood.grf_fields.shared_grf_label` of that evaluator.
+    Decided by :func:`~kappaccino.likelihood.grf_fields.shared_field_evaluator` on a stand-in evaluator with the
+    attributes ``Evaluator`` derives from the likelihood; a system-block run's all-block twin is never rebuilt."""
+    from types import SimpleNamespace
+    mode = saved_section(saved, 'likelihood.likelihood_mode', path)
+    knee = mode == 'gp_image_plane' and saved_section(saved, 'likelihood.gp_kernel', path) == 'knee'
+    likelihood = saved['likelihood']
+    stand_in = SimpleNamespace(
+        gp_knee=knee, gp_knee_spectrum=str(likelihood.get('gp_knee_spectrum', 'knee')),
+        sigma_grf_index=0 if knee and saved_section(saved, 'likelihood.sigma_grf_prior', path) is not None else -1,
+        state=SimpleNamespace(gp_blocks=str(saved_section(saved, 'likelihood.gp_blocks', path)) if knee else 'all'),
+        _shared_field_twin=object())          # the cached all-block twin, so that it is not built
+    return shared_field_evaluator(stand_in) is not None, shared_grf_label(stand_in)
+
+
+def rebuild_run_config(run_dir):
+    """The configuration of the finished run in ``run_dir``, rebuilt from ``inputs/command.json`` so that its paths
+    point at ``run_dir``.  Refuses when the picture's inputs (the ``image_catalog`` section, ``model.image_constraints``,
+    ``model.reference`` and ``paths.figure_prefix``) differ from the run's saved ``final/artifacts/config.json``."""
+    from ..cli import build_config
+    run_dir = Path(run_dir).resolve()
+    command = json.loads((run_dir / 'inputs' / 'command.json').read_text())
+    config = build_config(command['cluster'], profiles=tuple(command.get('profiles') or ()),
+                          overrides=tuple(command.get('overrides') or ()), images=command.get('images'),
+                          member_profile=command.get('member_profile'), member_slope=command.get('member_slope'),
+                          run_label=run_dir.name, results=run_dir.parent.parent)
+    folder = (Path(config.paths.output_dir) / config.paths.run_name).resolve()
+    if folder != run_dir:
+        raise ValueError(f'The rebuilt configuration writes to {folder}, not to the run folder {run_dir}')
+    saved_path = run_dir / 'final' / 'artifacts' / 'config.json'
+    saved = read_saved_config(run_dir)
+    rebuilt = json.loads(json.dumps(config.to_json_dict()))
+    for name in ('image_catalog', 'model.image_constraints', 'model.reference', 'paths.figure_prefix'):
+        old = saved_section(saved, name, saved_path)
+        new = saved_section(rebuilt, name, 'the rebuilt configuration')
+        if old != new:
+            raise ValueError(f'{name} of the rebuilt configuration differs from the run\'s final/artifacts/config.json '
+                             f'(saved {old!r}, rebuilt {new!r}); the redraw would not draw the run\'s picture')
+    return config
+
+
+class SavedDraws:
+    """The reporting draws as the saved tables know them: their posterior rows and fingerprint (all that
+    :func:`~kappaccino.diagnostics.position_contours.load_or_compute_contours` reads)."""
+
+    def __init__(self, indices, key):
+        self.indices, self.key = np.asarray(indices, dtype=int), str(key)
+
+    def __len__(self):
+        return len(self.indices)
+
+
+# What the redraw reads besides the band: the run's inputs (files) and its completed image recovery (final tables).
+REDRAW_INPUTS = ('inputs/command.json', 'final/artifacts/config.json')
+REDRAW_TABLES = ('image_fit_quality', 'posterior_image_residual_draws')
+
+
+def check_saved_draws(indices, tables, stem):
+    """Refuse band draw ``indices`` (arrays ``<stem>``) that the saved image recovery (table
+    ``posterior_image_residual_draws``) does not hold: their position contours would be empty."""
+    draws = store.read_table(tables, 'posterior_image_residual_draws', legacy_csv=dict(usecols=['posterior_index']))
+    recovered = set(draws['posterior_index'].astype(int))
+    missing = sorted(set(np.asarray(indices, dtype=int).tolist()) - recovered)
+    if missing:
+        shown = ', '.join(map(str, missing[:10])) + (', ...' if len(missing) > 10 else '')
+        raise ValueError(f'{len(missing)} of the {len(indices)} draw indices of {stem} are not a posterior_index of '
+                         f'posterior_image_residual_draws in {store.stage_dir(tables)} ({shown}); the band and the saved '
+                         f'image recovery come from different draws')
+
+
+def redraw_rgb_critical(run_dir, *, log=print):
+    """Draw the RGB critical overviews of a finished run again from its saved results (``final/results.h5``, or the
+    loose tables of an old run): the band of the arrays ``<stem>``, the catalog ``image_fit_quality``, the extra
+    images, the stretch directions and the position contours of the saved image recovery.  Run from the repository root (the run's catalog and imaging paths are
+    relative to it).  The model description of the records comes from the run's ``final/artifacts/config.json``.
+    Refuses, before writing anything, a run without a completed image recovery and a band whose draws the image
+    recovery does not hold.  Does not rewrite the arrays ``<stem>`` or the record ``<stem>_band``; rewrites the
+    figures, their records, the marker tables and ``posterior_overview_positions`` (all in ``final/results.h5``).
+    Returns the written PDF paths."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from ..imaging import cutouts
+    from ..imaging.cutouts import imaging_variants, load_cluster_imaging, DEFAULT_HFF_RGB_BANDS
+    from ..diagnostics.position_contours import load_or_compute_contours
+    from .mass_figure import overview_geometry
+    from . import plots
+    run_dir = Path(run_dir).resolve()
+    if not run_dir.is_dir():
+        raise FileNotFoundError(f'{run_dir} is not a run folder')
+    for name in REDRAW_INPUTS:
+        if not (run_dir / name).exists():
+            raise FileNotFoundError(f'Run {run_dir}: no {name}; the redraw needs a finished run with a completed image recovery')
+    for name in REDRAW_TABLES:
+        if not store.has_table(run_dir / 'final', name):
+            raise FileNotFoundError(f'Run {run_dir}: no final table {name}; the redraw needs a finished run with a completed image recovery')
+    config = rebuild_run_config(run_dir)
+    shared_grf, grf_field = saved_grf_field(read_saved_config(run_dir), run_dir / 'final' / 'artifacts' / 'config.json')
+    tables, figures = run_dir / 'final' / 'tables', run_dir / 'final' / 'figures'
+    catalog = read_saved_table(tables, 'image_fit_quality')
+    extra = read_saved_extra_images(tables)
+    reference = config.model.reference
+    # ModelState.reference, as core.inputs.declared_model_inputs builds it.
+    state = SimpleNamespace(reference=(int(reference.reference), float(reference.ra0_deg), float(reference.dec0_deg)))
+    # Every band is read and its draws checked before anything is written.
+    variants = []
+    for image_config in imaging_variants(config):
+        bands = tuple(image_config.bands) if image_config.bands else tuple(DEFAULT_HFF_RGB_BANDS)
+        stem = rgb_overview_stem(image_config, bands)
+        if not store.has_arrays(tables, stem):
+            log(f'[redraw] {run_dir.name}: no {stem} arrays, {image_config.image_dir} skipped')
+            continue
+        saved = store.read_arrays(tables, stem)
+        check_saved_draws(saved['draw_indices'], tables, stem)
+        variants.append((image_config, bands, stem, saved))
+    recovered = (int((catalog['image_recovery_status'].astype(str) == 'recovered').sum())
+                 if 'image_recovery_status' in catalog else len(catalog))
+    written = []
+    for image_config, bands, stem, saved in variants:
+        imaging = load_cluster_imaging(image_config, config.model, config.paths.run_name)
+        if imaging[1] != bands or rgb_overview_stem(image_config, imaging[1]) != stem:
+            raise ValueError(f'The imaging bands {imaging[1]} do not give the stem {stem}')
+        reference_image = imaging[0][cutouts.rgb_reference_band(imaging[1])]
+        expected = overview_geometry(reference_image, catalog, extra, state.reference)['x'].shape
+        if tuple(saved['determinant'].shape) != tuple(expected):
+            raise ValueError(f'{stem} holds a {saved["determinant"].shape} determinant, the band geometry is {expected}')
+        draws = SavedDraws(saved['draw_indices'], np.asarray(saved['fingerprint']).item())
+        view = replace(config, image_catalog=image_config)
+        contours = load_or_compute_contours(view, state, draws, extra, tables, log=log)
+        paths = draw_rgb_critical(view, state.reference, catalog, extra, imaging,
+                                  plots.figure_path(figures, stem + '.pdf', config.paths.figure_prefix), tables,
+                                  determinant=saved['determinant'], lower=saved['lower'], upper=saved['upper'],
+                                  contours=contours, stretch_directions=read_saved_stretch_directions(tables, stem, log=log),
+                                  fingerprint=draws.key, reporting_draws=len(draws), shared_grf=shared_grf,
+                                  grf_field=grf_field, redrawn=True, log=log)
+        contoured = store.read_figure_record(paths[0])['recovered_position_contours']
+        if recovered and not contoured:
+            log(f'[redraw] {stem}: no recovered-position contour drawn although {recovered} images are recovered')
+        written += paths
+    return written
+
+
+def main(argv=None):
+    """``python -m kappaccino.plotting.jwst_rgb RUN_DIR [RUN_DIR ...]``: :func:`redraw_rgb_critical` of each run."""
+    import argparse
+    parser = argparse.ArgumentParser(prog='python -m kappaccino.plotting.jwst_rgb',
+                                     description='Redraw the RGB critical overviews of finished runs from their saved tables.')
+    parser.add_argument('run_dirs', nargs='+', metavar='RUN_DIR', help='a run folder, e.g. results/hera/<run name>')
+    run_dirs = parser.parse_args(argv).run_dirs
+    missing = [run_dir for run_dir in run_dirs if not Path(run_dir).is_dir()]
+    if missing:
+        parser.error('not a run folder: ' + ', '.join(missing))
+    for run_dir in run_dirs:
+        for path in redraw_rgb_critical(run_dir):
+            print(f'[redraw] written: {path}')
+    return 0
 
 
 def draw_critical_interval(ax, lower, upper, color, extent=None, *, coordinates=None):
@@ -366,3 +590,6 @@ def critical_quantile_band(determinants):
 
 render_jwst_rgb_critical = render_rgb_critical
 
+
+if __name__ == '__main__':
+    raise SystemExit(main())

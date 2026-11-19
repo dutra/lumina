@@ -48,6 +48,7 @@ import pandas as pd
 from scipy.special import logsumexp as np_logsumexp
 
 from ..core.model import ModelState
+from ..io import store
 from ..io.hdf5 import save_arrays
 from .inputs import (UncertainImageInputs, association_log_weights, association_priors, build_inputs, claim_columns, claimed_groups,
                      position_loglike)
@@ -498,9 +499,9 @@ def write_partition_outputs(state: ModelState, evaluator, samples: np.ndarray, s
     Uses up to ``draws`` of ``samples`` (evenly spaced), with ``draws_per_sample`` joint draws of the partition at each.
     Writes ``<stage>/artifacts/uncertain_images.h5`` (``options``, ``image_labels``, the library ``groups`` as
     comma-separated labels, per-draw ``responsibilities``, sampled ``assignment``, ``probability`` and
-    ``pair_probability``), ``<stage>/tables/uncertain_images.csv`` (per image: the probability of every option and the
-    most probable one) and ``<stage>/tables/uncertain_pairs.csv`` (image pairs sharing a source with probability above
-    0.01).
+    ``pair_probability``) and, in ``<stage>/results.h5``, the tables ``uncertain_images`` (per image: the probability
+    of every option and the most probable one) and ``uncertain_pairs`` (image pairs sharing a source with probability
+    above 0.01).
     """
     model: GroupModel = state.uncertain_images
     samples = np.atleast_2d(np.asarray(samples, dtype=float))
@@ -517,12 +518,12 @@ def write_partition_outputs(state: ModelState, evaluator, samples: np.ndarray, s
     table.insert(0, "image_label", list(labels))
     table.insert(1, "most_probable", [options[k] for k in best])
     table.insert(2, "p_most_probable", result["probability"][np.arange(len(best)), best])
-    table.to_csv(stage.tables / "uncertain_images.csv", index=False)
+    store.write_table(stage.tables, "uncertain_images", table)
     i, j = np.triu_indices(len(labels), k=1)
     p = result["pair_probability"][i, j]
     keep = p > 0.01
     pairs = pd.DataFrame({"image_a": labels[i[keep]], "image_b": labels[j[keep]], "p_same_source": p[keep]})
-    pairs.sort_values("p_same_source", ascending=False).to_csv(stage.tables / "uncertain_pairs.csv", index=False)
+    store.write_table(stage.tables, "uncertain_pairs", pairs.sort_values("p_same_source", ascending=False))
     for label, option, probability in zip(labels, table["most_probable"], table["p_most_probable"]):
         log(f"[uncertain] {label}: {option} (p = {probability:.2f})")
     return result

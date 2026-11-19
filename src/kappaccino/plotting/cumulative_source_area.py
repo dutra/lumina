@@ -2,7 +2,7 @@
 parametric model plus the GRF."""
 from __future__ import annotations
 
-import json
+from ..io import store
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -150,14 +150,13 @@ def write_cumulative_source_area(truth, draws, cosmology, figures, tables, prefi
     with_grf = bool(draws.has_field)
     table = area_table(truth['truth']['detA'], draws.grid_maps('truth', x, y, z_source, log=log), pixel_area, with_grf=with_grf)
     volume = shell_volume_per_arcsec2(cosmology, z_source)
-    tables.mkdir(parents=True, exist_ok=True)
-    table.to_csv(tables / 'cumulative_source_area.csv', index=False)
+    store.write_table(tables, 'cumulative_source_area', table)
     metadata = dict(source_redshift=z_source, definition='sum of pixel_area/|mu| over map pixels with |mu| above the threshold',
                     region='the whole truth map', pixel_arcsec=float(np.sqrt(pixel_area)), map_area_arcsec2=float(pixel_area * np.isfinite(x).sum()),
                     field_of_view_limited_below=FIELD_LIMIT, posterior_draws=len(draws), bands='16th to 84th percentiles over the posterior draws',
                     grf='conditional realization of each draw' if with_grf else 'none',
                     comoving_volume_shell=[z_source - SHELL_HALF_WIDTH, z_source + SHELL_HALF_WIDTH], comoving_mpc3_per_arcsec2=volume)
-    (tables / 'cumulative_source_area_provenance.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    store.write_record(tables, 'cumulative_source_area_provenance', metadata)
     path = figures / f'{prefix + "_" if prefix else ""}cumulative_source_area.pdf'
     render_cumulative_area(table, z_source, volume, path)
     log(f'[outputs] cumulative source area: {path}')

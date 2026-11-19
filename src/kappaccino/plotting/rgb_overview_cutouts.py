@@ -7,7 +7,7 @@ from matplotlib.patches import Polygon
 from ..imaging.cutouts import arcsec_to_skycoord, arcsec_to_radec, cutout_window, rgb_cutout, rgb_reference_band
 from .fold_pairs import _credible_density_grid, load_fold_data, critical_curve_quantiles
 from .style import CRITICAL_COLOR
-from ..io.hdf5 import load_arrays
+from ..io import store
 
 
 
@@ -19,20 +19,20 @@ def overview_cutout_data(tables, prefix, *, image_labels=(), system_ids=(), draw
     if not image_labels and not system_ids:
         return None
     tables=Path(tables)
-    required=[tables/'posterior_overview_positions.h5',
-              tables/f'{prefix}_small_lambda_a_image_posteriors_jwst.csv',
-              tables/'fold_pairs_source_caustics.h5',tables/'fold_pairs_source_caustics.json']
-    if not all(p.exists() for p in required):
+    ranking_name=f'{prefix}_small_lambda_a_image_posteriors_jwst'
+    available=(store.has_arrays(tables,'posterior_overview_positions') and store.has_table(tables,ranking_name)
+               and store.has_arrays(tables,'fold_pairs_source_caustics') and store.has_record(tables,'fold_pairs_source_caustics'))
+    if not available:
         log('[outputs] RGB inset panels unavailable: generate posterior-position and fold diagnostics first')
         return None
-    ranking=pd.read_csv(required[1]).set_index('image_label')
-    critical_path=tables/f'{prefix}_small_lambda_a_image_posteriors_jwst_critical.h5'
+    ranking=store.read_table(tables,ranking_name).set_index('image_label')
+    critical_name=f'{ranking_name}_critical'
     critical=None
-    if critical_path.exists():
-        saved = load_arrays(critical_path)
+    if store.has_arrays(tables,critical_name):
+        saved = store.read_arrays(tables,critical_name)
         if 'lower' in saved and 'upper' in saved:
             critical={key:saved[key].copy() for key in ('centers','fovs','redshifts','median_determinant','lower','upper')}
-    data = load_arrays(required[0])
+    data = store.read_arrays(tables,'posterior_overview_positions')
     labels=data['image_labels'].astype(str).tolist()
     positions=data['recovered'].copy()
     draw_indices=data['draw_indices'].copy()

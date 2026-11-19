@@ -1,6 +1,7 @@
 """Shared block-colored posterior corner renderer."""
 from pathlib import Path
 import numpy as np
+from ..io import store
 import matplotlib.pyplot as plt
 
 BLOCK_COLORS = {'Halo': 'tab:blue', 'BCG': 'tab:purple', 'GRF + GP': '#D4B000',
@@ -170,7 +171,6 @@ def posterior_corner_data(samples, specs):
 
 def write_posterior_block_corner(samples, specs, path):
     """Write the normal-run counterpart of the aggregate truth-deviation corner."""
-    import json
     data = posterior_corner_data(samples, specs)
     if data is None or len(samples) < 3:
         return None
@@ -181,7 +181,7 @@ def write_posterior_block_corner(samples, specs, path):
                     source_pooling='Equal family weights, paired x/y with original joint global draw alignment; not a single physical source posterior.',
                     contour_color='Row block', contour_probabilities=[.68, .95],
                     bcg_identification='Explicit bcg token in potential_id; other standalone components remain in Halo.')
-    path.with_suffix('.json').write_text(json.dumps(metadata, indent=2))
+    store.write_figure_record(path, metadata)
     return path
 
 
@@ -194,13 +194,12 @@ def write_cosmology_corner(samples, specs, path):
 
 
 def _write_cosmology_corner(samples, specs, path):
-    import json
     data = posterior_corner_data(samples, specs)
     if data is None:
         return None
     path = render_block_corner(data['values'], data['weights'], data['labels'], data['groups'], path,
                                summarize=True, show_legend=False, colored_edges=False, column_summaries=True)
-    path.with_suffix('.json').write_text(json.dumps(dict(parameters=data['parameters'], labels=data['labels'],
+    store.write_figure_record(path, dict(parameters=data['parameters'], labels=data['labels'],
         draws=len(samples), color=BLOCK_COLORS['Cosmology'], contour_probabilities=[.68,.95],
-        coordinates='Physical sampled cosmology; dotted lines mark marginal medians'), indent=2))
+        coordinates='Physical sampled cosmology; dotted lines mark marginal medians'))
     return path

@@ -17,7 +17,7 @@ The model convergence is evaluated at the centres of the truth map's pixels and 
 pixel weights, so the two are measured at the same resolution.
 """
 from pathlib import Path
-import json
+from ..io import store
 
 import jax.numpy as jnp
 import matplotlib
@@ -144,7 +144,7 @@ def compute_zeta_masses(config, state, draws, members, image_xy, *, log=print):
     model = {name: {m: {'zeta': np.empty((n_draws, len(t))), 'contrast': np.empty((n_draws, len(t)))} for m in MODELS}
              for name, (t, _) in apertures.items()}
     values = np.zeros(native.size)
-    maps = draws.grid_maps('zeta truth pixels', xy[:, 0], xy[:, 1], z_source, log=log)
+    maps = draws.grid_maps('zeta truth pixels', xy[:, 0], xy[:, 1], z_source, quantities=('kappa_parametric', 'kappa'), log=log)
     for d in range(n_draws):
         for m, kappa in zip(MODELS, (maps['kappa_parametric'][d].astype(float), maps['kappa'][d].astype(float))):
             values[pixels] = kappa
@@ -154,30 +154,33 @@ def compute_zeta_masses(config, state, draws, members, image_xy, *, log=print):
     return {name: (table, model[name]) for name, (table, _) in apertures.items()}
 
 
-CACHE_NAME = 'zeta_masses_cache.h5'
+CACHE_NAME = 'zeta_masses_cache'
 
 
-def save_cache(path, results, key):
-    """Per-member tables and per-draw model arrays of ``compute_zeta_masses`` for redrawing without recomputing;
-    ``key`` is the fingerprint of the reporting draws."""
-    from ..io.hdf5 import save_arrays
+def save_cache(stage, results, key):
+    """Per-member tables and per-draw model arrays of ``compute_zeta_masses`` for redrawing without recomputing, in
+    the stage's ``cache.h5`` (``stage``: the stage folder or its ``tables``); ``key`` is the fingerprint of the
+    reporting draws."""
     arrays = {'draws_key': key}
     for name, (table, model) in results.items():
         for column in table.columns:
             values = table[column].to_numpy()
-            arrays[f'{name}__table__{column}'] = values.astype(str) if values.dtype == object else values
+            # Object cells as text, one by one: a cell may hold a list (the member table's ``kinematics``), which
+            # ``astype(str)`` would try to unpack.
+            arrays[f'{name}__table__{column}'] = np.array([str(v) for v in values], dtype=str) if values.dtype == object else values
         for m, quantities in model.items():
             for quantity, values in quantities.items():
                 arrays[f'{name}__model__{m}__{quantity}'] = values
-    save_arrays(path, **arrays)
+    store.write_cache_arrays(stage, CACHE_NAME, arrays)
 
 
-def load_cache(path, key):
-    """The results saved by ``save_cache``, or None when there is no cache or it was made with other draws."""
-    from ..io.hdf5 import load_arrays
-    if not Path(path).exists():
+def load_cache(stage, key):
+    """The results saved by ``save_cache`` (or, for an old run, its ``tables/zeta_masses_cache.h5``), or None when
+    there is no cache or it was made with other draws."""
+    try:
+        arrays = store.read_cache_arrays(stage, CACHE_NAME)
+    except store.MissingEntry:
         return None
-    arrays = load_arrays(path)
     if str(arrays.get('draws_key', '')) != key:
         return None
     results = {}
@@ -328,18 +331,18 @@ def select_members(table, model, keep):
 def write_zeta_masses(config, state, draws, paths, image_df, *, recompute=False, log=print):
     """Zeta masses (10 kpc aperture) and concentrations (R_e aperture) of a Hera or Ares run with a truth map:
     ``<prefix>_subhalo_mass_concentration.pdf`` (``render_subhalo_figure``) with the members ``well_measured`` in both.
-    The masses come from ``zeta_masses_cache.h5`` in the run's tables when it was made with the same reporting draws and ``recompute`` is False, and are otherwise computed and cached there.  Also writes, in the run's tables,
-    ``member_zeta_masses.csv`` (one row per member and aperture: truth and the model median, 16th and 84th
-    percentiles), ``zeta_mass_function.csv`` and ``zeta_masses.json`` (summary).  Made for every run with a true
+    The masses come from the stage's cache (``zeta_masses_cache``) when it was made with the same reporting draws and ``recompute`` is False, and are otherwise computed and cached there.  Also writes to the stage's results
+    the tables ``member_zeta_masses`` (one row per member and aperture: truth and the model median, 16th and 84th
+    percentiles) and ``zeta_mass_function`` and the record ``zeta_masses`` (summary).  Made for every run with a true
     convergence map and cluster members; returns None otherwise."""
     prefix = str(config.paths.figure_prefix or '')
     if not config.truth.kappa_true_fits or not len(state.members.member_ids):
         log('[zeta] skipped: no true convergence map or no cluster members')
         return None
-    members = pd.read_csv(paths.tables / 'member_diagnostics.csv', dtype={'member_id': str, 'catalog_id': str})
+    members = store.read_table(paths.tables, 'member_diagnostics', legacy_csv=dict(dtype={'member_id': str, 'catalog_id': str}))
     if members.member_id.tolist() != list(state.members.member_ids):
         raise ValueError('Zeta-mass catalog identities differ from saved model')
-    cache = paths.tables / CACHE_NAME
+    cache = paths.tables
     key = f'{draws.key}-rebin{REBIN}'
     results = None if recompute else load_cache(cache, key)
     if results is None:
@@ -347,7 +350,7 @@ def write_zeta_masses(config, state, draws, paths, image_df, *, recompute=False,
                                       image_df[['x_obs_arcsec', 'y_obs_arcsec']].to_numpy(float), log=log)
         save_cache(cache, results, key)
     else:
-        log(f'[zeta] using the cached masses in {cache}')
+        log(f'[zeta] using the cached masses in {store.cache_path(cache)}')
     rows, summary = [], {'n_draws': int(next(iter(results.values()))[1]['full']['zeta'].shape[0]),
                          'excluded': f'the {N_BRIGHTEST_EXCLUDED} brightest members (BCGs); the figure also leaves out members whose 16-84% range of zeta mass or concentration exceeds {MAX_RELATIVE_WIDTH:g} |median| (well_measured)',
                          'definition': 'zeta = M(<r1) - A1 [M(<r2) - M(<r1)]/(A2 - A1), concentration = kappa(<r1)/kappa(r1-r2) - 1, '
@@ -374,7 +377,7 @@ def write_zeta_masses(config, state, draws, paths, image_df, *, recompute=False,
                 entry[f'{m}_zeta_ratio_{sample}'] = {'n': int(len(values)), 'median': float(median), 'p25': float(low), 'p75': float(high)}
         summary[name] = entry
         rows.append(out)
-    pd.concat(rows, ignore_index=True).to_csv(paths.tables / 'member_zeta_masses.csv', index=False)
+    store.write_table(paths.tables, 'member_zeta_masses', pd.concat(rows, ignore_index=True))
     path = paths.figures / f'{prefix}_subhalo_mass_concentration.pdf'
     mass_table, mass_model = results['10kpc']
     concentration_table, concentration_model = results['re']
@@ -385,8 +388,8 @@ def write_zeta_masses(config, state, draws, paths, image_df, *, recompute=False,
     table = mass_table.assign(truth_contrast=concentration_table.truth_contrast)
     table, mass_model = select_members(table, mass_model, keep)
     _, concentration_model = select_members(concentration_table, concentration_model, keep)
-    render_subhalo_figure(table, mass_model, concentration_model, path).to_csv(paths.tables / 'zeta_mass_function.csv', index=False)
-    (paths.tables / 'zeta_masses.json').write_text(json.dumps(summary, indent=2) + '\n')
+    store.write_table(paths.tables, 'zeta_mass_function', render_subhalo_figure(table, mass_model, concentration_model, path))
+    store.write_record(paths.tables, 'zeta_masses', summary)
     log(f'[zeta] wrote {path}; {int(keep.sum())} of {len(keep)} members shown (well measured in both, error bars within '
         f'{MAX_MASS_WIDTH_DEX:g} dex and {MAX_CONCENTRATION_WIDTH:g})')
     return path

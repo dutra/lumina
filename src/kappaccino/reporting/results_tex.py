@@ -6,6 +6,7 @@ import json
 import math
 import re
 from pathlib import Path
+from ..io import store
 from ..io.hdf5 import load_arrays
 
 _DIGITS = ('Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine')
@@ -44,6 +45,23 @@ def _read(path):
     return json.loads(path.read_text()) if path.exists() else {}
 
 
+def _record(final, name):
+    """The record ``name`` of the stage ``final`` (:func:`kappaccino.io.store.read_record`); {} when missing."""
+    try:
+        return store.read_record(final, name)
+    except store.MissingEntry:
+        return {}
+
+
+def _table(final, name, **legacy_csv):
+    """The table ``name`` of the stage ``final``, or None when missing; an old run's CSV is read with
+    ``pd.read_csv(path, **legacy_csv)``, as before the tables moved into ``results.h5``."""
+    try:
+        return store.read_table(final, name, legacy_csv=legacy_csv)
+    except store.MissingEntry:
+        return None
+
+
 def _write(path, prefix, metrics, comments):
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = ['% Generated results. Do not edit; regenerate from saved artifacts.',
@@ -69,11 +87,11 @@ def m0416_table_metrics(final):
     """Saved-draw model comparison; R25 published Tables 4--5, A&A 696, A15 (2025)."""
     import numpy as np
     import pandas as pd
-    summary_path = final / 'tables/posterior_summary.csv'
     state_path = final.parent / 'init/artifacts/state.json'
-    if not summary_path.exists() or not state_path.exists():
+    table = _table(final, 'posterior_summary')
+    if table is None or not state_path.exists():
         return {}
-    table = pd.read_csv(summary_path).set_index('parameter')
+    table = table.set_index('parameter')
     state = _read(state_path)
     scale = state['kpc_per_arcsec']
     result = {}
@@ -96,8 +114,7 @@ def m0416_table_metrics(final):
             result[label] = interval(row['median'],row['median']-row.p16,row.p84-row['median'],decimals)
     result['ComparisonMagnitude'] = '17.02'
     posterior_path = final / 'artifacts/posterior.h5'
-    members_path = final / 'tables/member_diagnostics.csv'
-    if posterior_path.exists() and members_path.exists():
+    if posterior_path.exists() and store.has_table(final, 'member_diagnostics'):
         archive = load_arrays(posterior_path)
         physical = archive['physical']
         index = {spec['name']:i for i,spec in enumerate(state['parameter_specs'])}
@@ -109,18 +126,17 @@ def m0416_table_metrics(final):
         def quantile(key, values, decimals):
             low, median, high = np.quantile(values,[.16,.5,.84])
             result[key] = interval(median,median-low,high-median,decimals)
-        members = pd.read_csv(members_path)
+        members = _table(final, 'member_diagnostics')
         group = members[members.potfile_id == 'potfile_1']
         pivots = group.catalog_mag + 2.5*np.log10(group.luminosity_ratio)
         pivot = float(pivots.median())
         np.testing.assert_allclose(pivots,pivot,atol=1e-8)
         quantile('ScalingSigma',v('sigma')*10**(.4*v('alpha_sigma')*(pivot-17.02)),0)
         quantile('ScalingCut',v('cutkpc')/scale*10**(.4*v('beta_radius')*(pivot-17.02)),1)
-        deviations_path = final / 'tables/member_diagnostic_draws.h5'
         match = np.flatnonzero(members.member_id.to_numpy() == 'potfile_1:8971')
-        if len(match)==1 and deviations_path.exists():
+        if len(match)==1 and store.has_arrays(final, 'member_diagnostic_draws'):
             j = int(match[0])
-            archive = load_arrays(deviations_path)
+            archive = store.read_arrays(final, 'member_diagnostic_draws')
             deviations = archive['deviations']
             if deviations.shape != (len(physical),len(members),2):
                 raise ValueError('Member deviation draws do not align with saved posterior')
@@ -266,20 +282,18 @@ def write_halo_table(path, name, prefix, rows) -> Path:
 def footprint_metrics(final, cfg):
     """Mean model/true ratios within the image footprint (``truth_recovery.footprint_mean_ratios``) from the saved
     profile tables, for a simulated cluster with a truth map; empty otherwise.  This work's numbers are the medians over
-    the saved posterior draws (``truth_recovery_*_ratio_draws.csv``), with ``...Interval`` macros carrying the 16-84 per
+    the saved posterior draws (tables ``truth_recovery_*_ratio_draws``), with ``...Interval`` macros carrying the 16-84 per
     cent range; without those tables they come from the median profile and the intervals are not available."""
     import numpy as np
     import pandas as pd
     from ..config import TruthRecoveryConfig
     from ..diagnostics.truth_recovery import footprint_mean_ratios, literature_ratios
-    tables = final / 'tables'
-    paths = [tables / f for f in ('truth_recovery_m2d_aperture_profile.csv', 'truth_recovery_kappa_annulus_profile.csv',
-                                  'image_fit_quality.csv')]
-    if not all(path.exists() for path in paths) or not cfg.get('truth', {}).get('kappa_true_fits'):
+    names = ('truth_recovery_m2d_aperture_profile', 'truth_recovery_kappa_annulus_profile', 'image_fit_quality')
+    if not all(store.has_table(final, name) for name in names) or not cfg.get('truth', {}).get('kappa_true_fits'):
         return {}
-    mass, kappa, images = (pd.read_csv(path) for path in paths)
-    draws = [tables / f for f in ('truth_recovery_m2d_aperture_ratio_draws.csv', 'truth_recovery_kappa_annulus_ratio_draws.csv')]
-    mass_draws, kappa_draws = (pd.read_csv(path) for path in draws) if all(path.exists() for path in draws) else (None, None)
+    mass, kappa, images = (_table(final, name) for name in names)
+    draws = ('truth_recovery_m2d_aperture_ratio_draws', 'truth_recovery_kappa_annulus_ratio_draws')
+    mass_draws, kappa_draws = (_table(final, name) for name in draws) if all(store.has_table(final, name) for name in draws) else (None, None)
     radii = np.hypot(images['x_obs_arcsec'] - mass['center_x_arcsec'].iloc[0], images['y_obs_arcsec'] - mass['center_y_arcsec'].iloc[0])
     truth = TruthRecoveryConfig(**cfg['truth'])
     found = footprint_mean_ratios(mass, kappa, radii.to_numpy(float), literature_ratios(truth, 'mass'),
@@ -312,8 +326,8 @@ _REFERENCE_NAMES = {3: 'Three', 10: 'Ten', 30: 'Thirty'}
 
 
 def truth_magnification_metrics(final):
-    """Magnification against the truth of a simulated cluster, from ``magnification_scatter.csv`` and
-    ``cumulative_source_area.csv``; every macro is "not available" without its table.
+    """Magnification against the truth of a simulated cluster, from the tables ``magnification_scatter`` and
+    ``cumulative_source_area``; every macro is "not available" without its table.
 
     ``MagnificationScatterMu<Three|Ten>Percent`` and ``MagnificationBiasMu...Percent``: scatter and bias of the model
     magnification over the reporting draws at the map pixels where the truth has that magnification
@@ -324,9 +338,9 @@ def truth_magnification_metrics(final):
     import numpy as np
     import pandas as pd
     result = {}
-    scatter_path, area_path = final / 'tables/magnification_scatter.csv', final / 'tables/cumulative_source_area.csv'
-    scatter = pd.read_csv(scatter_path).set_index(['model', 'mu_ref']) if scatter_path.exists() else None
-    area = pd.read_csv(area_path) if area_path.exists() else None
+    scatter = _table(final, 'magnification_scatter')
+    scatter = scatter.set_index(['model', 'mu_ref']) if scatter is not None else None
+    area = _table(final, 'cumulative_source_area')
     for prefix, model in (('', 'model'), ('LensOnly', 'parametric')):
         for mu in (3, 10):
             for suffix, column in (('Scatter', 'scatter'), ('Bias', 'bias')):
@@ -388,16 +402,17 @@ def count_metrics(suffix, values, decimals=0):
             suffix + 'Interval': interval(median, median - values['q16'], values['q84'] - median, decimals)}
 
 
-def posterior_residual_metrics(path, prefix):
+def posterior_residual_metrics(final, name, prefix):
     """``<prefix>RMS`` and ``<prefix>MedianResidual`` (arcsec, three decimals, for math mode): the median and 16th-84th
-    percentile range over the posterior draws in ``path`` (``posterior_image_residual_draws*.csv``) of each draw's RMS
-    and median residual of its recovered images; "not available" without the table."""
+    percentile range over the posterior draws in the table ``name`` of the stage ``final``
+    (``posterior_image_residual_draws*``) of each draw's RMS and median residual of its recovered images; "not
+    available" without the table."""
     import numpy as np
     import pandas as pd
     result = {prefix + 'RMS': number(None), prefix + 'MedianResidual': number(None)}
-    if not Path(path).exists():
+    draws = _table(final, name)
+    if draws is None:
         return result
-    draws = pd.read_csv(path)
     values = pd.to_numeric(draws['image_residual_arcsec'], errors='coerce')
     draws = draws.assign(r=values)[draws['recovered'].astype(bool) & np.isfinite(values) & (values >= 0)]
     if draws.empty:
@@ -423,16 +438,16 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
     Files read (relative to the run root; all except the first are optional):
     ``final/artifacts/summary.json``, ``final/artifacts/config.json``,
     ``final/artifacts/posterior_diagnostics.json``,
-    ``final/tables/run_summary.json``, ``final/tables/runtime.json``,
-    ``final/tables/posterior_summary.csv``,
-    ``final/tables/posterior_image_rms.csv``,
-    ``final/tables/image_fit_quality.csv`` and
-    ``final/tables/aperture_mass_histogram.json``. For an M0416 run (``name``
-    containing ``m0416`` or ``mj0416``) it also reads
-    ``final/artifacts/posterior.h5``, ``final/tables/member_diagnostics.csv``,
-    ``final/tables/member_diagnostic_draws.h5`` and
-    ``init/artifacts/state.json`` to add halo and scaling-relation macros
-    comparable with Rihtarsic et al. (2025).
+    and from ``final/results.h5`` (:mod:`kappaccino.io.store`; the loose
+    ``final/tables/<name>.csv`` and ``.json`` files of an old run) the records
+    ``run_summary``, ``runtime`` and ``aperture_mass_histogram`` and the tables
+    ``posterior_summary``, ``posterior_image_residual_draws*``,
+    ``posterior_image_rms``, ``position_coverage`` and ``image_fit_quality``.
+    For an M0416 run (``name`` containing ``m0416`` or ``mj0416``) it also
+    reads ``final/artifacts/posterior.h5``, the table ``member_diagnostics``,
+    the arrays ``member_diagnostic_draws`` and ``init/artifacts/state.json`` to
+    add halo and scaling-relation macros comparable with Rihtarsic et al.
+    (2025).
 
     Main suffixes: counts (``NImages``, ``NRecovered``, ``NMissed``,
     ``NFamilies``, ``NFamiliesRecovered``, ``NParameters``, ``NMembers``,
@@ -478,8 +493,8 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
         M0416 run, the saved member deviation draws do not align with the saved
         posterior.
     AssertionError
-        For an M0416 run, if the saved posterior draws disagree with
-        ``posterior_summary.csv`` or ``member_diagnostics.csv``.
+        For an M0416 run, if the saved posterior draws disagree with the
+        tables ``posterior_summary`` or ``member_diagnostics``.
     """
     final = Path(final_dir)
     if not (final / 'artifacts/summary.json').is_file():
@@ -488,9 +503,9 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
     name = name or cfg.get('paths', {}).get('figure_prefix') or final.parent.name
     filename = re.sub(r'[^A-Za-z0-9_-]', '_', name)
     summary = _read(final / 'artifacts/summary.json')
-    fit = _read(final / 'tables/run_summary.json').get('fit', {})
+    fit = _record(final, 'run_summary').get('fit', {})
     diag = _read(final / 'artifacts/posterior_diagnostics.json') or summary.get('nuts', {})
-    timing = _read(final / 'tables/runtime.json')
+    timing = _record(final, 'runtime')
     metrics = {}
     for suffix, value in {
         'NImages': fit.get('observed_image_count', summary.get('images')),
@@ -505,8 +520,8 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
     members, exact = summary.get('members'), summary.get('exact_members')
     metrics['NFarFieldMembers'] = number(members-exact if members is not None and exact is not None else None, 0)
     # Image residuals: median and 16-84% range over the saved posterior draws (each draw's own lens, and the parametric lens without its GRF realization).
-    for prefix, table in (('', 'posterior_image_residual_draws.csv'), ('LensOnly', 'posterior_image_residual_draws_lens_only.csv')):
-        metrics.update(posterior_residual_metrics(final / 'tables' / table, prefix))
+    for prefix, table in (('', 'posterior_image_residual_draws'), ('LensOnly', 'posterior_image_residual_draws_lens_only')):
+        metrics.update(posterior_residual_metrics(final, table, prefix))
     # Counts over the reporting draws: median, with the 16-84% range in ...Interval (knee-GP runs have LensOnly...).
     total = fit.get('observed_image_count')
     for suffix, key in (('NRecovered', 'recovered_image_count'), ('NLensOnlyRecovered', 'lens_only_recovered_image_count'),
@@ -520,8 +535,8 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
     # Keep the median individual residual distinct from the median of draw RMSs.
     import numpy as np
     import pandas as pd
-    parameter_path = final / 'tables/posterior_summary.csv'
-    parameters = pd.read_csv(parameter_path).set_index('parameter') if parameter_path.exists() else pd.DataFrame()
+    parameters = _table(final, 'posterior_summary')
+    parameters = parameters.set_index('parameter') if parameters is not None else pd.DataFrame()
     for suffix, parameter, decimals in [
         ('SigmaGP', 'images.sigma_gp', 3),
         ('SigmaMeas', 'images.sigma_meas', 3),
@@ -537,12 +552,12 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
             metrics[suffix+'Interval'] = interval(value, value-row.p16, row.p84-value, decimals)
     metrics.update(error_budget_metrics(final))
     metrics['GRFReferenceRedshift'] = number(cfg.get('likelihood', {}).get('gp_reference_redshift'), 1)
-    rms_path = final / 'tables/posterior_image_rms.csv'
+    rms = _table(final, 'posterior_image_rms')
     metrics['NPosteriorRMSDraws'] = number(None, 0)
-    if rms_path.exists():
-        metrics['NPosteriorRMSDraws'] = str(int(np.isfinite(pd.read_csv(rms_path)['image_rms_arcsec'].to_numpy(float)).sum()))
-    coverage_path = final / 'tables/position_coverage.csv'
-    coverage = pd.read_csv(coverage_path) if coverage_path.exists() else pd.DataFrame()
+    if rms is not None:
+        metrics['NPosteriorRMSDraws'] = str(int(np.isfinite(rms['image_rms_arcsec'].to_numpy(float)).sum()))
+    coverage = _table(final, 'position_coverage')
+    coverage = coverage if coverage is not None else pd.DataFrame()
     levels = coverage['credible_level'].to_numpy(float) if 'credible_level' in coverage else np.empty(0)
     levels = levels[np.isfinite(levels)]
     metrics['NPositionCoverage'] = str(len(levels)) if len(coverage) else number(None, 0)
@@ -560,7 +575,7 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
     metrics.update(halo_metrics)
     if halo_rows:
         write_halo_table(final / 'figures' / f'{filename}_halo_table.tex', name, command_prefix(name), halo_rows)
-    aperture = _read(final / 'tables/aperture_mass_histogram.json')
+    aperture = _record(final, 'aperture_mass_histogram')
     if aperture:
         metrics['ApertureEffectiveRadiusNormalizationKpc'] = number(aperture['normalization_kpc'], 1)
         for sample, label in [('all', 'All'), ('image_hull', 'ImageFootprint')]:

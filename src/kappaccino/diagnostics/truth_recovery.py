@@ -23,6 +23,7 @@ from astropy.wcs import WCS, FITSFixedWarning
 from scipy.ndimage import gaussian_filter, map_coordinates
 
 from ..config import TruthRecoveryConfig
+from ..io import store
 from ..core.model import ModelState
 from ..likelihood.grf_fields import shared_field_evaluator, shared_grf_label
 
@@ -408,11 +409,11 @@ def compute_truth_recovery(state: ModelState, draws, config: TruthRecoveryConfig
     Writes to ``fits_dir`` ``truth_recovery_<q>_model_median.fits``, ``truth_recovery_<q>_model_q16.fits`` and
     ``truth_recovery_<q>_model_q84.fits`` (the percentiles over the draws; q16 and q84 only with at least two) and
     ``truth_recovery_<q>_true.fits`` for each quantity ``q`` in ``kappa``, ``gamma1``, ``gamma2``, ``detA``, ``mu``,
-    ``abs_mu`` that the truth provides; and ``truth_recovery_m2d_aperture_profile.csv`` (enclosed convergence of
+    ``abs_mu`` that the truth provides; and the tables ``truth_recovery_m2d_aperture_profile`` (enclosed convergence of
     truth and model in circular apertures about the smoothed truth-convergence peak),
-    ``truth_recovery_kappa_annulus_profile.csv`` and, with at least two draws, the model/true ratio of every draw in
-    ``truth_recovery_m2d_aperture_ratio_draws.csv`` and ``truth_recovery_kappa_annulus_ratio_draws.csv``
-    (``ratio_draws_table``) to ``tables_dir``.
+    ``truth_recovery_kappa_annulus_profile`` and, with at least two draws, the model/true ratio of every draw in
+    ``truth_recovery_m2d_aperture_ratio_draws`` and ``truth_recovery_kappa_annulus_ratio_draws``
+    (``ratio_draws_table``) to the stage's ``results.h5`` (:mod:`kappaccino.io.store`).
 
     Parameters
     ----------
@@ -427,7 +428,7 @@ def compute_truth_recovery(state: ModelState, draws, config: TruthRecoveryConfig
     fits_dir : pathlib.Path
         Output directory of the FITS grids (created if missing).
     tables_dir : pathlib.Path
-        Output directory of the aperture-profile table.
+        The stage folder (or its ``tables`` folder) whose ``results.h5`` receives the profile tables.
     log : callable, optional
         Logging function.  Default ``print``.
 
@@ -483,12 +484,12 @@ def compute_truth_recovery(state: ModelState, draws, config: TruthRecoveryConfig
     if center is not None:
         profile, profile_draws = aperture_profile(truth["kappa"], grids["kappa"], x, y, center, return_draws=True)
         kappa_profile, kappa_draws = annular_kappa_profile(truth["kappa"], grids["kappa"], x, y, center, return_draws=True)
-        tables_dir.mkdir(parents=True, exist_ok=True)
-        profile.to_csv(tables_dir / "truth_recovery_m2d_aperture_profile.csv", index=False)
-        kappa_profile.to_csv(tables_dir / "truth_recovery_kappa_annulus_profile.csv", index=False)
-        if n_draws > 1:
-            profile_draws.to_csv(tables_dir / "truth_recovery_m2d_aperture_ratio_draws.csv", index=False)
-            kappa_draws.to_csv(tables_dir / "truth_recovery_kappa_annulus_ratio_draws.csv", index=False)
+        with store.batch(tables_dir):
+            store.write_table(tables_dir, "truth_recovery_m2d_aperture_profile", profile)
+            store.write_table(tables_dir, "truth_recovery_kappa_annulus_profile", kappa_profile)
+            if n_draws > 1:
+                store.write_table(tables_dir, "truth_recovery_m2d_aperture_ratio_draws", profile_draws)
+                store.write_table(tables_dir, "truth_recovery_kappa_annulus_ratio_draws", kappa_draws)
     return {"wcs": wcs, "shape": shape, "x": x, "y": y, "truth": truth, "model": products, "profile": profile, "kappa_profile": kappa_profile, "center": center,
             "grf_included": grf_included,
             "z_source": z_source, "mass_per_kappa_pixel_msun": mass_per_kappa_pixel_msun(state, wcs, z_source),

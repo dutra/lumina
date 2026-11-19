@@ -49,10 +49,11 @@ def describe(config, profiles=()) -> str:
 
 def config_hash(config) -> str:
     """Six hex characters identifying a configuration: a hash of everything the pipeline compares when it resumes a
-    run (the whole configuration but ``paths`` and the WBIC settings, which a finished run may add).  Equal hashes are
-    resumable runs; any change, a prior set with ``--set`` included, gives a new folder."""
-    from .pipeline import _without_wbic
-    payload = {key: value for key, value in _without_wbic(config.to_json_dict()).items() if key != "paths"}
+    run (the whole configuration but ``paths``, the WBIC settings, which a finished run may add, and the performance
+    settings such as ``runtime.output_workers``: ``pipeline.resume_payload``).  Equal hashes are resumable runs; any
+    other change, a prior set with ``--set`` included, gives a new folder."""
+    from .pipeline import resume_payload
+    payload = {key: value for key, value in resume_payload(config.to_json_dict()).items() if key != "paths"}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:6]
 
 

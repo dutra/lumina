@@ -235,3 +235,38 @@ def test_halo_table_macros_and_table(tmp_path):
     assert metrics['CompOneSigmaPrior'] == r'\mathcal{LN}_{[100,\infty)}(\ln 800,0.25)'
     text = write_halo_table(tmp_path / 'toy_halo_table.tex', 'toy', 'Toy', rows).read_text()
     assert r'Halo 1 & $x$ (arcsec) & $\ToyCompOneXPrior$ & $\ToyCompOneX$ \\' in text and r'\label{tab:halos_toy}' in text
+
+
+def test_same_macros_from_results_h5_and_from_the_old_loose_files(tmp_path):
+    """A run in the new layout (final/results.h5) and the same run as an old run's loose tables give the same file."""
+    from kappaccino.io import store
+    tables = {'posterior_image_residual_draws': pd.DataFrame({'draw_index': [0, 0, 1, 1], 'recovered': [True, False, True, True],
+                                                              'family_id': ['1', '1', '1', '1'],
+                                                              'image_residual_arcsec': [.3, np.nan, .4, .6]}),
+              'posterior_image_rms': pd.DataFrame({'image_rms_arcsec': [.02, .07, np.nan]}),
+              'position_coverage': pd.DataFrame({'image_label': ['a', 'b'], 'credible_level': [.3, .9]}),
+              'posterior_summary': pd.DataFrame({'parameter': ['images.sigma_gp'], 'median': [.068], 'p16': [.055], 'p84': [.081]})}
+    records = {'run_summary': {'fit': {'observed_image_count': 3, 'recovered_image_count': {'median': 2., 'q16': 1., 'q84': 3.}}},
+               'runtime': {'total': 3661.}, 'aperture_mass_histogram': {'normalization_kpc': 2.0, 'samples': {
+                   sample: dict(n=3, median=1.1, p25=.9, p75=1.3, iqr=.4, Q=1.2) for sample in ('all', 'image_hull')}}}
+    texts = []
+    for layout in ('legacy', 'store'):
+        final = tmp_path / layout / 'final'
+        (final / 'artifacts').mkdir(parents=True)
+        (final / 'artifacts/summary.json').write_text(json.dumps({'images': 3, 'members': 8, 'exact_members': 2}))
+        for name, frame in tables.items():
+            if layout == 'store':
+                store.write_table(final, name, frame)
+            else:
+                (final / 'tables').mkdir(exist_ok=True)
+                frame.to_csv(final / 'tables' / f'{name}.csv', index=False)
+        for name, record in records.items():
+            if layout == 'store':
+                store.write_record(final, name, record)
+            else:
+                (final / 'tables' / f'{name}.json').write_text(json.dumps(record))
+        texts.append(write_run_results(final, name='hera').read_text())
+    assert texts[0] == texts[1]
+    assert r'\HeraRuntimeHours}{1.017}' in texts[1] and r'\HeraNPosteriorRMSDraws}{2}' in texts[1]
+    assert r'\HeraApertureMassRatioAllMedian}{1.100}' in texts[1]
+    assert not (tmp_path / 'store' / 'final' / 'tables').exists()

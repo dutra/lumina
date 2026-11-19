@@ -1,5 +1,6 @@
 from dataclasses import replace
 import json
+from kappaccino.io import store
 from types import SimpleNamespace
 
 import jax
@@ -95,7 +96,7 @@ def test_suite_with_one_reporting_draw(synthetic_config, tmp_path):
     assert not list(paths.figures.glob('*scaling_correlations.pdf'))
     for path in results:
         assert path.read_bytes().startswith(b'%PDF')
-    provenance = json.loads((paths.tables/'member_diagnostic_provenance.json').read_text())
+    provenance = store.read_record(paths.tables, 'member_diagnostic_provenance')
     assert provenance['source_definition'].startswith('sampled-model')
     assert plt.rcParams['font.size'] == style
     assert not plt.get_fignums()
@@ -176,7 +177,7 @@ def test_failed_budget_is_saved_without_changing_classes(synthetic_config, tmp_p
     evaluator = Evaluator(state)
     paths = SimpleNamespace(figures=tmp_path/'figures', tables=tmp_path/'tables')
     write_member_diagnostic_plots(config, state, evaluator, posterior_for(state, evaluator), paths)
-    p = json.loads((paths.tables/'member_diagnostic_provenance.json').read_text())
+    p = store.read_record(paths.tables, 'member_diagnostic_provenance')
     assert p['failed_error_images']
     assert p['failed_error_members']
     np.testing.assert_array_equal(state.members.exact_positions, before)

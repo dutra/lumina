@@ -1,6 +1,6 @@
 """JWST image-position posterior cutouts ranked by largest posterior position uncertainty."""
 from pathlib import Path
-import json
+
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +12,7 @@ from ..imaging.cutouts import arcsec_to_skycoord, arcsec_to_radec, cutout_window
 from .grf import PLOT_FIELD_VERSION
 from .fold_pairs import _credible_density_grid
 from .style import PAPER_STYLE, CRITICAL_COLOR
-from ..io.hdf5 import load_arrays, save_arrays
+from ..io import store
 
 
 def posterior_axis_statistics(positions):
@@ -124,7 +124,7 @@ def write_small_lambda_jwst(config, state, draws, paths, imaging, position_conto
         rows.loc[row_index,'fov_arcsec']=fov
         if len(selected)>=count:break
     if not selected:
-        rows.to_csv(paths.tables/f'{stem}.csv',index=False)
+        store.write_table(paths.tables,stem,rows)
         log('[outputs] small-lambda JWST cutouts skipped: no resolved posterior contours within imaging')
         return None
     stem=f'{config.paths.figure_prefix}_small_lambda_a_image_posteriors_jwst'
@@ -171,8 +171,8 @@ def write_small_lambda_jwst(config, state, draws, paths, imaging, position_conto
         ax.set(xlim=(-.5,rgb.shape[1]-.5),ylim=(-.5,rgb.shape[0]-.5),xticks=[],yticks=[]);ax.grid(False)
     for ax in axes.flat[len(selected):]:ax.set_visible(False)
     output=paths.figures/f'{stem}.pdf';fig.savefig(output,dpi=350,bbox_inches='tight',pad_inches=0);plt.close(fig)
-    rows.to_csv(paths.tables/f'{stem}.csv',index=False)
-    save_arrays(paths.tables/f'{stem}.h5',lambda_a=values,draw_indices=indices,image_labels=labels,
+    store.write_table(paths.tables,stem,rows)
+    store.write_arrays(paths.tables,stem,lambda_a=values,draw_indices=indices,image_labels=labels,
                         abs_lambda_a_quantiles=quantiles,observed_xy=xy,posterior_axis_statistics=axis_statistics)
     info=dict(run=str(paths.figures.parent),image_dir=config.image_catalog.image_dir,bands=list(bands),minimum_fov_arcsec=minimum_fov,
         critical_curve='Blue: zero contour of posterior median determinant at each source redshift; parametric + shared GRF when enabled',critical_draw_indices=critical_indices.tolist(),critical_band='16-84% determinant interval from the same smoothed parametric + GRF draws',
@@ -182,6 +182,6 @@ def write_small_lambda_jwst(config, state, draws, paths, imaging, position_conto
         jacobian_max_asymmetry=max(asymmetries),singular_value_check='abs(lambda_a) checked against smallest singular value for every image/draw',
         position_contours='Predicted observed positions; 68.2689492% (solid) and 95.4499736% (dashed) KDE highest-density regions, conditional on successful local image recovery; no covariance ellipses',
         draw_indices=indices.tolist(),posterior_cache_fingerprint=fingerprint,selected=contour_rows)
-    (paths.tables/f'{stem}.json').write_text(json.dumps(info,indent=2)+'\n')
+    store.write_record(paths.tables,stem,info)
     log(f'[outputs] small-lambda JWST cutouts: {output}')
     return output

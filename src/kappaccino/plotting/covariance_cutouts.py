@@ -1,6 +1,6 @@
 """RGB comparison of linear and quadratic lens-map uncertainty contours."""
 from pathlib import Path
-import json
+
 
 import contourpy
 import jax
@@ -15,7 +15,7 @@ from ..imaging.cutouts import arcsec_to_radec, arcsec_to_skycoord, cutout_window
 from ..diagnostics.exact_images import ExactImageSolver
 from .plots import figure_path
 from ..likelihood.smoothed import source_covariance
-from ..io.hdf5 import save_arrays
+from ..io import store
 
 STYLE = Path(__file__).with_name('style.mplstyle')
 TOTAL, MEASUREMENT, QUADRATIC = '#00e5ff', '#ffb347', '#ff73df'
@@ -83,17 +83,15 @@ def write_covariance_cutouts(config, state, draws, paths, imaging, *, log=print)
     """Up to twelve cutouts of the images with the smallest median |lambda_arc|, from the median local mapping over the
     reporting draws; reuses already loaded cluster imaging."""
     stem = f'small_lambda_covariance_cutouts{config.image_catalog.figure_suffix}'
-    metadata_path = paths.tables / f'{stem}.json'
-    paths.tables.mkdir(parents=True, exist_ok=True)
     if config.likelihood.likelihood_mode != 'smoothed':
-        metadata_path.write_text(json.dumps({'skipped': 'Requires the smoothed likelihood'}))
+        store.write_record(paths.tables, stem, {'skipped': 'Requires the smoothed likelihood'})
         return None
     evaluator = draws.evaluator
     g = median_geometry(state, draws)
     labels = list(state.images.image_labels)
     order = sorted(np.flatnonzero(g['valid']), key=lambda i: (g['singular'][i, 0], labels[i]))[:12]
     if not order:
-        metadata_path.write_text(json.dumps({'skipped': 'No finite nonsingular image-plane covariance'}))
+        store.write_record(paths.tables, stem, {'skipped': 'No finite nonsingular image-plane covariance'})
         return None
     images, bands, display, _ = imaging
     reference = images[rgb_reference_band(bands)]
@@ -101,9 +99,8 @@ def write_covariance_cutouts(config, state, draws, paths, imaging, *, log=print)
     families = {str(f.family_id): f for f in state.family_data}
     records, contours = [], {}
     intervals = None
-    width_path, info_path = paths.tables / 'covariance_errors_both_planes.csv', paths.tables / 'covariance_errors_both_planes.json'
-    if width_path.exists() and info_path.exists():
-        intervals = pd.read_csv(width_path, dtype={'image_label': str}).query("plane == 'image' and direction == 'arc'").set_index('image_label')
+    if store.has_table(paths.tables, 'covariance_errors_both_planes') and store.has_record(paths.tables, 'covariance_errors_both_planes'):
+        intervals = store.read_table(paths.tables, 'covariance_errors_both_planes', legacy_csv=dict(dtype={'image_label': str})).query("plane == 'image' and direction == 'arc'").set_index('image_label')
     for i in order:
         family_id = state.images.family_ids[int(state.images.family_index_per_image[i])]
         family = families[str(family_id)]
@@ -208,11 +205,12 @@ def write_covariance_cutouts(config, state, draws, paths, imaging, *, log=print)
                          'Quadratic contours are geometric diagnostics, not calibrated probability contours. Median over posterior draws of A, B and C; each family redshift.',
                          ha='center', fontsize=8)
                 pdf.savefig(fig); plt.close(fig)
-    pd.DataFrame(records).to_csv(paths.tables / f'{stem}.csv', index=False)
-    save_arrays(paths.tables / f'{stem}_contours.h5',
-             **{f'image_{i}_segment_{k}': seg for i in order for k, seg in enumerate(contours[i])})
-    metadata_path.write_text(json.dumps(dict(posterior_draw_indices=np.asarray(draws.indices).tolist(), definition=DEFINITION, selection='12 smallest absolute Jacobian singular values; ties by image label',
-                                            kernel='exact', excluded_singular_or_nonfinite=int((~g['valid']).sum()), records=records,
-                                            rgb_files={band: str(image.path) for band, image in images.items()}), indent=2))
+    with store.batch(paths.tables):
+        store.write_table(paths.tables, stem, pd.DataFrame(records))
+        store.write_arrays(paths.tables, f'{stem}_contours',
+                           {f'image_{i}_segment_{k}': seg for i in order for k, seg in enumerate(contours[i])})
+        store.write_record(paths.tables, stem, dict(posterior_draw_indices=np.asarray(draws.indices).tolist(), definition=DEFINITION, selection='12 smallest absolute Jacobian singular values; ties by image label',
+                                                kernel='exact', excluded_singular_or_nonfinite=int((~g['valid']).sum()), records=records,
+                                                rgb_files={band: str(image.path) for band, image in images.items()}))
     log(f'[outputs] covariance RGB cutouts: {len(order)} images -> {output}')
     return output

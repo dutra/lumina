@@ -2,6 +2,7 @@
 from types import SimpleNamespace as NS
 import matplotlib.pyplot as plt
 import numpy as np
+from kappaccino.io import store
 from kappaccino.plotting import rgb_overview_cutouts as rc
 from kappaccino.io.hdf5 import save_arrays
 IMAGE_LABELS=('K34.b','K34.a','K33.e','K77.b')
@@ -66,13 +67,13 @@ def test_explicit_panels_compute_missing_critical_fields(tmp_path,monkeypatch):
     import json
     import pandas as pd
     from kappaccino.plotting import critical_fields
-    pd.DataFrame(dict(image_label=['a','b'],x_arcsec=[0.,1.],y_arcsec=[0.,0.],z_source=[2.,3.],
-                      shown=[False,False])).to_csv(tmp_path/'toy_small_lambda_a_image_posteriors_jwst.csv',index=False)
-    save_arrays(tmp_path/'posterior_overview_positions.h5',image_labels=np.array(['a','b']),
+    store.write_table(tmp_path,'toy_small_lambda_a_image_posteriors_jwst',pd.DataFrame(dict(image_label=['a','b'],x_arcsec=[0.,1.],y_arcsec=[0.,0.],z_source=[2.,3.],
+                      shown=[False,False])))
+    store.write_arrays(tmp_path,'posterior_overview_positions',image_labels=np.array(['a','b']),
              recovered=np.random.default_rng(1).normal(0,.02,(32,2,2)),draw_indices=np.arange(32))
-    (tmp_path/'posterior_overview_positions.json').write_text(json.dumps(dict(fingerprint='test')))
-    (tmp_path/'fold_pairs_source_caustics.json').write_text('{}')
-    (tmp_path/'fold_pairs_source_caustics.h5').touch()
+    store.write_record(tmp_path,'posterior_overview_positions',dict(fingerprint='test'))
+    store.write_record(tmp_path,'fold_pairs_source_caustics',{})
+    store.write_arrays(tmp_path,'fold_pairs_source_caustics',{})
     monkeypatch.setattr(rc,'load_fold_data',lambda _:dict(systems=[]))
     calls=[]
     def compute(*args,**kwargs):

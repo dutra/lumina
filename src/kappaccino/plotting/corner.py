@@ -1,7 +1,7 @@
 """Shared posterior corners with recorded priors in the displayed coordinates."""
-import json
 from pathlib import Path
 import numpy as np
+from ..io import store
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from ..diagnostics.priors import saved_prior
@@ -143,5 +143,5 @@ def plot_parameter_corner(samples, selection, path, *, grouped_physical=None):
                     uniform_joint_prior='support boundary; highest-density regions are not unique',
                     marginal_summary_coordinates='physical',
                     coordinates='log10 for log-transformed parameters; physical otherwise')
-    path.with_suffix('.json').write_text(json.dumps(metadata, indent=2))
+    store.write_figure_record(path, metadata)
     return path

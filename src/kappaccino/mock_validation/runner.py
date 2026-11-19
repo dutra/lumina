@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from .. import pipeline, priors
+from ..io import store
 from ..config import DPIEHaloConfig
 from ..core.model import ModelState, PosteriorResults, member_log_deviations
 from ..core.utils import DPIE_MASS_GRAVITATIONAL_CONSTANT_KPC_KMS2_PER_MSUN as G_KPC, log10_dpie_mass_msun, progress
@@ -248,15 +249,15 @@ def write_recovery(recovery_dir: Path, result: pipeline.RunResult, solver_config
     truth_values = parameter_truth(truth, solver_pivot_magnitude=pivot)
     positive = {spec.name for spec in state.parameter_specs if spec.log}
     parameters = parameter_recovery(columns, truth_values, positive=positive)
-    magnification = magnification_recovery(truth, pd.read_csv(tables / "model_magnification.csv"))
+    magnification = magnification_recovery(truth, store.read_table(tables, "model_magnification"))
     relation = relation_recovery(state, posterior, truth_values, float(truth["relation"]["pivot_magnitude"]))
-    image_fit = pd.read_csv(tables / "image_fit_quality.csv")
-    residual_draws = pd.read_csv(tables / "posterior_image_residual_draws.csv")
+    image_fit = store.read_table(tables, "image_fit_quality")
+    residual_draws = store.read_table(tables, "posterior_image_residual_draws")
     member_table = member_scaling_table(state, posterior)
     m2d = m2d_recovery(state, solver_config.model, draws.physical, truth)
     for name, frame in (("parameter_recovery", parameters), ("magnification_recovery", magnification), ("m2d_aperture_recovery", m2d)):
         frame.to_csv(recovery_dir / f"{name}.csv", index=False)
-    fit = json.loads((tables / "run_summary.json").read_text()).get("fit", {})
+    fit = store.read_record(tables, "run_summary").get("fit", {})
     diagnostics = posterior.diagnostics or {}
     converged, reasons = convergence_verdict(diagnostics)
     if not converged:

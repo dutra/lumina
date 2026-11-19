@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..io import store
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -99,21 +101,20 @@ def write_magnification_scatter(truth, draws, image_df, tables, *, log=print):
     image_df : pandas.DataFrame
         Image table with ``x_obs_arcsec`` and ``y_obs_arcsec``.
     tables : pathlib.Path
-        Output directory.
+        The stage folder (or its ``tables``); the table ``magnification_scatter`` goes to its ``results.h5``.
 
     Returns
     -------
     pathlib.Path or None
-        The table, or None when the truth has no magnification or there are too few images for a hull.
+        The ``results.h5`` holding the table, or None when the truth has no magnification or there are too few images for a hull.
     """
     if truth is None or 'abs_mu' not in truth['truth'] or len(image_df) < 3:
         log('[outputs] magnification scatter skipped: kappa/shear truth and at least three images required')
         return None
     table = run_scatter_table(truth, draws, image_df[['x_obs_arcsec', 'y_obs_arcsec']].to_numpy(float), log=log)
-    tables.mkdir(parents=True, exist_ok=True)
-    path = tables / 'magnification_scatter.csv'
-    table.to_csv(path, index=False)
-    log(f'[outputs] magnification scatter about the truth: {path}')
+    store.write_table(tables, 'magnification_scatter', table)
+    path = store.results_path(tables)
+    log(f'[outputs] magnification scatter about the truth: magnification_scatter in {path}')
     return path
 
 

@@ -654,6 +654,11 @@ class RuntimeConfig:
         device) or ``"sequential"`` (one chain at a time).  Default ``"parallel"``.
     numpyro_print_summary : bool, optional
         Print a summary table of the global parameters after sampling.  Default False.
+    output_workers : int, optional
+        Threads that evaluate the reporting draws of the output stage at the same time (image recovery and the lens maps
+        on grids); at least 1, which is a plain loop.  The products are the same for any value; more threads are faster
+        and hold more memory (each thread holds one draw's working arrays).  A performance setting: it is not part of
+        the run hash and does not block a resume (``PERFORMANCE_FIELDS``).  Default ``4``.
     """
     seed: int = 12345
     chains: int = 4
@@ -662,6 +667,12 @@ class RuntimeConfig:
     quiet: bool = False
     nuts_chain_method: str = "parallel"
     numpyro_print_summary: bool = False
+    output_workers: int = 4
+
+
+# Settings that change how fast a run goes but not what it computes: left out of the run hash (``cli.config_hash``)
+# and of the configuration a resume compares (``pipeline.resume_payload``), keyed by section.
+PERFORMANCE_FIELDS: dict[str, tuple[str, ...]] = {"runtime": ("output_workers",)}
 
 
 @dataclass(frozen=True)
@@ -1902,6 +1913,7 @@ def validate_config(config: LensClusterSolverConfig) -> None:
     if isinstance(runtime.seed, bool) or not isinstance(runtime.seed, Integral) or int(runtime.seed) < 0:
         raise ValueError("seed must be a nonnegative integer.")
     _positive_int("chains", runtime.chains)
+    _positive_int("runtime.output_workers", runtime.output_workers)
     if runtime.nuts_chain_method not in {"parallel", "sequential", "vectorized"}:
         raise ValueError("nuts_chain_method must be 'parallel', 'sequential', or 'vectorized'.")
     search = config.search

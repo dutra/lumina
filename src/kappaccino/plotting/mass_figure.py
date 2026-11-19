@@ -1,7 +1,7 @@
 """The image-catalog overview with surface-density contours and marginal mass profiles (paper figure)."""
 from __future__ import annotations
 
-import json
+from ..io import store
 from pathlib import Path
 from typing import Any
 
@@ -331,7 +331,9 @@ def render_cluster_mass_figure(draws, catalog: pd.DataFrame, extra: pd.DataFrame
     arc_directions = arc_direction_table(draws, catalog)
     extra_directions = extra_arc_direction_table(draws, extra if extra is not None else pd.DataFrame())
     truth, physical = convergence_maps(evaluator, geometry, z_source, kappa_true_fits)
-    grid = draws.grid_maps("overview", geometry["x"], geometry["y"], z_source, log=log)
+    from ..reporting.draws import OVERVIEW_QUANTITIES
+    grid = draws.grid_maps("overview", geometry["x"], geometry["y"], z_source, quantities=OVERVIEW_QUANTITIES, reference=True,
+                           log=log)
     model = np.median(grid["kappa_parametric"], axis=0).astype(float)
     kappa_total = np.median(grid["kappa"], axis=0).astype(float)
     grf = np.median(grid["kappa_grf"], axis=0).astype(float) if draws.has_field else None
@@ -360,15 +362,15 @@ def render_cluster_mass_figure(draws, catalog: pd.DataFrame, extra: pd.DataFrame
         yprofile["y_arcsec"], yprofile["width_arcsec"], yprofile[f"{name}_dMdy_msun_per_arcsec"] = yc, yw, py
         profiles[name] = (px, py)
         provenance[f"{name}_mass_in_window_msun"] = total
-    tables_dir.mkdir(parents=True, exist_ok=True)
-    arc_directions.to_csv(tables_dir / f"image_catalog_arc_directions{artifact_suffix}.csv", index=False)
-    extra_directions.to_csv(tables_dir / f"image_catalog_extra_arc_directions{artifact_suffix}.csv", index=False)
-    provenance["arc_directions"] = {"kernel": "exact", "redshift": "per image", "vector": "minimum right-singular vector",
-                                   "stick_length_arcsec": ARC_STICK_LENGTH_ARCSEC, "length_encodes_strength": False,
-                                   "defined_count": int(arc_directions["direction_defined"].sum())}
-    fits_dir.mkdir(parents=True, exist_ok=True)
-    profile.to_csv(tables_dir / f"image_catalog_mass_profile{artifact_suffix}.csv", index=False)
-    yprofile.to_csv(tables_dir / f"image_catalog_mass_profile_y{artifact_suffix}.csv", index=False)
+    with store.batch(tables_dir):
+        store.write_table(tables_dir, f"image_catalog_arc_directions{artifact_suffix}", arc_directions)
+        store.write_table(tables_dir, f"image_catalog_extra_arc_directions{artifact_suffix}", extra_directions)
+        provenance["arc_directions"] = {"kernel": "exact", "redshift": "per image", "vector": "minimum right-singular vector",
+                                       "stick_length_arcsec": ARC_STICK_LENGTH_ARCSEC, "length_encodes_strength": False,
+                                       "defined_count": int(arc_directions["direction_defined"].sum())}
+        fits_dir.mkdir(parents=True, exist_ok=True)
+        store.write_table(tables_dir, f"image_catalog_mass_profile{artifact_suffix}", profile)
+        store.write_table(tables_dir, f"image_catalog_mass_profile_y{artifact_suffix}", yprofile)
     header = geometry["wcs"].to_header()
     header["ZSOURCE"] = physical["z_source"]
     fits.writeto(fits_dir / f"image_catalog_mass_kappa_model{artifact_suffix}.fits", model, header, overwrite=True)
@@ -380,7 +382,7 @@ def render_cluster_mass_figure(draws, catalog: pd.DataFrame, extra: pd.DataFrame
     covariance_curves = None
     if cutouts.rgb_instrument(bands) == "jwst" and position_contours is None:
         covariance_curves, covariance_table = covariance_ellipse_curves(draws, catalog)
-        covariance_table.to_csv(tables_dir / f"image_catalog_covariance_ellipses{artifact_suffix}.csv", index=False)
+        store.write_table(tables_dir, f"image_catalog_covariance_ellipses{artifact_suffix}", covariance_table)
         provenance["covariance_ellipses"] = dict(kernel="exact", redshift="per image", center="observed",
             contour="unit Mahalanobis", display_scale=1., plane="image", defined_count=len(covariance_curves),
             covariance="inverse(A) C inverse(A).T", extra_images="not defined: no observed positional covariance")
@@ -483,5 +485,5 @@ def render_cluster_mass_figure(draws, catalog: pd.DataFrame, extra: pd.DataFrame
     plt.close(fig)
     provenance.update(bounds_arcsec=dict(zip(("xmin", "xmax", "ymin", "ymax"), bounds)), contour_levels_msun_per_kpc2=selected.tolist(),
                       grid_shape=list(model.shape))
-    (tables_dir / f"image_catalog_mass_provenance{artifact_suffix}.json").write_text(json.dumps(provenance, indent=2, default=float) + "\n")
+    store.write_record(tables_dir, f"image_catalog_mass_provenance{artifact_suffix}", provenance, default=float)
     return provenance

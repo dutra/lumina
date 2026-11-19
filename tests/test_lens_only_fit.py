@@ -148,3 +148,24 @@ def test_true_positions_are_the_catalog_minus_measurement_error_and_follow_neigh
     # Without a GP the model has no displacement: the true position is the lens position.
     exact, _ = diagnostics.true_positions(catalog, lens, extra, dict(sigma_gp=0., ell_gp=np.nan, sigma_meas=.02), rng)
     np.testing.assert_allclose(exact[:3], lens[:3])
+
+
+def test_scatter_and_true_positions_of_observed_images_do_not_depend_on_extra_images():
+    """The observed images come first: their fresh scatter and their true positions are the same whether a draw has
+    no extra image or five, so a different extra-image search cannot move them."""
+    rng = np.random.default_rng(3)
+    catalog = rng.uniform(-20., 20., (6, 2))
+    lens = catalog + .05 * rng.standard_normal((6, 2))
+    lens[2] = np.nan                                             # one image the draw does not recover
+    extra = rng.uniform(-20., 20., (5, 2))
+    extra[0] = catalog[1] + .3                                   # within the correlation length of an observed image
+    for scales in (dict(sigma_gp=.08, ell_gp=2., sigma_meas=.02), dict(sigma_gp=0., ell_gp=np.nan, sigma_meas=.02)):
+        alone = diagnostics.image_plane_scatter(catalog, scales, np.random.default_rng(7), leading=6)
+        joint = diagnostics.image_plane_scatter(np.vstack((catalog, extra)), scales, np.random.default_rng(7), leading=6)
+        assert np.array_equal(joint[:6], alone)
+        assert np.array_equal(alone, diagnostics.image_plane_scatter(catalog, scales, np.random.default_rng(7)))
+        assert joint.shape == (11, 2) and np.all(np.abs(joint[6:]) > 0)
+        true_alone, none = diagnostics.true_positions(catalog, lens, np.empty((0, 2)), scales, np.random.default_rng(8))
+        true_joint, added = diagnostics.true_positions(catalog, lens, extra, scales, np.random.default_rng(8))
+        assert np.array_equal(true_joint, true_alone, equal_nan=True)
+        assert none.shape == (0, 2) and added.shape == (5, 2) and np.isfinite(added).all()

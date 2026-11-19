@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
+from kappaccino.io import store
 import numpy as np
 import pandas as pd
 from astropy.cosmology import FlatLambdaCDM
@@ -72,6 +73,6 @@ def test_writer_preserves_family_redshifts_and_records_limits(tmp_path, monkeypa
     path=write_magnification_recovery(truth,images,None,None,None,config,tmp_path,tmp_path,'toy')
     assert path.name=='toy_magnification_recovery.pdf'
     assert seen==[1.,1.,2.,2.]
-    points=pd.read_csv(tmp_path/'magnification_recovery_images.csv')
+    points=store.read_table(tmp_path, 'magnification_recovery_images')
     assert points.within_display.sum()==3
     np.testing.assert_array_equal(points.model_abs_mu,[3,4,5,6])

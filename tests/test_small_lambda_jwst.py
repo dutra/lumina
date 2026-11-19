@@ -1,5 +1,6 @@
 """Eigenvalue ranking must select the near-singular direction, including saddles."""
 import numpy as np
+from kappaccino.io import store
 import pytest
 
 from kappaccino.plotting import small_lambda_jwst as module
@@ -57,16 +58,16 @@ def test_render_from_the_reporting_draws(tmp_path, monkeypatch):
     assert output.exists()
     assert calls and calls[0]==dict(force_exact=True,derivative=False)
     assert plt.rcParams['font.size']==before['font.size']
-    info=json.loads((tmp_path/'test_small_lambda_a_image_posteriors_jwst.json').read_text())
+    info=store.read_record(tmp_path, 'test_small_lambda_a_image_posteriors_jwst')
     assert info['selected'][0]['probabilities']==[.682689492,.954499736]
     assert not info['selected'][0]['contour_clipped']
-    saved = load_arrays(tmp_path/'test_small_lambda_a_image_posteriors_jwst.h5')
+    saved = store.read_arrays(tmp_path, 'test_small_lambda_a_image_posteriors_jwst')
     assert saved['posterior_axis_statistics'].shape==(1,3)
     assert saved['posterior_axis_statistics'][0,2]>=1
     assert module.write_small_lambda_jwst(config,state,draws,paths,imaging,contours,
                                          minimum_major_sigma=100,log=lambda _:None) is None
     import pandas as pd
-    rejected=pd.read_csv(tmp_path/'test_small_lambda_a_image_posteriors_jwst.csv')
+    rejected=store.read_table(tmp_path, 'test_small_lambda_a_image_posteriors_jwst')
     assert not rejected.shown.any()
     assert rejected.skip_reason.iloc[0]=='Below minimum uncertainty extent or elongation'
 

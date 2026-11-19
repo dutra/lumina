@@ -4,7 +4,7 @@ Fixed illustrative F160W sizes, not sizes inferred from the lens model. Full
 projected masses include the conditional GRF mean when the run supports a shared field.
 """
 from pathlib import Path
-import json
+from ..io import store
 
 import jax.numpy as jnp
 import jax
@@ -17,11 +17,34 @@ from scipy.spatial import ConvexHull, QhullError
 from astropy.wcs.utils import proj_plane_pixel_area
 
 from .style import PAPER_STYLE
-from ..core.utils import progress
+from ..core.parallel import map_draws
 from ..diagnostics.truth_recovery import load_truth_fits, mass_per_kappa_pixel_msun
 
 STYLE = Path(__file__).with_name('style.mplstyle')
 NORMALIZATION_KPC = 8.
+# Bump when the masses can change for the same draws and inputs: a table saved with another version is computed again.
+APERTURE_VERSION = 1
+
+
+def aperture_fingerprint(config, draws, members, image_xy, reach):
+    """What the per-draw aperture masses depend on: the code version, the reporting draws and the model they map to (``draws.key``), the truth
+    map file (path, size, modification time), the redshift, the members' identities, positions and magnitudes, the
+    observed images (the footprint), the size normalization and the field's reach.  None for draws without a key
+    (nothing is reused then)."""
+    import hashlib
+    import json
+    if getattr(draws, 'key', None) is None:
+        return None
+    fits = Path(config.truth.kappa_true_fits)
+    stat = fits.stat() if fits.is_file() else None
+    h = hashlib.sha256(json.dumps([APERTURE_VERSION, draws.key, str(fits), stat.st_size if stat else None,
+                                   stat.st_mtime_ns if stat else None, repr(float(config.truth.caustic_source_redshift)),
+                                   NORMALIZATION_KPC, bool(draws.has_field), repr(float(reach)),
+                                   members.member_id.astype(str).tolist(), members.catalog_id.astype(str).tolist()]).encode())
+    for column in ('x_centre', 'y_centre', 'catalog_mag'):
+        h.update(np.ascontiguousarray(members[column].to_numpy(float)).tobytes())
+    h.update(np.ascontiguousarray(np.asarray(image_xy, dtype=float)).tobytes())
+    return h.hexdigest()
 
 
 def inside_image_footprint(centers, images):
@@ -175,7 +198,7 @@ def write_aperture_mass_histogram(config,state,draws,paths,image_df,*,log=print)
     if bands and bands != {'F160W'}:
         log(f'[aperture] skipped: fixed size relation requires F160W, catalog uses {sorted(bands)}')
         return None
-    members=pd.read_csv(paths.tables/'member_diagnostics.csv',dtype={'member_id':str,'catalog_id':str})
+    members=store.read_table(paths.tables,'member_diagnostics',legacy_csv=dict(dtype={'member_id':str,'catalog_id':str}))
     if members.member_id.tolist()!=list(state.members.member_ids):
         raise ValueError('Aperture catalog identities differ from saved model')
     evaluator=draws.evaluator
@@ -185,23 +208,40 @@ def write_aperture_mass_histogram(config,state,draws,paths,image_df,*,log=print)
                  else 'parametric only; shared GRF correction unavailable')
     centres=members[['x_centre','y_centre']].to_numpy(float)
     reach=draws.reach(centres[np.isfinite(centres).all(1)])+10. if draws.has_field else 0.
-    log(f'[aperture] exact 2Re masses over {len(physical)} posterior draws: F160W size normalization '
-        f'{NORMALIZATION_KPC:g} kpc at magnitude 20; {description}')
-    tables=[]
-    for k in progress(range(len(draws)),desc='aperture draws'):
-        correction,weight=(draws.correction(k,reach),draws.grf_weight(z)) if draws.has_field else (None,1.)
-        tables.append(aperture_masses(state,evaluator,physical[k],members,image_df[['x_obs_arcsec','y_obs_arcsec']].to_numpy(),
-                                      config.truth,grf_correction=correction,grf_weight=weight))
-    table=median_over_draws(tables)
-    table.to_csv(paths.tables/'member_aperture_masses.csv',index=False)
+    image_xy=image_df[['x_obs_arcsec','y_obs_arcsec']].to_numpy()
+    fingerprint=aperture_fingerprint(config,draws,members,image_xy,reach)
+    table=None
+    try:
+        saved=store.read_record(paths.tables,'aperture_mass_histogram')
+        if fingerprint is not None and isinstance(saved,dict) and saved.get('fingerprint')==fingerprint:
+            table=store.read_table(paths.tables,'member_aperture_masses')
+            log(f'[aperture] masses reused from {store.results_path(paths.tables)} (same draws, members and truth map)')
+        else:
+            reason='saved with other inputs' if isinstance(saved,dict) and 'fingerprint' in saved else 'saved without a fingerprint'
+    except store.MissingEntry:
+        table,reason=None,'none saved'
+    except (store.DamagedEntry,store.StoreError) as error:
+        table,reason=None,f'the saved masses cannot be read ({type(error).__name__}: {error})'
+    if table is None:
+        log(f'[aperture] exact 2Re masses over {len(physical)} posterior draws ({reason}): F160W size normalization '
+            f'{NORMALIZATION_KPC:g} kpc at magnitude 20; {description}')
+        def draw_masses(k):          # one draw; the draws run in draws.workers threads
+            correction,weight=(draws.correction(k,reach),draws.grf_weight(z)) if draws.has_field else (None,1.)
+            return aperture_masses(state,evaluator,physical[k],members,image_xy,
+                                   config.truth,grf_correction=correction,grf_weight=weight)
+        tables=map_draws(draw_masses,range(len(draws)),workers=int(getattr(draws,'workers',1)),desc='aperture draws')
+        table=median_over_draws(tables)
     stats=dict(normalization_kpc=NORMALIZATION_KPC,samples=distribution_statistics(table),
                equation=f'Re[kpc] = {NORMALIZATION_KPC:g} * 10**(-0.24*(m_F160W-20)); aperture radius = 2 Re',
                model=f'median over {len(physical)} posterior draws of each member mass; exact parametric kernels; {description}',
-               grf_included=correction is not None,
+               grf_included=bool(draws.has_field),          # each draw had its realization (draws.correction)
                footprint='galaxy centers within convex hull of observed multiple images',
                display='central 99% of all usable ratios; statistics use full distribution',
-               skipped_member_ids=table.loc[~table.usable,'member_id'].tolist())
-    path=paths.tables/'aperture_mass_histogram.json'
-    path.write_text(json.dumps(stats,indent=2)+'\n')
-    log(f'[aperture] wrote {path}; {int(table.usable.sum())}/{len(table)} usable members')
+               skipped_member_ids=table.loc[~table.usable,'member_id'].tolist(),
+               fingerprint=fingerprint)
+    with store.batch(paths.tables):      # table and fingerprint in one commit: an interrupted pass leaves neither
+        store.write_table(paths.tables,'member_aperture_masses',table)
+        store.write_record(paths.tables,'aperture_mass_histogram',stats)
+    path=store.results_path(paths.tables)
+    log(f'[aperture] wrote aperture_mass_histogram in {path}; {int(table.usable.sum())}/{len(table)} usable members')
     return path
