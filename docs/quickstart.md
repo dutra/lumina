@@ -75,7 +75,7 @@ print(dry_run(config))                  # model size, member classification, sea
 result = run(config)                    # init + final
 
 result.posterior.physical               # (draws, parameters) in physical units
-result.summary                          # the numbers written to run_summary.json
+result.summary                          # the numbers written to the record run_summary
 ```
 
 `dry_run` builds the model without fitting and writes nothing; use it to check a configuration before spending
@@ -95,11 +95,14 @@ Each run writes to `<output_dir>/<run_name>/`:
 ```text
 init/
   artifacts/   start, modes, member classification, configuration
-  tables/      classification_report.txt
+  results.h5   tables and records of the init stage
+  tables/      classification_report.txt, start_parameters.txt
   logs/        init.log
 final/
   artifacts/   posterior.h5, audit.json, summary.json
-  tables/      posterior_summary.csv, image_fit_quality.csv, run_summary.txt, ...
+  results.h5   every table and record: posterior_summary, image_fit_quality, run_summary, ...
+  cache.h5     values kept only to save time; safe to delete
+  tables/      run_summary.txt, audit_report.txt
   figures/     <prefix>_critical_curves.pdf, <prefix>_corner_globals.pdf, ...
   fits/        convergence, shear, det A and magnification maps
   logs/        final.log
@@ -111,6 +114,9 @@ Three things to check first:
    when only one does.
 2. `final/tables/run_summary.txt`: images recovered out of observed, the rms image-plane residual, and the sampler
    diagnostics (split R-hat, ESS, divergences).
+
+`python -m kappaccino.io.store <run>` lists what `results.h5` holds, and `--table NAME` prints one table as CSV (see
+{doc}`outputs`).
 3. `final/figures/<prefix>_chain_traces.pdf`: the traces of the global parameters and of the worst-mixing ones.
 
 See {doc}`outputs` for every file.

@@ -89,9 +89,11 @@ still run. Parameters the old run lacks start at the configured model.
 `RuntimeConfig.resume` (on by default) reuses work in the run directory:
 
 - A completed init is reused by any later final run whose model, likelihood, member and search configuration match.
-- A completed final stage is reloaded when the whole configuration matches, apart from the WBIC settings. Turning on
+- A completed final stage is reloaded when the whole configuration matches, apart from the WBIC settings and the
+  performance settings (`RuntimeConfig.output_workers`), which the run hash leaves out too. Turning on
   `SamplingConfig.wbic` for a finished run adds the WBIC run without sampling the posterior again. A run with any other
-  change under the same run name is refused rather than overwriting the saved posterior.
+  change under the same run name is refused rather than overwriting the saved posterior. The output pass of a reloaded
+  stage reuses the image recovery, the grid maps and the aperture masses it saved before (see {doc}`outputs`).
 
 Use a new run label for each changed configuration.
 

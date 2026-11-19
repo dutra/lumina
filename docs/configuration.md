@@ -289,7 +289,11 @@ second NUTS run on the tempered posterior that gives WBIC for model comparison. 
 the length of that run (see {doc}`model-comparison`).
 
 `RuntimeConfig` sets `seed`, `chains`, `nuts_chain_method` (`"parallel"`, `"sequential"` or `"vectorized"`),
-`resume` and `skip_plots`.
+`resume`, `skip_plots` and `output_workers`. `output_workers` (default 4, at least 1) is the number of threads that
+evaluate the reporting draws of the output stage at the same time, for the image recovery and the lens maps on grids.
+The products are identical for any value; each thread holds the working arrays of one draw, so more threads use more
+memory. It is a performance setting: it is not part of the run hash and a resume ignores it, so
+`--set runtime.output_workers=8` reuses the existing run folder.
 
 ## Run paths
 
