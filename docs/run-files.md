@@ -170,7 +170,7 @@ name: hera
 priors: priors.yaml
 likelihood:
   gp_blocks: all
-  lambda_b_prior: lognormal(20.0, 1.0) in [0.5, 80.0]
+  lambda_b_prior: lognormal(6.0, 0.5) in [0.5, 20.0]
 sampling: {warmup: 500, samples: 250, max_tree_depth: 7, target_accept: 0.8}
 reporting: {draws: 64, image_draws: 64, extra_images: true}
 profiles:

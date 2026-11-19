@@ -50,7 +50,7 @@ def test_stage_a_holds_the_error_scales_and_the_search_uses_system_blocks(synthe
 
 def test_grf_gp_hyperparameter_priors_have_physical_upper_bounds():
     likelihood = LikelihoodConfig()
-    bounds = {"sigma_grf_prior": 0.3, "lambda_b_prior": 30.0, "gp_knee_sigma_gp_prior": 0.3, "gp_knee_ell_gp_prior": 5.0}
+    bounds = {"sigma_grf_prior": 0.3, "lambda_b_prior": 20.0, "gp_knee_sigma_gp_prior": 0.3, "gp_knee_ell_gp_prior": 5.0}
     for name, upper in bounds.items():
         assert np.isclose(priors.physical_bounds(getattr(likelihood, name))[1], upper), name
     assert priors.physical_bounds(likelihood.lambda_b_prior)[1] <= likelihood.gp_knee_lambda_grid[1]

@@ -15,8 +15,8 @@ likelihood:
   gp_knee_gamma: 4.0
   gp_knee_gamma_prior: null
   gp_knee_scales_arcsec: [0.2, 100.0]
-  lambda_b_prior: lognormal(20.0, 1.0) in [0.5, 80.0]
-  lambda_b_start_arcsec: 20.0
+  lambda_b_prior: lognormal(6.0, 0.5) in [0.5, 20.0]
+  lambda_b_start_arcsec: 6.0
   sigma_grf_prior: lognormal(0.08, 0.5) in [1.0e-4, 0.5]
   sigma_grf_start_arcsec: 0.08
   gp_knee_ell_gp_prior: lognormal(1.0, 0.4) in [0.4, 3.0]
