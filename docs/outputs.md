@@ -12,8 +12,11 @@ A run writes everything under its run root, `<output_dir>/<run_name>/` from
 : `config.json`, `init_signature.json`, `state.json`, `classification.json`, `search.h5` and `modes.json`,
   `start.json`, `summary.json`, `model_comparison.json` (BIC, see {doc}`model-comparison`).
 
+`init/results.h5`
+: The record `shallow_fold_pairs` (GP likelihoods) and, with member kinematics, the table `member_kinematics`.
+
 `init/tables/`
-: `classification_report.txt`, `shallow_fold_pairs.json`.
+: `classification_report.txt` and `start_parameters.txt` (plain text).
 
 `final/artifacts/`
 : `config.json`, `posterior.h5`, `audit.json`, `summary.json`, and with uncertain images `uncertain_images.h5` (see
@@ -21,8 +24,65 @@ A run writes everything under its run root, `<output_dir>/<run_name>/` from
   `wbic_draws.h5` (see {doc}`model-comparison`).
 
 Arrays are saved as HDF5 (`.h5`, one dataset per array; read them with `kappaccino.io.hdf5.load_arrays` or `h5py`) and
-everything else as JSON or CSV. `config.json` restores the run configuration exactly
+everything else as JSON. `config.json` restores the run configuration exactly
 (`kappaccino.io.artifacts.load_config`). Nothing is pickled.
+
+### Results and cache files
+
+Each stage folder (`init/`, `final/`) keeps its products in two HDF5 files instead of loose tables:
+
+`results.h5`
+: Every table (formerly `tables/<name>.csv`), every record (formerly `tables/<name>.json`), every array bundle (formerly
+  `tables/<name>.h5`) and the record of each figure (formerly `figures/<figure>.json`, now stored under the figure's
+  name without `.pdf`). Below, a table, record or arrays `<name>` means that entry of `results.h5`.
+
+`cache.h5`
+: What only saves time: the lens maps of every grid the products evaluate (`grid_maps_<key>`, float32 maps of the
+  reporting draws, and `lens_reference_<key>`, the parametric Jacobians of the overview), and the zeta masses of the
+  reporting draws (`zeta_masses_cache`). Deleting it never loses or changes a result; the next output pass recomputes
+  what it needs.
+
+The figures (PDF), the FITS maps, the plain-text reports (`run_summary.txt`, `audit_report.txt`,
+`classification_report.txt`, `start_parameters.txt`), the `<prefix>_results.tex` macros, the logs, `artifacts/` and
+`inputs/` stay separate files. A table reads back exactly as it was written (column order, dtypes, strings, NaN and
+None). The dtypes are the ones the table had in memory, not what parsing a CSV gives: a column of numeric-looking ids
+such as `family_id` written as strings reads back as strings, where the old `tables/<name>.csv` read it as integers.
+Runs written before this layout keep their loose files, and every reader falls back to them.
+
+`results.h5` is never changed in place. A write builds the new version in a temporary file next to it
+(`results.h5.tmp-*`), fsyncs it and renames it over the old one, so a crash at any moment leaves either the old or the
+new file, complete. Writers in different processes take turns through the lock file `results.h5.lock` (a writer waits
+up to 10 minutes, then fails with "busy"); readers take no lock and always see a complete version. A file that is not
+a valid HDF5 file is moved to `results.h5.unreadable-<time>` by the next writer, which logs the entries lost; any
+other failure to open or write it stops with an error and leaves the file alone. A write first checks that the disk
+(and `ulimit -f`) leaves room for the copy and the new entry, and stops with an error otherwise; if the disk fills up
+after that check, the write still fails with an error and `results.h5` keeps its old version, but the HDF5 library may
+crash the process later. Rebuilding the file to reclaim the space of replaced entries is given up (logged) rather than
+drop an entry that fails to copy. A symlinked `results.h5` is followed: the file it points to is replaced.
+
+Reading a product that was never written raises `store.MissingEntry` (a `FileNotFoundError`). Reading one that is
+there but cannot be decoded raises `store.DamagedEntry`, which is not a `FileNotFoundError`, so a step that carries on
+without a missing product stops instead of writing a product without it; out-of-memory and I/O errors are raised as
+they are. The only way an entry is ever dropped is writing again a name whose stored entry is damaged and cannot be
+replaced in place: the writer checks it with a second read and logs an ERROR that names it as LOST. `cache.h5` is
+written in place, and any failure to read or write it only costs a recomputation.
+
+List, print or export the entries of a run or stage from the repository root:
+
+```bash
+python -m kappaccino.io.store results/<cluster>/<run>                       # every entry with its shape
+python -m kappaccino.io.store results/<cluster>/<run> --table image_fit_quality > image_fit_quality.csv
+python -m kappaccino.io.store results/<cluster>/<run> --record run_summary
+python -m kappaccino.io.store results/<cluster>/<run> --figure-record <prefix>_corner_globals
+python -m kappaccino.io.store results/<cluster>/<run> --arrays conditional_field_maps
+python -m kappaccino.io.store results/<cluster>/<run> --stage init --record shallow_fold_pairs
+python -m kappaccino.io.store results/<cluster>/<run> --export /tmp/<run>_loose  # the old csv/json/h5 files
+```
+
+`--cache` makes `--table`, `--record` and `--arrays` read `cache.h5`. The export writes `<stage>/tables/<name>.csv`,
+`.json` and `.h5`, `<stage>/figures/<figure>.json` and `<stage>/cache/<name>.*`. All of this also works on runs in the
+old layout. An entry that cannot be read is listed as `DAMAGED` (or reported as not exported), the rest is listed or
+exported, and the command exits with status 1.
 
 Every reported product (figures, tables and results macros) is computed over one set of reporting draws:
 `reporting.draws` random posterior draws over all chains, chosen with `runtime.seed` (64 in a full run, 8 in the
@@ -42,14 +102,14 @@ This holds for runs with `gp_blocks: all`. A run with `gp_blocks: system` (the f
 field, and the products rebuild one shared field from its draws. That field is not a posterior sample of the lens, so
 the residuals, RMS, position contours and map uncertainties of such a run are not trustworthy and likely inflated (on
 an M0416 fast run the RMS came out twice what the fitted image-plane scatter allows). The output pass logs a warning
-and writes it to `run_summary.json` under `warnings`.
+and writes it to the record `run_summary` under `warnings`.
 
 The lens position of an image is not where its catalog entry is expected, because the likelihood lets the two differ by
 the image-plane GP and the measurement error. Each draw's lens position therefore also has a predicted observed
 position (`x_predicted_arcsec`, `y_predicted_arcsec`): the lens position plus one draw of that scatter, taken from
 its prior with the draw's own `sigma_gp`, `ell_gp` and `sigma_meas` and not conditioned on the catalog. The position
 contours of the observed images are the 68.3% and 95.4% regions of these positions, so about 68% of the catalog
-positions should fall inside their 68.3% contours. `position_coverage.csv` has that check per image (`credible_level`,
+positions should fall inside their 68.3% contours. The table `position_coverage` has that check per image (`credible_level`,
 `inside_68`, `inside_95`), and the results macros `PositionCoverageOneSigmaPercent` and
 `PositionCoverageTwoSigmaPercent` the fractions. The contours of extra images, which have no catalog position, are of
 their true positions. The tables also hold a true position per draw (`x_true_arcsec`,
@@ -57,19 +117,50 @@ their true positions. The tables also hold a true position per draw (`x_true_arc
 is the catalog position without its measurement error, so its spread is at most `sigma_meas`; where the data do not
 constrain `sigma_meas` (no images closer than `ell_gp`) that spread is the prior's.
 
+`final/results.h5`
+: Tables `posterior_summary`, `member_classification`, `member_scaling_relation`, `image_fit_quality`,
+  `image_count_recovery`, `model_magnification`, `posterior_image_residual_draws`, `posterior_image_rms`,
+  `posterior_extra_images`, `image_recovery_extra_images`, `position_coverage`, `chain_convergence` and those of the
+  figures below; records `run_summary`, `runtime`, `audit` and the provenance records of the figures; arrays such as
+  `conditional_field_maps` and `member_diagnostic_draws`; for simulated clusters the tables
+  `truth_recovery_m2d_aperture_profile` and the like. With uncertain membership (`MemberConfig.membership`), the table
+  `member_membership`: one row per member with `treatment` (`certain`, `enumerated` or `marginalized`), `p_catalog`,
+  `p_prior` (after any calibration shift, averaged over the draws), and `p_posterior` with `p_posterior_std` over the
+  draws. A marginalized member's posterior equals its prior. This table is written even with `runtime.skip_plots`.
+  With uncertain images, the tables `uncertain_images` and `uncertain_pairs`.
+
+`final/cache.h5`
+: `grid_maps_<key>` and `lens_reference_<key>` (the lens maps of each grid, keyed by the reporting draws and the
+  model they map to, the redshift, the grid and the code version), `zeta_masses_cache`.
+
+### A second output pass
+
+An output pass over a stage that already holds products (a resumed run, or a pass restarted after a crash) reuses
+what does not change with the same reporting draws, and logs each reuse or recomputation with its reason.  Every reuse
+is keyed by the draws (`ReportingDraws.key`): the seed, the posterior rows, the latent and physical parameter vectors,
+and a digest of the model that turns them into a lens (`reporting.draws.lens_digest`: the parameter names, the packed
+lens spec with every component's fixed values and every member's position, luminosity ratio and class, the membership
+priors, the cosmology, the image catalog, the GP settings and the field's code, `plotting.grf.PLOT_FIELD_VERSION` and
+`N_MODES`).  An edited member catalog, priors file or member classification therefore recomputes the products.  The
+digest does not see code changes elsewhere (the lens kernels, the image solver); those need their version constants
+bumped.
+
+- the image-recovery tables, read back from `results.h5` when the record `image_recovery_fingerprint` saved with them
+  matches: the draws (seed, indices, parameter values), every `image_diagnostics` setting, `reporting.extra_images`,
+  the image catalog and the solver version (`IMAGE_RECOVERY_VERSION` in `diagnostics/image_recovery.py`, bumped
+  whenever the solver can give other numbers). Any difference, or a missing table, recomputes them;
+- the lens maps of every grid, from `cache.h5`; at most `reporting.draws.GRID_MEMORY_BYTES` (1 GiB) of maps stay in
+  memory during a pass, and a grid asked for again later is read back from the cache;
+- the member aperture masses of Hera and Ares (`member_aperture_masses`, written in one commit with a fingerprint in
+  the record `aperture_mass_histogram`) and the zeta masses (`zeta_masses_cache`).
+
+Everything else (figures, fold diagnostics, the GRF critical band, contours) is recomputed from these.
+
 `final/tables/`
-: `posterior_summary.csv`, `member_classification.csv`, `member_scaling_relation.csv`, `image_fit_quality.csv`,
-  `image_count_recovery.csv`, `model_magnification.csv`, `posterior_image_residual_draws.csv`,
-  `posterior_extra_images.csv`, `position_coverage.csv`,
-  `chain_convergence.csv`, `run_summary.json` and `run_summary.txt`, and for simulated
-  clusters `truth_recovery_m2d_aperture_profile.csv`. With uncertain membership (`MemberConfig.membership`),
-  `member_membership.csv`: one row per member with `treatment` (`certain`, `enumerated` or `marginalized`),
-  `p_catalog`, `p_prior` (after any calibration shift, averaged over the draws), and `p_posterior` with
-  `p_posterior_std` over the draws. A marginalized member's posterior equals its prior. This table is written even with
-  `runtime.skip_plots`. With uncertain images, `uncertain_images.csv` and `uncertain_pairs.csv`.
+: `run_summary.txt` and `audit_report.txt` (plain text).
 
 `final/figures/`
-: The figures listed below and `<prefix>_results.tex`.
+: The figures listed below and `<prefix>_results.tex`. Their records are in `final/results.h5`.
 
 `final/fits/`
 : Convergence, shear, $\det A$ and magnification grids on the truth WCS: the per-pixel median and 16th and 84th
@@ -86,7 +177,7 @@ constrain `sigma_meas` (no images closer than `ell_gp`) that spread is the prior
 
 `<prefix>_chain_traces.pdf`
 : Traces of the sampler diagnostics, all global parameters and the twelve other parameters with the highest split
-  R-hat. `chain_convergence.csv` holds split R-hat and ESS for every parameter.
+  R-hat. The table `chain_convergence` holds split R-hat and ESS for every parameter.
 
 `final/artifacts/audit.json`
 : Whether the far-field approximation held over the posterior.
@@ -118,8 +209,7 @@ GP runs write, with plotting on:
 
 Shared-field GRF runs (`gp_blocks="all"`) also write `total_grf_dimensionless_power.pdf` and
 `gp_correction_correlation.pdf` (per-pixel medians over the reporting draws, and the median and 16–84% of the
-knee spectrum), with the maps in
-`final/tables/conditional_field_maps.*`. For these runs the truth maps, magnification recovery, aperture profiles,
+knee spectrum), with the maps in the arrays and record `conditional_field_maps`. For these runs the truth maps, magnification recovery, aperture profiles,
 critical curves and caustics include each posterior draw's realization of the GRF. System- and family-block runs do
 not define one cluster-wide field and skip these figures.
 
@@ -137,8 +227,8 @@ With truth maps (`TruthRecoveryConfig`, set for Hera and Ares), the run also wri
   A(>μ) = Σ A_pix/|μ| over the truth-map pixels with |μ| > μ, for the truth, the parametric model and the parametric
   + GRF model (each draw's realization of the field), with the comoving volume of the shell z ± 0.5 on the right axis and the
   ratio to the truth below. Lines and bands are the median and 16–84% range over the reporting draws. Thresholds below
-  μ = 3 depend on the size of the map and are shaded. Numbers in `cumulative_source_area.csv`;
-- `magnification_scatter.csv` (table only): scatter and bias of the model magnification about the truth at the map
+  μ = 3 depend on the size of the map and are shaded. Numbers in the table `cumulative_source_area`;
+- the table `magnification_scatter` (no figure): scatter and bias of the model magnification about the truth at the map
   pixels inside the image hull whose true magnification is within 10% of 3 or 10, over all reporting draws, for the
   parametric model and the parametric + GRF model (after Raney et al. 2020). `scripts/make_scatter_summary.py` draws
   these for several clusters as `scatter_summary.pdf`;
@@ -147,9 +237,9 @@ With truth maps (`TruthRecoveryConfig`, set for Hera and Ares), the run also wri
   inside 10 kpc above the mean of the 10–20 kpc annulus; concentration is κ̄(<R_e)/κ̄(R_e–2R_e) − 1. Panels: number of
   subhalos per 0.2 dex of mass, model against true mass, concentration against mass, model against true concentration.
   The two brightest members and members whose 16–84% posterior range of mass or concentration exceeds twice the median
-  are left out. Tables `member_zeta_masses.csv` (every member, with the parametric-only model too), `zeta_mass_function.csv`,
-  `zeta_masses.json` and the cache `zeta_masses_cache.h5` (reused when the draws match; `regenerate_zeta_masses.py
-  --recompute` ignores it); `aperture_mass_histogram.json` keeps the 2R_e aperture-mass ratios of Meneghetti et al. (2017), each member's model
+  are left out. Tables `member_zeta_masses` (every member, with the parametric-only model too) and `zeta_mass_function`,
+  the record `zeta_masses` and, in `cache.h5`, `zeta_masses_cache` (reused when the draws match;
+  `regenerate_zeta_masses.py --recompute` ignores it); the record `aperture_mass_histogram` keeps the 2R_e aperture-mass ratios of Meneghetti et al. (2017), each member's model
   mass the median over the same posterior draws as the truth maps.
 
 ## Imaging figures
@@ -165,18 +255,55 @@ When imaging is configured and present under `data/imaging/`:
 
 Missing imaging is reported and skipped.
 
+The det A maps of the fold pairs, fold systems and small cutouts are not evaluated over the whole lens on their own
+grids. Each draw's parametric lens on those grids is the overview's (512 x 512 over the cluster, evaluated anyway)
+interpolated with a bicubic spline, with the cluster members and halos close to the grid evaluated exactly, and the
+draw's GRF realization is evaluated exactly on the grid (`reporting.local_maps`). Every draw is checked against the
+exact lens at up to 24 x 24 points of the grid and evaluated directly when it misses by more than 1e-5. On Hera and
+AS1063 the zero contours of det A moved by at most 6e-6 arcsec and no fold pair changed. Setting
+`ReportingDraws.maps_from_reference = False` evaluates every component on every grid as before.
+
+The RGB critical overview (`<prefix>_hst_rgb_critical_z9.pdf` or `<prefix>_jwst_rgb_critical_z9.pdf`) shows the
+z=9 critical curve and its 16–84% band, the observed images (red when not recovered), the extra images, the stretch
+directions and the 68.3% contours of the predicted observed positions, each enlarged four times about the mean of its
+image's positions. A finished run's overview can be drawn again from its saved results, without the posterior or the
+determinant maps, from the repository root:
+
+```bash
+python -m kappaccino.plotting.jwst_rgb results/<cluster>/<run> [results/<cluster>/<run> ...]
+```
+
+It reads the band from the arrays `<stem>`, the catalog from the table `image_fit_quality`, the stretch directions from
+the table `<stem>_stretch_directions` (else `image_catalog_arc_directions*`, else none are drawn) and the contours from
+the saved image recovery (all in `final/results.h5`, or the loose files of an old run), and rebuilds the configuration
+from `inputs/command.json`. It refuses when the imaging settings, the image catalog or the reference of that
+configuration differ from `final/artifacts/config.json`, and, before writing anything, when the run has no completed
+image recovery or a draw of `<stem>` is missing from `posterior_image_residual_draws`. The model description in the
+figure record comes from `final/artifacts/config.json`, which also records how many images got a contour
+(`recovered_position_contours`). It rewrites the figures, their records, the marker tables and
+`posterior_overview_positions` in `final/results.h5`, never the arrays `<stem>`.
+
 ## Reading results in Python
 
 ```python
-import json
-import pandas as pd
+from kappaccino.io import store
 from kappaccino.io.hdf5 import load_arrays
 
 run = "results/demo/hera"
-summary = pd.read_csv(f"{run}/final/tables/posterior_summary.csv")
+summary = store.read_table(f"{run}/final", "posterior_summary")       # a DataFrame
+fit = store.read_record(f"{run}/final", "run_summary")["fit"]
+maps = store.read_arrays(f"{run}/final", "conditional_field_maps")    # dict of arrays
+record = store.read_figure_record(f"{run}/final/figures/hera_corner_globals.pdf")
 posterior = load_arrays(f"{run}/final/artifacts/posterior.h5")
-fit = json.load(open(f"{run}/final/tables/run_summary.json"))
 ```
+
+The same calls read an old run's loose files. `store.entries(stage)` lists the names. Write only from the main thread
+of a process: the writes are serialized by a lock, but the worker threads of the output pass never write. Writes made
+in a row go inside `with store.batch(stage):`, which commits them as one new version of `results.h5` (one copy of the
+file instead of one per entry). An exception that leaves the block, a nested `with store.batch(stage):` or a write
+inside it discards all of them; if it was caught inside the block, later writes and the end of the block raise
+`store.BatchFailed`, so a batch is never committed in part. A table or record the store refuses (`TypeError`) can be
+caught without failing the batch. A damaged entry raises `store.DamagedEntry`, which is not a `store.MissingEntry`.
 
 ## Manuscript macros
 
@@ -186,16 +313,37 @@ Every final run writes `final/figures/<prefix>_results.tex`, and mock aggregates
 in the text. Names contain letters only: M0416 uses `MJZeroFourOneSix`, AS1063 uses `ASOneZeroSixThree`.
 
 `\HeraRMS`, `\HeraMedianResidual`, `\HeraLensOnlyRMS` and `\HeraLensOnlyMedianResidual` are posterior medians with
-16–84% ranges over the saved draws (`posterior_image_residual_draws.csv`, and `..._lens_only.csv` for the parametric
+16–84% ranges over the saved draws (the table `posterior_image_residual_draws`, and `..._lens_only` for the parametric
 lens without the GRF), written for math mode, e.g. `$\HeraRMS''$`. The image counts (`\HeraNRecovered`,
 `\HeraNMissed`, `\HeraNExtraImages`, `\HeraRecoveredPercent`) are medians over the reporting draws, with
 `...Interval` macros for the 16–84% range. In the image tables an image is recovered when at least half the draws
 recover it; its model position, residual and magnification are medians over the draws that do. Extra images are
 those found in at least half the draws.
 
+The extra images of a draw come from a global search of its lens (parametric plus its GRF realization). Every family's
+window, the span of its images plus `image_diagnostics.exact_image_window_margin_arcsec`, is ray-shot on a coarse grid
+(`exact_image_grid_pitch_arcsec`) with a finer sub-grid (`exact_image_fine_pitch_arcsec`) near critical curves, and
+every candidate is refined to a root of the lens equation. With a single lens plane and a fixed cosmology the lens of
+any source redshift is the lens at one reference redshift times the ratio of lensing efficiencies, plus the external
+shear, which does not scale. The search then puts all families on one lattice, each window snapped outward onto it,
+and refines the candidates of all families together; each draw checks the scaling at a few points first and, if it
+does not hold, searches each source redshift on its own grid. The two searches place their grid points differently,
+so on a few draws one of them finds a faint image near the limit of the coarse grid that the other misses.
+
 `\HeraSigmaTotal` is the quadrature sum of `\HeraSigmaGRF`, `\HeraSigmaGP` and `\HeraSigmaMeas` taken per posterior draw
 (arcsec, per coordinate, for an image at `\HeraGRFReferenceRedshift`), and `\HeraGRFVariancePercent` the share of the GRF in
 that variance; both are medians over the draws with `...Interval` macros for the 16–84% range.
+
+For a mock campaign, `\MockRMS` is the median and 16–84% range of the RMS residual over the mocks and their draws, and
+`\MockInjectedOffset` the same over the mocks of the rms separation between the observed and true image positions
+(the displacement and measurement noise added to each mock catalog), both in arcsec for math mode.
+The same file holds what the mocks inject. `\MockInjectedSigmaGRF`, `\MockInjectedSigmaGP`, `\MockInjectedSigmaMeas`,
+`\MockInjectedLambdaB`, `\MockInjectedEllGP` and `\MockInjectedGammaKappa` are medians over the mocks, and
+`\Mock<Name>Min` and `\Mock<Name>Max` give the range each is drawn from (`SigmaGRF`, at `\MockFieldReferenceRedshift`,
+`LambdaB`, `GammaKappa`, `SigmaGP`, `EllGP`, `SigmaMeas`). `\MockSchechterAlpha`, `\MockSchechterMagnitude`,
+`\MockPivotMagnitude`, `\MockVelocityScatterDex` and `\MockVelocityScatterPercent` describe the member population.
+`\MockNSystemsPerMock`, `\MockNFamiliesPerMock` and `\MockNImagesPerMock` are the median numbers of lensed systems, image
+families (a knot of a system is its own family) and images per mock, each with `...Min` and `...Max`.
 
 Simulated clusters with a truth map also get the truth recovery within the image footprint: `\HeraFootprintMassRatio`
 and `\HeraFootprintKappaRatio` (mean model/true ratio of the enclosed mass and of the azimuthally averaged
@@ -205,15 +353,15 @@ image cut at the edge of the published figure), `\HeraFootprintMassMeanAbsPercen
 does not let high and low stretches cancel, and it weights the large excursions), and the same with a model name appended (`...RatioCATS`,
 `...RatioGLAFIC`, `...RatioJohnsonSharon`, `...RatioZitrinLTMgauss`, `...RatioZitrinNFW`) for the digitized
 parametric reconstructions of Meneghetti et al. (2017). Our numbers are medians over the saved posterior draws
-(`final/tables/truth_recovery_{m2d_aperture,kappa_annulus}_ratio_draws.csv`, `\HeraFootprintNDraws` of them, the
+(the tables `truth_recovery_{m2d_aperture,kappa_annulus}_ratio_draws`, `\HeraFootprintNDraws` of them, the
 reporting draws), and each has an `...Interval` macro for math mode with the 16-84 per cent
 range, e.g. `$\HeraFootprintMassRMSPercentInterval\%$`, and `...Minus` and `...Plus` macros with the lower and upper error alone.
 
 Simulated clusters with shear truth also get the magnification against the truth:
 `\HeraMagnificationScatterMuThreePercent`, `\HeraMagnificationScatterMuTenPercent` and
-`\HeraMagnificationBiasMu...Percent` (from `magnification_scatter.csv`, in per cent), and `\HeraSourceAreaRatioMuThree`,
+`\HeraMagnificationBiasMu...Percent` (from the table `magnification_scatter`, in per cent), and `\HeraSourceAreaRatioMuThree`,
 `...MuTen` and `...MuThirty` (median source-plane area magnified above that threshold over the true area, from
-`cumulative_source_area.csv`). These use the lens of each draw, parametric plus its realization of the GRF; the same
+the table `cumulative_source_area`). These use the lens of each draw, parametric plus its realization of the GRF; the same
 names with `LensOnly` after the cluster prefix (`\HeraLensOnlyMagnificationScatterMuTenPercent`) are the parametric
 lens alone. They are "not available" until the run has those tables.
 

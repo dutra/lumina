@@ -288,7 +288,7 @@ approximation for a faint galaxy, while a bright foreground galaxy is better mod
 (`treatment: independent`). Second, the images separate a non-member from a low-mass member only when the difference
 in mass is large, because each member already has a deviation from the scaling relation. Third, maps, image predictions
 and diagnostics use the prior expected mass $p_i$ of every uncertain member, not the posterior membership. After
-sampling, `final/tables/member_membership.csv` lists the
+sampling, the table `member_membership` of `final/results.h5` lists the
 prior and posterior membership of every member ({doc}`outputs`).
 
 (sec-membership-validation)=
@@ -502,8 +502,8 @@ The file `catalog_path` is a CSV table with `image_label`, `ra` and `dec` (degre
 error model of the trusted images. The file `population_catalog_path` is a CSV photometric catalog of the field with a
 redshift column and the same bands. The final stage writes `final/artifacts/uncertain_images.h5`, which holds the
 library groups, the per-draw assignment probabilities and sampled assignments, the averages of both, and the
-probability that two images share a source. The final stage also writes the tables `uncertain_images.csv` and
-`uncertain_pairs.csv`.
+probability that two images share a source. The final stage also writes the tables `uncertain_images` and
+`uncertain_pairs` to `final/results.h5`.
 
 (sec-full-posterior)=
 ## 5. The full posterior

@@ -28,7 +28,8 @@ names = [spec["name"] for spec in json.load(open(f"{root}/init/artifacts/state.j
 physical = saved["physical"]                                          # (draw, parameter), same order as names
 ```
 
-`final/tables/posterior_summary.csv` holds the same quantities as one row per parameter.
+The table `posterior_summary` of `final/results.h5` holds the same quantities as one row per parameter (tables are
+read with `kappaccino.io.store.read_table`; {doc}`outputs`).
 
 Every array is in parameter order, the order of `state.parameter_specs` and of `names` above. Draws are concatenated
 chain by chain; `grouped_samples` keeps the chain axis.
@@ -173,7 +174,8 @@ source positions; `samples` for these columns is not a position.
 
 ## Derived outputs
 
-These are model evaluations at posterior draws, not new measurements.
+These are model evaluations at posterior draws, not new measurements. Each is a table of `final/results.h5` (named
+without `.csv`; a run made before that layout has them as `final/tables/<name>.csv`).
 
 | file | content |
 |---|---|
