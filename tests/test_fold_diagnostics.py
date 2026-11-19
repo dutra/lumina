@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from dataclasses import replace
 import json
+from kappaccino.io import store
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -29,7 +30,7 @@ class FakeDraws:
     def correction(self, k, reach):
         return self.field(self.samples[k])
 
-    def grid_maps(self, name, x, y, z, log=print):
+    def grid_maps(self, name, x, y, z, log=print, **kwargs):
         return self.maps(self.samples, x, y, z)
 
 
@@ -68,7 +69,7 @@ def test_degenerate_caustic_rejected():
 
 def test_empty_artifact(tmp_path):
     fd.save_fold_data(dict(pairs=[],skipped=[],draw_indices=[]),tmp_path)
-    assert json.loads((tmp_path/'fold_pairs_source_caustics.json').read_text())['pairs']==[]
+    assert store.read_record(tmp_path, 'fold_pairs_source_caustics')['pairs']==[]
 
 
 def test_fold_render_style_and_all_draw_accounting(synthetic_config,tmp_path,monkeypatch):
@@ -82,7 +83,7 @@ def test_fold_render_style_and_all_draw_accounting(synthetic_config,tmp_path,mon
               normal=np.array([0.,1.]),origin=np.zeros(2),seeds=curve)
     data=dict(pairs=[pair],draw_indices=list(range(n)))
     fd.save_fold_data(data,tmp_path)
-    assert json.loads((tmp_path/'fold_pairs_source_caustics.json').read_text())['pairs'][0]['source_draws_total']==n
+    assert store.read_record(tmp_path, 'fold_pairs_source_caustics')['pairs'][0]['source_draws_total']==n
     wcs=WCS(naxis=2);wcs.wcs.crpix=[1000,1000];wcs.wcs.crval=[0,0];wcs.wcs.cdelt=[-.05/3600,.05/3600];wcs.wcs.ctype=['RA---TAN','DEC--TAN']
     band=SimpleNamespace(wcs=wcs,shape=(2000,2000),pixel_scale_arcsec=.05)
     monkeypatch.setattr(cutouts,'rgb_cutout',lambda *args:np.full((80,80,3),.2))

@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+import pytest
+from kappaccino.io import store
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
@@ -8,18 +10,25 @@ from kappaccino.diagnostics.exact_images import ExactImageSolver
 from kappaccino.io.hdf5 import load_arrays, save_arrays
 
 
-def test_contour_positions_are_predicted_observed_for_catalog_images_and_true_for_extras(tmp_path):
+@pytest.mark.parametrize('layout',['store','legacy'])
+def test_contour_positions_are_predicted_observed_for_catalog_images_and_true_for_extras(tmp_path, layout):
+    tables=tmp_path/'tables'
+    def put(name, frame):
+        if layout=='store':
+            store.write_table(tables, name, frame)
+        else:
+            tables.mkdir(exist_ok=True)
+            frame.to_csv(tables/f'{name}.csv',index=False)
     rows=pd.DataFrame(dict(draw_index=[0,0,1,1],posterior_index=[5,5,7,7],family_id=['a']*4,image_label=['a1','a2']*2,
                            recovered=[True,False,True,True],x_model_arcsec=[5.,9.,5.,1.],y_model_arcsec=[5.,9.,5.,0.],
                            x_predicted_arcsec=[0.,9.,.1,1.],y_predicted_arcsec=[0.,9.,0.,0.],
                            x_true_arcsec=[2.,9.,2.1,1.],y_true_arcsec=[2.,9.,2.,0.]))
-    rows.to_csv(tmp_path/'posterior_image_residual_draws.csv',index=False)
-    pd.DataFrame(dict(family_id=['a'],x_model_arcsec=[10.],y_model_arcsec=[0.])).to_csv(tmp_path/'image_recovery_extra_images.csv',index=False)
-    pd.DataFrame(dict(draw_index=[0,1,1],posterior_index=[5,7,7],family_id=['a','a','a'],x_model_arcsec=[10.2,9.9,30.],y_model_arcsec=[0.,0.,0.],
+    put('posterior_image_residual_draws',rows)
+    put('image_recovery_extra_images',pd.DataFrame(dict(family_id=['a'],x_model_arcsec=[10.],y_model_arcsec=[0.])))
+    put('posterior_extra_images',pd.DataFrame(dict(draw_index=[0,1,1],posterior_index=[5,7,7],family_id=['a','a','a'],x_model_arcsec=[10.2,9.9,30.],y_model_arcsec=[0.,0.,0.],
                       x_predicted_arcsec=[10.5,9.6,30.],y_predicted_arcsec=[.3,-.2,0.],
-                      x_true_arcsec=[10.3,9.8,30.],y_true_arcsec=[.1,-.1,0.])).to_csv(
-        tmp_path/'posterior_extra_images.csv',index=False)
-    data=ipc.position_draws(np.array([5,7]),tmp_path)
+                      x_true_arcsec=[10.3,9.8,30.],y_true_arcsec=[.1,-.1,0.])))
+    data=ipc.position_draws(np.array([5,7]),tables)
     np.testing.assert_allclose(data['recovered'][:,0],[[0.,0.],[.1,0.]])
     assert np.isnan(data['recovered'][0,1]).all()
     np.testing.assert_allclose(data['extra'][:,0],[[10.3,.1],[9.8,-.1]])   # matched by lens position, drawn at the true one

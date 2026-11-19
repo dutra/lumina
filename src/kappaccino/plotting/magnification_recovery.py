@@ -1,7 +1,7 @@
 """Magnification recovery at constrained images and across the simulated lens field."""
 from __future__ import annotations
 
-import json
+from ..io import store
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -140,20 +140,20 @@ def write_magnification_recovery(truth, images, reference, z_lens, cosmology, tr
     points['model_abs_mu'] = np.abs(images.magnification_model.to_numpy(float))
     points['finite'] = np.isfinite(points.true_abs_mu) & np.isfinite(points.model_abs_mu)
     points['within_display'] = points.finite & points.true_abs_mu.between(1, 100) & points.model_abs_mu.between(.5, 200)
-    tables.mkdir(parents=True, exist_ok=True)
-    bins.to_csv(tables / 'magnification_recovery_bins.csv', index=False)
-    points.to_csv(tables / 'magnification_recovery_images.csv', index=False)
-    metadata = dict(map_source_redshift=float(truth['z_source']), truth_field_reference_redshifts=reference_z,
-                    truth_paths=list(map(str, paths)), region='convex hull of observed images; finite true |mu| >= 1',
-                    map_model='per-pixel median over the reporting posterior draws',
-                    map_grf_realization=truth.get('grf_included', 'not recorded'), image_model='median over the reporting draws, exact kernels at observed positions',
-                    image_redshift='each family source redshift', truth_interpolation='native kappa/shear bilinear interpolation, then lens-efficiency scaling, then inverse determinant',
-                    error_bars='spatial 16-84 percentiles, not posterior uncertainty or standard error',
-                    bin_edges=np.geomspace(1, 100, 13).tolist(), min_bin_pixels=8,
-                    map_pixels=int(mask.sum()), image_count=len(points), finite_images=int(points.finite.sum()),
-                    images_outside_display=int((points.finite & ~points.within_display).sum()),
-                    map_pixels_outside_display=int(((t[mask] > 100) | (m[mask] < .5) | (m[mask] > 200)).sum()))
-    (tables / 'magnification_recovery_provenance.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    with store.batch(tables):
+        store.write_table(tables, 'magnification_recovery_bins', bins)
+        store.write_table(tables, 'magnification_recovery_images', points)
+        metadata = dict(map_source_redshift=float(truth['z_source']), truth_field_reference_redshifts=reference_z,
+                        truth_paths=list(map(str, paths)), region='convex hull of observed images; finite true |mu| >= 1',
+                        map_model='per-pixel median over the reporting posterior draws',
+                        map_grf_realization=truth.get('grf_included', 'not recorded'), image_model='median over the reporting draws, exact kernels at observed positions',
+                        image_redshift='each family source redshift', truth_interpolation='native kappa/shear bilinear interpolation, then lens-efficiency scaling, then inverse determinant',
+                        error_bars='spatial 16-84 percentiles, not posterior uncertainty or standard error',
+                        bin_edges=np.geomspace(1, 100, 13).tolist(), min_bin_pixels=8,
+                        map_pixels=int(mask.sum()), image_count=len(points), finite_images=int(points.finite.sum()),
+                        images_outside_display=int((points.finite & ~points.within_display).sum()),
+                        map_pixels_outside_display=int(((t[mask] > 100) | (m[mask] < .5) | (m[mask] > 200)).sum()))
+        store.write_record(tables, 'magnification_recovery_provenance', metadata)
     path = figures / f'{prefix + "_" if prefix else ""}magnification_recovery.pdf'
     render_recovery(t[mask], m[mask], bins, points, path)
     log(f'[outputs] magnification recovery: {path} ({points.finite.sum()}/{len(points)} finite image markers)')

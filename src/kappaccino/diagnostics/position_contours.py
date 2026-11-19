@@ -2,15 +2,14 @@
 
 For an observed image the contour is of its predicted observed position, where the model expects a catalog entry:
 where the product draw's own lens (parametric plus its GRF realization) puts the image, plus one fresh draw of the
-image-plane GP and of the measurement error (``x_predicted_arcsec``, ``y_predicted_arcsec`` of
-``posterior_image_residual_draws.csv``), so the catalog position can be compared with it (:func:`position_coverage`).
+image-plane GP and of the measurement error (``x_predicted_arcsec``, ``y_predicted_arcsec`` of the table
+``posterior_image_residual_draws``), so the catalog position can be compared with it (:func:`position_coverage`).
 For an extra image, which has no catalog position, the contour is of its true position, where to look for it: the lens
 position plus the GP displacement that the observed images near it imply (``x_true_arcsec``, ``y_true_arcsec`` of
-``posterior_extra_images.csv``).  Nothing is solved again.  Each observed image gets the positions of the draws that
-recover it; each extra image found in at least half the draws (``image_recovery_extra_images.csv``) gets the per-draw
+``posterior_extra_images``).  Nothing is solved again.  Each observed image gets the positions of the draws that
+recover it; each extra image found in at least half the draws (``image_recovery_extra_images``) gets the per-draw
 extra image of its family whose lens position is nearest to it, within ``image_recovery.EXTRA_IMAGE_MATCH_ARCSEC``.
 """
-import json
 from pathlib import Path
 
 import contourpy
@@ -19,7 +18,7 @@ import pandas as pd
 from scipy.stats import chi2, gaussian_kde
 
 from .image_recovery import EXTRA_IMAGE_MATCH_ARCSEC
-from ..io.hdf5 import save_arrays
+from ..io import store
 
 PROBABILITIES = (.682689492, .954499736)
 # Fewer finite draws than this give Gaussian ellipses instead of a density estimate.
@@ -38,7 +37,7 @@ def position_draws(indices, tables) -> dict:
     tables = Path(tables)
     indices = np.asarray(indices, int)
     slot = {int(index): k for k, index in enumerate(indices)}
-    rows = pd.read_csv(tables / 'posterior_image_residual_draws.csv', dtype={'family_id': str, 'image_label': str})
+    rows = store.read_table(tables, 'posterior_image_residual_draws', legacy_csv=dict(dtype={'family_id': str, 'image_label': str}))
     labels = list(dict.fromkeys(rows['image_label']))
     n = len(indices)
     recovered = np.full((n, len(labels), 2), np.nan)
@@ -49,8 +48,8 @@ def position_draws(indices, tables) -> dict:
         recovered[slot[int(row.posterior_index)], index[row.image_label]] = (row.x_predicted_arcsec, row.y_predicted_arcsec)
         recovered_lens[slot[int(row.posterior_index)], index[row.image_label]] = (row.x_model_arcsec, row.y_model_arcsec)
         recovered_true[slot[int(row.posterior_index)], index[row.image_label]] = (row.x_true_arcsec, row.y_true_arcsec)
-    common = _read(tables / 'image_recovery_extra_images.csv')
-    per_draw = _read(tables / 'posterior_extra_images.csv')
+    common = _read(tables, 'image_recovery_extra_images')
+    per_draw = _read(tables, 'posterior_extra_images')
     anchors = common[['x_model_arcsec', 'y_model_arcsec']].to_numpy(float) if len(common) else np.empty((0, 2))
     # A fixed-width string array: pandas hands back object strings, which the HDF5 writer refuses.
     families = np.asarray(common['family_id'].astype(str).to_numpy(), dtype=str) if len(common) else np.empty(0, str)
@@ -75,9 +74,9 @@ def position_draws(indices, tables) -> dict:
                 extra_anchors=anchors, draw_indices=indices)
 
 
-def _read(path):
+def _read(tables, name):
     try:
-        return pd.read_csv(path, dtype={'family_id': str})
+        return store.read_table(tables, name, legacy_csv=dict(dtype={'family_id': str}))
     except (FileNotFoundError, pd.errors.EmptyDataError):
         return pd.DataFrame()
 
@@ -186,17 +185,19 @@ def load_or_compute_contours(config, state, draws, extra, tables, *, grid_size=2
     ``tables``; ``extra`` (the common extra images) is read from there too and kept in the signature for the callers."""
     tables = Path(tables)
     data = position_draws(draws.indices, tables)
-    save_arrays(tables/'posterior_overview_positions.h5', **data)
     contours = prepare_contours(data, grid_size=grid_size, log=log)
     contours['position_data'] = data
     contours['fingerprint'] = draws.key
-    (tables/'posterior_overview_positions.json').write_text(json.dumps(dict(
-        fingerprint=draws.key, draws=len(draws.indices), selected_draw_indices=np.asarray(draws.indices).tolist(),
-        solver="the image recovery of the reporting draws (no new solve); each draw's lens is parametric plus its GRF realization",
-        positions='recovered (= recovered_predicted): predicted observed positions of the observed images, the lens position plus '
-                  'one draw of the image-plane GP and measurement error; extra (= extra_true): true positions of the extra images, '
-                  'the lens position plus the GP displacement given the catalog; *_lens, *_true, *_predicted: the three positions',
-        extras='Extra images found in at least half the draws; per draw the nearest extra of the family',
-        contours=f'KDE highest-density regions (at least {MIN_KDE_DRAWS} draws) or Gaussian ellipses, 68.3% and 95.4%',
-        summaries=contours['summaries']), indent=2))
+    # Arrays and record in one commit: a kill between them must not leave new arrays beside an old record.
+    with store.batch(tables):
+        store.write_arrays(tables, 'posterior_overview_positions', data)
+        store.write_record(tables, 'posterior_overview_positions', dict(
+            fingerprint=draws.key, draws=len(draws.indices), selected_draw_indices=np.asarray(draws.indices).tolist(),
+            solver="the image recovery of the reporting draws (no new solve); each draw's lens is parametric plus its GRF realization",
+            positions='recovered (= recovered_predicted): predicted observed positions of the observed images, the lens position plus '
+                      'one draw of the image-plane GP and measurement error; extra (= extra_true): true positions of the extra images, '
+                      'the lens position plus the GP displacement given the catalog; *_lens, *_true, *_predicted: the three positions',
+            extras='Extra images found in at least half the draws; per draw the nearest extra of the family',
+            contours=f'KDE highest-density regions (at least {MIN_KDE_DRAWS} draws) or Gaussian ellipses, 68.3% and 95.4%',
+            summaries=contours['summaries']))
     return contours

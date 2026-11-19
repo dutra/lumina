@@ -1,5 +1,5 @@
 """Covariance posterior and exact-field uncertainty figures for run outputs."""
-import json
+from ..io import store
 from pathlib import Path
 
 import jax
@@ -101,16 +101,14 @@ def plot_covariance_errors(config, state, draws, paths, *, plane='both'):
                             top=.86 if len(planes) == 2 else .77, wspace=0, hspace=0)
         fig.savefig(output, bbox_inches='tight', pad_inches=.04)
         plt.close(fig)
-    tables = paths.tables
-    tables.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(table).to_csv(tables / f'{stem}.csv', index=False)
-    (tables / f'{stem}.json').write_text(json.dumps(dict(posterior_draw_indices=np.asarray(draws.indices).tolist(),
+    store.write_table(paths.tables, stem, pd.DataFrame(table))
+    store.write_record(paths.tables, stem, dict(posterior_draw_indices=np.asarray(draws.indices).tolist(),
         plane=plane_mode, transformation={p: 'A^-1 C A^-T' if p == 'image' else 'C' for p in planes},
         kernels='exact', positions='observed images at their family redshifts',
         x_axis='median over draws of each singular value',
         lines='median over draws of each component width',
         intervals='16th–84th percentiles of component and total widths in each draw\u0027s singular basis',
-        units='arcsec; standard deviations, not covariance eigenvalues'), indent=2))
+        units='arcsec; standard deviations, not covariance eigenvalues'))
     return output
 
 
@@ -131,8 +129,7 @@ def plot_covariance_corner(config, state, posterior, paths):
     path = paths.figures / f'{config.paths.figure_prefix or "cluster"}_covariance_corner.pdf'
     result = plot_parameter_corner(posterior.physical, selection, path, grouped_physical=grouped)
     if result is not None:
-        paths.tables.mkdir(parents=True, exist_ok=True)
-        (paths.tables / 'covariance_corner.json').write_text(path.with_suffix('.json').read_text())
+        store.write_record(paths.tables, 'covariance_corner', store.read_figure_record(path))
     return result
 
 

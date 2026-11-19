@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from kappaccino.io import artifacts
+from kappaccino.io import artifacts, store
 from kappaccino import pipeline
 from kappaccino.config import ReportingConfig, ImageDiagnosticsConfig, RuntimeConfig, SamplingConfig, SearchConfig
 from kappaccino.likelihood.evaluator import Evaluator
@@ -67,10 +67,17 @@ def test_single_stage_end_to_end(synthetic_config, monkeypatch):
 
     # Audit and outputs exist.
     assert result.audit["approximation_validation"] in {"passed", "failed"}
-    for name in ("posterior_summary.csv", "member_classification.csv", "image_fit_quality.csv", "member_scaling_relation.csv", "run_summary.json"):
-        assert (result.paths.final.tables / name).is_file()
+    final = result.paths.final.root
+    for name in ("posterior_summary", "member_classification", "image_fit_quality", "member_scaling_relation"):
+        assert not store.read_table(final, name).empty
+    assert "fit" in store.read_record(final, "run_summary")
+    assert (final / store.RESULTS_FILE).is_file()
+    # Every table and record is in results.h5: tables/ holds plain-text reports only, and no figure has a json file.
+    assert {p.suffix for p in result.paths.final.tables.iterdir()} <= {".txt"}
+    assert not list(result.paths.final.figures.glob("*.json"))
     assert (result.paths.final.figures / "critical_curves.pdf").is_file()
     assert (result.paths.init.tables / "classification_report.txt").is_file()
+    assert {p.suffix for p in result.paths.init.tables.iterdir()} <= {".txt"}
 
     # Resuming reloads both stages without searching or sampling again (the outputs, written above, are not redrawn here).
     monkeypatch.setattr(pipeline, "write_outputs", lambda *args, **kwargs: {})

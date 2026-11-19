@@ -23,7 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
-from .io import artifacts
+from .io import artifacts, store
 from .io.hdf5 import save_arrays
 from .diagnostics.audit import audit_posterior
 from .core.classification import (
@@ -153,7 +153,7 @@ class RunResult:
         True if a saved posterior was loaded instead of sampled.
     summary : dict, optional
         What the outputs step returned and wrote to
-        ``final/tables/run_summary.json``; fit numbers (image counts, rms and
+        the record ``run_summary`` of ``final/results.h5``; fit numbers (image counts, rms and
         median residuals in arcsec) are under ``"fit"``. Empty when
         ``runtime.skip_plots`` is set. Default empty.
     timing : dict of str to float, optional
@@ -387,12 +387,12 @@ def membership_table(state: ModelState, evaluator: Evaluator, samples: np.ndarra
 
 
 def write_membership_table(state: ModelState, evaluator: Evaluator, samples: np.ndarray, tables: Path, *, log) -> None:
-    """``tables/member_membership.csv`` (see :func:`membership_table`) and a log line per enumerated member; nothing when
-    no member is uncertain."""
+    """The table ``member_membership`` of the stage of ``tables`` (see :func:`membership_table`) and a log line per
+    enumerated member; nothing when no member is uncertain."""
     if not len(evaluator.membership_uncertain_positions):
         return
     table = membership_table(state, evaluator, samples)
-    table.to_csv(tables / "member_membership.csv", index=False)
+    store.write_table(tables, "member_membership", table)
     for row in table.loc[table.treatment == "enumerated"].itertuples(index=False):
         log(f"[final] membership {row.member}: prior {row.p_prior:.2f}, posterior {row.p_posterior:.3f} +- {row.p_posterior_std:.3f}")
 
@@ -619,10 +619,16 @@ def write_init_bic(state: ModelState, evaluator: Evaluator, theta: np.ndarray, d
     return record
 
 
-def _without_wbic(payload: dict[str, Any]) -> dict[str, Any]:
-    """A configuration dictionary without the WBIC settings, which may change between a finished run and its resume."""
+def resume_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """The part of a configuration dictionary (``to_json_dict``) that a resume compares and the run hash covers: all
+    of it but the WBIC settings, which may change between a finished run and its resume, and the performance settings
+    (``config.PERFORMANCE_FIELDS``), which do not change what a run computes."""
+    from .config import PERFORMANCE_FIELDS
+    dropped = {"sampling": ("wbic", "wbic_warmup", "wbic_samples"), **PERFORMANCE_FIELDS}
     payload = dict(payload)
-    payload["sampling"] = {k: v for k, v in payload.get("sampling", {}).items() if k not in ("wbic", "wbic_warmup", "wbic_samples")}
+    for section, fields in dropped.items():
+        if isinstance(payload.get(section), dict):
+            payload[section] = {k: v for k, v in payload[section].items() if k not in fields}
     return payload
 
 
@@ -673,8 +679,9 @@ def run_init(config: LensClusterSolverConfig) -> InitResult:
     ``classification.json``, ``search.h5``, ``modes.json``, ``start.json``,
     ``summary.json``; ``init/tables/classification_report.txt``,
     ``init/tables/start_parameters.txt``,
-    ``init/tables/member_kinematics.csv`` (members with kinematics only),
-    ``init/tables/shallow_fold_pairs.json`` (GP likelihoods only); init figures
+    and in ``init/results.h5`` the table ``member_kinematics`` (members with
+    kinematics only) and the record ``shallow_fold_pairs`` (GP likelihoods
+    only); init figures
     under ``init/figures/`` unless ``runtime.skip_plots``; and the log
     ``init/logs/init.log``.
 
@@ -711,6 +718,7 @@ def _run_init(config: LensClusterSolverConfig) -> InitResult:
     for directory in (paths.artifacts, paths.tables, paths.logs):
         directory.mkdir(parents=True, exist_ok=True)
     log = RunLog(paths.logs / "init.log", quiet=config.runtime.quiet)
+    previous_store_log = store.set_log(log)
     _seed(config)
     try:
         signature = artifacts.init_signature(config)
@@ -801,7 +809,7 @@ def _run_init(config: LensClusterSolverConfig) -> InitResult:
             raise RuntimeError("The best mode is rejected by the likelihood after reclassification.")
         if state.member_kinematics:
             table = kinematics_table(state, evaluator, theta)
-            table.to_csv(paths.tables / "member_kinematics.csv", index=False)
+            store.write_table(paths.root, "member_kinematics", table)
             log(f"[init] member kinematics at the start: {len(table)} members, chi2 {float(np.sum(table['z'] ** 2)):.1f}, "
                 f"median ln(measured / model) {float(np.median(table['ln_ratio'])):+.3f}, worst |z| {float(np.max(np.abs(table['z']))):.1f} "
                 f"({table.loc[np.argmax(np.abs(table['z'].to_numpy())), 'member']})")
@@ -815,13 +823,13 @@ def _run_init(config: LensClusterSolverConfig) -> InitResult:
                           f"sigma_gp {scales['sigma_gp']:.3f}\" at {scales['ell_gp']:.2f}\" sigma_meas {scales['sigma_meas']:.3f}\"")
                 pairs = shallow_fold_pairs(state, evaluator, theta)
                 log(shallow_fold_pair_report(pairs, evaluator.gp_floor, header=header, knee=True))
-                artifacts.write_json(paths.tables / "shallow_fold_pairs.json", {"pairs": pairs, "model": "init start", "likelihood": "grf_gp", "gp_kernel": "knee",
-                                                                                 "gp_blocks": evaluator.gp_blocks, **scales})
+                store.write_record(paths.root, "shallow_fold_pairs", {"pairs": pairs, "model": "init start", "likelihood": "grf_gp", "gp_kernel": "knee",
+                                                                      "gp_blocks": evaluator.gp_blocks, **scales})
             else:
                 shared, meas = float(config.likelihood.sigma_gp_start_arcsec), float(config.likelihood.gp_sigma_meas_start_arcsec)
                 pairs = shallow_fold_pairs(state, evaluator, theta, sigma_gp_arcsec=shared, sigma_meas_arcsec=meas)
                 log(shallow_fold_pair_report(pairs, evaluator.gp_floor, shared, meas))
-                artifacts.write_json(paths.tables / "shallow_fold_pairs.json", {"pairs": pairs, "model": "init start", "sigma_gp_arcsec": shared, "sigma_meas_arcsec": meas})
+                store.write_record(paths.root, "shallow_fold_pairs", {"pairs": pairs, "model": "init start", "sigma_gp_arcsec": shared, "sigma_meas_arcsec": meas})
         artifacts.save_state(paths.artifacts, state)
         artifacts.save_search(paths.artifacts, search)
         artifacts.save_start(paths.artifacts, theta, {"log_likelihood": value, "log_posterior": search["modes"][0]["log_posterior"],
@@ -847,6 +855,7 @@ def _run_init(config: LensClusterSolverConfig) -> InitResult:
         artifacts.write_json(paths.artifacts / artifacts.SUMMARY_FILE, summary)
         return InitResult(paths, state, evaluator, search, theta, resumed=False)
     finally:
+        store.set_log(previous_store_log)
         log.close()
 
 
@@ -865,9 +874,11 @@ def run_final(config: LensClusterSolverConfig, init: InitResult) -> RunResult:
     Files written (relative to the run root): ``final/artifacts/config.json``,
     ``config.json``, ``posterior.h5``, ``posterior_diagnostics.json``,
     ``audit.json``, ``summary.json``; ``final/tables/audit_report.txt``; unless
-    ``runtime.skip_plots``, the tables, figures and FITS maps of
-    ``final/tables/``, ``final/figures/`` and ``final/fits/`` (including
-    ``final/tables/run_summary.json``); and the log ``final/logs/final.log``.
+    ``runtime.skip_plots``, the tables, records and arrays of
+    ``final/results.h5`` (including the record ``run_summary``; see
+    :mod:`kappaccino.io.store`), the cache ``final/cache.h5``, the figures of
+    ``final/figures/`` and the FITS maps of ``final/fits/``; and the log
+    ``final/logs/final.log``.
 
     Parameters
     ----------
@@ -895,6 +906,7 @@ def run_final(config: LensClusterSolverConfig, init: InitResult) -> RunResult:
     for directory in (stage.artifacts, stage.figures, stage.tables, stage.fits, stage.logs):
         directory.mkdir(parents=True, exist_ok=True)
     log = RunLog(stage.logs / "final.log", quiet=config.runtime.quiet)
+    previous_store_log = store.set_log(log)
     runtime = config.runtime
     _seed(config)
     state, evaluator = init.state, init.evaluator
@@ -914,7 +926,7 @@ def run_final(config: LensClusterSolverConfig, init: InitResult) -> RunResult:
             state, evaluator, uncertain_start = add_uncertain_images(config, state, evaluator, init.theta, refit=refit, log=log)
         if runtime.resume and artifacts.is_final_complete(stage.artifacts):
             saved = artifacts.load_config(stage.artifacts)
-            if _without_wbic(saved.to_json_dict()) != _without_wbic(config.to_json_dict()):
+            if resume_payload(saved.to_json_dict()) != resume_payload(config.to_json_dict()):
                 raise ValueError("The saved final stage was made with a different configuration; use a new run name.")
             log("[final] complete posterior found; loading artifacts")
             posterior = artifacts.load_posterior(stage.artifacts)
@@ -990,6 +1002,7 @@ def run_final(config: LensClusterSolverConfig, init: InitResult) -> RunResult:
         timing = {"sampling": sampling_seconds, "model_comparison": comparison_seconds, "outputs": time.perf_counter() - outputs_started}
         return RunResult(paths, init, state, evaluator, posterior, audit, resumed=False, summary=outputs, timing=timing)
     finally:
+        store.set_log(previous_store_log)
         log.close()
 
 
@@ -998,7 +1011,7 @@ def run(config: LensClusterSolverConfig, stage: str = "both") -> RunResult | Ini
 
     The init stage always runs first through :func:`run_init` (which loads a
     saved init when ``runtime.resume`` is set). After the final stage this also
-    writes ``final/tables/runtime.json`` (only when neither stage was resumed,
+    writes the record ``runtime`` of ``final/results.h5`` (only when neither stage was resumed,
     so a reload keeps the original timing), the LaTeX macros
     ``final/figures/<figure_prefix>_results.tex`` (see
     :func:`kappaccino.reporting.results_tex.write_run_results`) and
@@ -1044,7 +1057,7 @@ def run(config: LensClusterSolverConfig, stage: str = "both") -> RunResult | Ini
     from .reporting.results_tex import write_run_results
     # Preserve original full-run timing when only reloading/replotting a run.
     if not result.resumed and not init.resumed:
-        artifacts.write_json(result.paths.final.tables / "runtime.json", result.timing)
+        store.write_record(result.paths.final.root, "runtime", result.timing)
     write_run_results(result.paths.final.root, name=config.paths.figure_prefix)
     table = run_summary_table(result, config)
     (result.paths.final.tables / "run_summary.txt").write_text(table + "\n")

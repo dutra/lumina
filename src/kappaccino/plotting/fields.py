@@ -5,9 +5,8 @@ fitted projection and source positions.  The displayed spectrum is the homogeneo
 (median and 16-84% over the same draws), not the map's Fourier power.
 """
 from pathlib import Path
-import json
 import numpy as np
-from ..io.hdf5 import save_arrays
+from ..io import store
 
 
 def render_grf_correction(data, output):
@@ -231,9 +230,9 @@ def write_field_plots(config, state, evaluator, posterior, paths, *, log=print):
     draws = reporting_draws(config, evaluator, posterior)
     log(f'[outputs] computing shared GRF and GP diagnostic maps over {len(draws)} posterior draws ({field_label})')
     data = compute_fields(config, state, draws, log=log)
-    paths.tables.mkdir(parents=True, exist_ok=True); paths.figures.mkdir(parents=True, exist_ok=True)
+    paths.figures.mkdir(parents=True, exist_ok=True)
     prefix = f'{config.paths.figure_prefix}_' if config.paths.figure_prefix else ''
-    save_arrays(paths.tables / 'conditional_field_maps.h5', **data)
+    store.write_arrays(paths.tables, 'conditional_field_maps', data)
     outputs = [paths.figures / f'{prefix}total_grf_dimensionless_power.pdf',
                paths.figures / f'{prefix}gp_correction_correlation.pdf']
     with plt.rc_context():
@@ -244,7 +243,7 @@ def write_field_plots(config, state, evaluator, posterior, paths, *, log=print):
                       map='per-pixel median over the draws of each draw\'s conditional realization; grf_q16/grf_q84 the 16-84% range', field=field_label,
                       nonpositive_total_pixels=int(np.sum(data['total']<=0)),
                       nonpositive_display='masked in the logarithmic total-convergence panel')
-    (paths.tables / 'conditional_field_maps.json').write_text(json.dumps(provenance, indent=2))
+    store.write_record(paths.tables, 'conditional_field_maps', provenance)
     for output in outputs:
         log(f'[outputs] {output}')
     return outputs

@@ -1,7 +1,6 @@
 """Tables and figures written after a run: posterior summary, image recovery, scaling relation, truth recovery."""
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -10,11 +9,12 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
+from ..io import store
 from ..plotting import plots
 from ..plotting.chain_traces import write_chain_traces
 from ..plotting.block_corner import write_posterior_block_corner, write_cosmology_corner
 from ..config import LensClusterSolverConfig
-from ..diagnostics.image_recovery import fit_summary, image_recovery_tables
+from ..diagnostics.image_recovery import fit_summary, image_recovery_tables, image_recovery_with_reuse
 from ..likelihood.evaluator import Evaluator
 from ..core.model import CORED_POWER_LAW_PROFILE, ModelState, PosteriorResults
 from ..plotting.potfile import write_potfile_plots
@@ -61,24 +61,31 @@ def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator:
                   audit: dict[str, Any], paths, *, log=print) -> dict[str, Any]:
     """``paths`` is the final StagePaths.  Every product is computed over one set of reporting draws
     (``reporting.draws.reporting_draws``), each draw evaluated once and shared by all of them; none uses the single best
-    sample."""
+    sample.
+
+    A second pass over the same stage (a resumed run) reuses what the first one saved: the image-recovery tables from
+    results.h5 when their fingerprint matches (``diagnostics.image_recovery.image_recovery_with_reuse``), the lens maps
+    of every grid from cache.h5 (``ReportingDraws.grid_maps``), and the aperture masses; each reuse or recomputation is
+    logged with its reason."""
     tables, figures, prefix = paths.tables, paths.figures, config.paths.figure_prefix
-    tables.mkdir(parents=True, exist_ok=True)
+    stage = store.stage_dir(paths.tables)
     draws = reporting_draws(config, evaluator, posterior)
+    draws.cache_stage = stage
     log(f"[outputs] {len(draws)} reporting draws (seed {draws.seed})")
     summary = {"reporting_draws": len(draws)}
     if draws.has_field and draws.field_is_rebuilt:
         summary["warnings"] = [REBUILT_FIELD_WARNING.format(blocks=state.gp_blocks)]
         log(f"[outputs] WARNING: {summary['warnings'][0]}")
 
-    posterior_summary_table(state, posterior).to_csv(tables / "posterior_summary.csv", index=False)
-    classification_table(state).to_csv(tables / "member_classification.csv", index=False)
+    with store.batch(stage):
+        store.write_table(stage, "posterior_summary", posterior_summary_table(state, posterior))
+        store.write_table(stage, "member_classification", classification_table(state))
     write_chain_traces(posterior, state.parameter_specs, figures, tables, prefix, log=log)
     if audit:
-        (tables / "audit.json").write_text(json.dumps(audit, indent=2, default=float))
+        store.write_record(stage, "audit", audit, default=float)
 
     member_table = plots.member_scaling_table(state, posterior)
-    member_table.to_csv(tables / "member_scaling_relation.csv", index=False)
+    store.write_table(stage, "member_scaling_relation", member_table)
     write_potfile_plots(posterior.physical, state.parameter_specs, figures, prefix, posterior=posterior, log=log)
     write_posterior_block_corner(posterior.physical, state.parameter_specs,
                                 plots.figure_path(figures, "corner_combined.pdf", prefix))
@@ -92,11 +99,11 @@ def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator:
                                     plots.figure_path(figures, "scaling_relation.pdf", prefix),
                                     fixed=fixed_relation_values(state, member_table))
 
-    recovery = image_recovery_tables(state, evaluator, draws, config.image_diagnostics, extra_images=config.reporting.extra_images, log=log)
+    recovery = image_recovery_with_reuse(stage, state, evaluator, draws, config.image_diagnostics,
+                                         extra_images=config.reporting.extra_images, compute=image_recovery_tables, log=log)
     from ..diagnostics.position_contours import position_coverage
     recovery["position_coverage"] = position_coverage(recovery["posterior_image_residual_draws"])
-    for name, frame in recovery.items():
-        frame.to_csv(tables / f"{name}.csv", index=False)
+    store.write_table(stage, "position_coverage", recovery["position_coverage"])
     image_df = recovery["image_fit_quality"]
     summary["fit"] = fit_summary(state, recovery, extra_image_draws=len(draws) if config.reporting.extra_images else 0)
     fit = summary["fit"]
@@ -146,7 +153,7 @@ def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator:
     # The headline numbers and the results macros are written here and again at the end: the imaging products below
     # (overview, fold cutouts, RGB critical curves) are the slowest and most failure-prone stage, and the Ares run of
     # 2026-11-08 ended inside it with no run_summary.json and "not available" macros.
-    (tables / "run_summary.json").write_text(json.dumps(summary, indent=2, default=float))
+    store.write_record(stage, "run_summary", summary, default=float)
     write_run_results(paths.root, name=prefix)
     if config.image_catalog.image_dir and not image_df.empty:
         from ..imaging.cutouts import imaging_variants, load_cluster_imaging
@@ -193,13 +200,14 @@ def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator:
                 output = render_apj_fold_cutouts(config, fold_data, imaging,
                     plots.figure_path(figures, 'fold_cutouts_apj_jwst.pdf', prefix),
                     run_directory=paths.root.parent,
-                    source_cache=tables/'fold_pairs_source_caustics.h5')
+                    source_cache=f"{store.results_path(stage)} (arrays and record fold_pairs_source_caustics)")
                 if output is not None:
                     log(f'[outputs] ApJ fold cutouts: {output}')
                 from ..plotting.paper_cutouts import write_paper_cutouts
                 write_paper_cutouts(replace(config, image_catalog=image_config), state, draws, tables, figures, imaging, log=log)
-    (tables / "run_summary.json").write_text(json.dumps(summary, indent=2, default=float))
+    store.write_record(stage, "run_summary", summary, default=float)
     write_run_results(paths.root, name=prefix)
+    store.compact(stage)
     return summary
 
 

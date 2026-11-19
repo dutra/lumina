@@ -1,6 +1,6 @@
 """Configured paper cutouts rendered directly from saved posterior diagnostics."""
 from pathlib import Path
-import json
+from ..io import store
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -87,11 +87,11 @@ def write_paper_cutouts(config, state, draws, tables, figures, imaging, *, log=p
                 fig.savefig(output, dpi=300, bbox_inches='tight', pad_inches=0)
             finally:
                 plt.close(fig)
-        output.with_suffix('.json').write_text(json.dumps(dict(
+        store.write_figure_record(output, dict(
             run=config.paths.run_name, selectors=list(selectors), source_tables=str(tables),
             layout='one row over a legend strip', position_probability=.954499736,
             position_contours='predicted observed positions, conditional on successful image recovery',
-            family_framing='parent fold region', bands=list(imaging[1])), indent=2)+'\n')
+            family_framing='parent fold region', bands=list(imaging[1])))
         outputs.append(output)
         log(f'[outputs] paper cutouts written: {output}')
     return outputs

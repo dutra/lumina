@@ -331,7 +331,7 @@ def plot_critical_curves(state: ModelState, draws, z_source: float, path: Path, 
     n = max(2, int(round(2 * half_fov_arcsec / grid_scale_arcsec)) + 1)
     axis = np.linspace(-half_fov_arcsec, half_fov_arcsec, n)
     xx, yy = np.meshgrid(axis, axis)
-    maps = draws.grid_maps("critical curves", xx, yy, z_source, log=log)
+    maps = draws.grid_maps("critical curves", xx, yy, z_source, quantities=("kappa", "gamma1", "gamma2"), log=log)
     shear = np.hypot(maps["gamma1"], maps["gamma2"])
     fig, (image_ax, source_ax) = plt.subplots(1, 2, figsize=(12, 5))
     pixel = np.arange(n, dtype=float)

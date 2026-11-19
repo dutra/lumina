@@ -14,6 +14,7 @@ without its measurement error.
 from __future__ import annotations
 
 import math
+import time
 from typing import Any
 
 import jax.numpy as jnp
@@ -24,7 +25,7 @@ from ..config import ImageDiagnosticsConfig
 from ..likelihood.evaluator import Evaluator
 from .exact_images import ExactImageSolver
 from ..core.model import ModelState, PosteriorResults
-from ..core.utils import progress
+from ..core.parallel import map_draws
 
 
 def image_plane_scales(evaluator: Evaluator, theta: np.ndarray) -> dict[str, float]:
@@ -35,15 +36,27 @@ def image_plane_scales(evaluator: Evaluator, theta: np.ndarray) -> dict[str, flo
             "sigma_meas": float(np.mean(np.asarray(scales["sigma_meas"], dtype=float)))}
 
 
-def image_plane_scatter(xy: np.ndarray, scales: dict[str, float], rng: np.random.Generator) -> np.ndarray:
+def image_plane_scatter(xy: np.ndarray, scales: dict[str, float], rng: np.random.Generator, *,
+                        leading: int | None = None) -> np.ndarray:
     """One draw of the displacement between the lens positions of images at ``xy`` (arcsec, shape (point, 2)) and their
     observed positions: the image-plane GP, correlated between the points with its squared-exponential kernel, plus
     independent measurement error.  It is drawn from the prior of these terms, not conditioned on the catalog.  Shape
-    (point, 2), arcsec."""
+    (point, 2), arcsec.
+
+    The scatter of the first ``leading`` points (all of them by default) does not depend on the points after them:
+    their random numbers are drawn first, and the Cholesky factor of the kernel is lower triangular.  The image
+    recovery puts the observed images first, so their scatter is the same however many extra images a draw has."""
     xy = np.asarray(xy, dtype=float).reshape(-1, 2)
-    scatter = scales["sigma_meas"] * rng.standard_normal(xy.shape)
-    if scales["sigma_gp"] > 0 and len(xy):
-        scatter = scatter + scales["sigma_gp"] * np.linalg.cholesky(_gp_kernel(xy, scales["ell_gp"])) @ rng.standard_normal(xy.shape)
+    blocks = (len(xy),) if leading is None else (int(leading), len(xy) - int(leading))
+    correlated = scales["sigma_gp"] > 0 and len(xy)
+    white, smooth = [], []
+    for size in blocks:
+        white.append(rng.standard_normal((size, 2)))
+        if correlated:
+            smooth.append(rng.standard_normal((size, 2)))
+    scatter = scales["sigma_meas"] * np.vstack(white)
+    if correlated:
+        scatter = scatter + scales["sigma_gp"] * np.linalg.cholesky(_gp_kernel(xy, scales["ell_gp"])) @ np.vstack(smooth)
     return scatter
 
 
@@ -86,9 +99,12 @@ def true_positions(catalog: np.ndarray, lens: np.ndarray, extra_lens: np.ndarray
     n = int(found.sum())
     points = np.vstack((catalog[found], extra_lens))
     kernel = _gp_kernel(points, scales["ell_gp"])
-    displacement = scales["sigma_gp"] * np.linalg.cholesky(kernel) @ rng.standard_normal(points.shape) if len(points) else np.zeros((0, 2))
+    # The random numbers of the observed images are drawn before those of the extra images, and the Cholesky factor
+    # is lower triangular, so the true positions of the observed images do not depend on the extra images.
+    normal, noise = rng.standard_normal((n, 2)), scales["sigma_meas"] * rng.standard_normal((n, 2))
+    normal = np.vstack((normal, rng.standard_normal((len(extra_lens), 2))))
+    displacement = scales["sigma_gp"] * np.linalg.cholesky(kernel) @ normal if len(points) else np.zeros((0, 2))
     if n:
-        noise = scales["sigma_meas"] * rng.standard_normal((n, 2))
         covariance = scales["sigma_gp"] ** 2 * kernel[:n, :n] + scales["sigma_meas"] ** 2 * np.eye(n)
         weights = np.linalg.solve(covariance, catalog[found] - lens[found] - displacement[:n] - noise)
         displacement = displacement + scales["sigma_gp"] ** 2 * kernel[:, :n] @ weights
@@ -151,6 +167,99 @@ def predictions_at(solver: ExactImageSolver, state: ModelState, evaluator: Evalu
         for ex, ey in zip(details["extra_model_x_arcsec"], details["extra_model_y_arcsec"]):
             extra_rows.append({"family_id": family_id, "x_model_arcsec": float(ex), "y_model_arcsec": float(ey)})
     return {"image_rows": rows, "extra_rows": extra_rows, "count_rows": count_rows}
+
+
+# Bump whenever the image solver or these tables can give other numbers for the same draws, catalog and settings (the
+# shared-lattice global search and the fixed order of the extra images of 2026-11-18 were such changes; 4: the field's
+# distance tables sized from the search grids, not the windows): tables saved with another version are computed again.
+IMAGE_RECOVERY_VERSION = 4
+# Record in results.h5, next to the tables, of what they were computed from (``recovery_fingerprint``).
+RECOVERY_RECORD = "image_recovery_fingerprint"
+
+
+def _digest(*parts) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    for part in parts:
+        h.update(part if isinstance(part, bytes) else str(part).encode())
+        h.update(b"\x00")
+    return h.hexdigest()
+
+
+def recovery_fingerprint(state: ModelState, draws, config: ImageDiagnosticsConfig, *, extra_images: bool) -> dict[str, str]:
+    """What ``image_recovery_tables`` depends on, part by part: ``version`` (``IMAGE_RECOVERY_VERSION`` and the
+    solver's ``shared_lattice`` switch), ``draws`` (seed, product and image draw indices and parameter vectors,
+    and the model they map to, ``ReportingDraws.image_key``), ``image_diagnostics`` (every setting of ``config``), ``extra_images`` and
+    ``catalog`` (each family's id, redshift, labels, observed positions and search window, the image order and the
+    parameter names)."""
+    import dataclasses
+    import json
+    settings = dataclasses.asdict(config) if dataclasses.is_dataclass(config) else dict(getattr(config, "__dict__", {}))
+    # Test doubles of the state may lack the catalog: an empty catalog part then (a real state always has one).
+    images = getattr(state, "images", None)
+    catalog = [_digest(json.dumps([str(f.family_id), float(f.z_source), [str(label) for label in f.image_labels],
+                                   float(getattr(f, "search_window", np.nan)), float(getattr(f, "x_center", np.nan)),
+                                   float(getattr(f, "y_center", np.nan))]),
+                       np.asarray(f.x_obs, dtype=float).tobytes(), np.asarray(f.y_obs, dtype=float).tobytes())
+               for f in getattr(state, "family_data", ())]
+    catalog.append(_digest(json.dumps([str(v) for v in getattr(images, "image_labels", ())]),
+                           json.dumps([str(v) for v in getattr(images, "family_ids", ())]),
+                           json.dumps([spec.name for spec in getattr(state, "parameter_specs", ())])))
+    return {"version": f"{IMAGE_RECOVERY_VERSION}:shared_lattice={bool(ExactImageSolver.shared_lattice)}",
+            "draws": str(draws.image_key),
+            "image_diagnostics": _digest(json.dumps(settings, sort_keys=True, default=str)),
+            "extra_images": str(bool(extra_images)),
+            "catalog": _digest(*catalog)}
+
+
+def saved_image_recovery(stage, fingerprint: dict[str, str]) -> tuple[dict[str, pd.DataFrame] | None, str]:
+    """The image-recovery tables saved in the stage's results.h5 with ``fingerprint`` (``recovery_fingerprint``), or
+    (None, why they cannot be reused): no record, a part of the fingerprint changed, or a table missing or damaged."""
+    from ..io import store
+    try:
+        saved = store.read_record(stage, RECOVERY_RECORD)
+    except store.MissingEntry:
+        return None, "no saved image recovery"
+    except (store.DamagedEntry, store.StoreError) as error:
+        return None, f"its record cannot be read ({type(error).__name__}: {error})"
+    old = saved.get("fingerprint", {}) if isinstance(saved, dict) else {}
+    changed = [part for part in fingerprint if old.get(part) != fingerprint[part]]
+    if changed:
+        return None, "changed since it was saved: " + ", ".join(changed)
+    tables = {}
+    for name in saved.get("tables", []):
+        try:
+            tables[str(name)] = store.read_table(stage, str(name))
+        except store.MissingEntry:
+            return None, f"table {name} missing"
+        except (store.DamagedEntry, store.StoreError) as error:
+            return None, f"table {name} cannot be read ({type(error).__name__}: {error})"
+    if not tables:
+        return None, "no saved tables"
+    return tables, ""
+
+
+def image_recovery_with_reuse(stage, state: ModelState, evaluator: Evaluator, draws, config: ImageDiagnosticsConfig, *,
+                              extra_images: bool = True, compute=None, log=print) -> dict[str, pd.DataFrame]:
+    """``image_recovery_tables``, or the tables an earlier pass saved in the stage's results.h5 when they were computed
+    from the same draws, settings, catalog and code (``recovery_fingerprint``); ``compute`` replaces
+    ``image_recovery_tables`` (the output stage passes its own name, which tests stub).  Computed tables are written to the
+    stage with their fingerprint in one commit.  Either way the tables are the same: the store returns a table exactly
+    as written."""
+    from ..io import store
+    fingerprint = recovery_fingerprint(state, draws, config, extra_images=extra_images)
+    tables, reason = saved_image_recovery(stage, fingerprint)
+    if tables is not None:
+        log(f"[outputs] image recovery: {len(tables)} tables reused from {store.results_path(stage)} "
+            f"(same draws, settings, catalog and solver version {IMAGE_RECOVERY_VERSION})")
+        return tables
+    log(f"[outputs] image recovery: computed ({reason})")
+    tables = (compute or image_recovery_tables)(state, evaluator, draws, config, extra_images=extra_images, log=log)
+    with store.batch(stage):
+        for name, frame in tables.items():
+            store.write_table(stage, name, frame)
+        store.write_record(stage, RECOVERY_RECORD, {"fingerprint": fingerprint, "tables": list(tables)})
+    return tables
 
 
 LENS_ONLY_COLUMNS = ["family_id", "image_label", "x_obs_arcsec", "y_obs_arcsec", "image_recovery_status", "recovered_fraction",
@@ -254,45 +363,70 @@ def image_recovery_tables(state: ModelState, evaluator: Evaluator, draws, config
     (``draws.indices``) adds, with the same three positions; their ``draw_index`` counts the product draws.  Those
     found in at least half of them are reported.  The scatter and the true positions are joint over the observed (at
     their catalog positions) and extra images of a draw and seeded by the run seed and the draw's posterior row.
-    Every row carries its ``posterior_index``."""
+    Every row carries its ``posterior_index``.
+
+    The draws are solved in ``draws.workers`` threads (one solver shared by all), the first product draw alone; the
+    rows are assembled in draw order, so the tables do not depend on the number of threads."""
     solver = ExactImageSolver(evaluator, config)
     field = bool(getattr(draws, "has_field", False))
     reach = draws.reach(window_corners(solver, state)) if field else 0.0        # the realization must reach every grid point of the search
     product = {int(index): k for k, index in enumerate(draws.indices)}
     magnification = ("magnification_model", "magnification_model_at_model_position")
-    rows, lens_only_rows, extra_rows, count_rows, rms_rows = [], [], [], [], []
-    observed = None
-    for draw_index, (index, theta) in enumerate(zip(progress(draws.image_indices, desc="images of each draw's lens"), draws.image_samples)):
+
+    def solve_draw(draw_index: int) -> dict[str, Any]:
+        """Every row of image draw ``draw_index``, as the tables below collect them."""
+        index, theta = draws.image_indices[draw_index], draws.image_samples[draw_index]
         lens = draws.image_correction(draw_index, reach) if field else None
         prediction = predictions_at(solver, state, evaluator, theta, adaptive=False, correction=lens)
-        if observed is None:
-            observed = pd.DataFrame([{key: row[key] for key in ("family_id", "image_label", "x_obs_arcsec", "y_obs_arcsec", "z_source",
-                                                                  "radius_arcsec", "angle_deg")} for row in prediction["image_rows"]])
         residuals = np.asarray([r["image_residual_arcsec"] for r in prediction["image_rows"]], dtype=float)
-        rms_rows.append({"draw_index": draw_index, "posterior_index": int(index),
-                         "recovered_image_count": int(np.isfinite(residuals).sum()),
-                         "image_rms_arcsec": float(np.sqrt(np.nanmean(residuals ** 2))) if np.isfinite(residuals).any() else np.nan})
+        rms = {"draw_index": draw_index, "posterior_index": int(index),
+               "recovered_image_count": int(np.isfinite(residuals).sum()),
+               "image_rms_arcsec": float(np.sqrt(np.nanmean(residuals ** 2))) if np.isfinite(residuals).any() else np.nan}
         own = _position_rows(prediction, draw_index, index, ("image_residual_arcsec",) + magnification)
-        count_rows.extend({"draw_index": draw_index, **row} for row in prediction["count_rows"])
+        counts = [{"draw_index": draw_index, **row} for row in prediction["count_rows"]]
         added = ([{"draw_index": product[int(index)], "posterior_index": int(index), **row}
                   for row in predictions_at(solver, state, evaluator, theta, correction=lens)["extra_rows"]]
                  if extra_images and int(index) in product else [])
+        # A fixed order within each family (by lens position): the solver returns a family's roots ordered by a
+        # residual at round-off, and the scatter below is handed out in row order, so the order must not depend on it.
+        rank = {}
+        for row in added:
+            rank.setdefault(str(row["family_id"]), len(rank))
+        added.sort(key=lambda row: (rank[str(row["family_id"])], float(row["x_model_arcsec"]), float(row["y_model_arcsec"])))
         catalog = np.array([[row["x_obs_arcsec"], row["y_obs_arcsec"]] for row in prediction["image_rows"]], dtype=float).reshape(-1, 2)
         lens_xy = np.array([[row["x_model_arcsec"], row["y_model_arcsec"]] for row in own + added], dtype=float).reshape(-1, 2)
         scales, seed = image_plane_scales(evaluator, theta), [int(getattr(draws, "seed", 0)), int(index)]
-        scatter = image_plane_scatter(np.vstack((catalog, lens_xy[len(own):])), scales, np.random.default_rng(seed + [1]))
+        scatter = image_plane_scatter(np.vstack((catalog, lens_xy[len(own):])), scales, np.random.default_rng(seed + [1]),
+                                      leading=len(catalog))
         true = np.vstack(true_positions(catalog, lens_xy[:len(own)], lens_xy[len(own):], scales, np.random.default_rng(seed + [2])))
         for row, predicted, actual in zip(own + added, lens_xy + scatter, true):
             row["x_predicted_arcsec"], row["y_predicted_arcsec"] = map(float, predicted)
             row["x_true_arcsec"], row["y_true_arcsec"] = map(float, actual)
-        rows.extend(own)
-        extra_rows.extend(added)
+        lens_only = []
         if field:        # the parametric lens alone shows how much of the misfit the field takes
-            lens_only = predictions_at(solver, state, evaluator, theta, adaptive=False)
-            lens_only_rows.extend(_position_rows(lens_only, draw_index, index, ("image_residual_arcsec",)))
+            lens_only = _position_rows(predictions_at(solver, state, evaluator, theta, adaptive=False), draw_index, index,
+                                       ("image_residual_arcsec",))
+        return dict(image_rows=prediction["image_rows"], rms=rms, own=own, counts=counts, added=added, lens_only=lens_only)
+
+    workers = int(getattr(draws, "workers", 1))
+    # The first draw with a global search runs alone, so that both solvers compile before the threads start.
+    first = next((j for j, index in enumerate(draws.image_indices) if int(index) in product), 0) if extra_images else 0
+    started = time.perf_counter()
+    per_draw = map_draws(solve_draw, range(len(draws.image_indices)), workers=workers, desc="images of each draw's lens", first=first)
+    wall = time.perf_counter() - started
+    observed = pd.DataFrame([{key: row[key] for key in ("family_id", "image_label", "x_obs_arcsec", "y_obs_arcsec", "z_source",
+                                                         "radius_arcsec", "angle_deg")} for row in per_draw[0]["image_rows"]])
+    rows = [row for d in per_draw for row in d["own"]]
+    extra_rows = [row for d in per_draw for row in d["added"]]
+    count_rows = [row for d in per_draw for row in d["counts"]]
+    lens_only_rows = [row for d in per_draw for row in d["lens_only"]]
+    rms_rows = [d["rms"] for d in per_draw]
+    del per_draw
     log(f"[diagnostics] observed images in each draw's lens ({'parametric + GRF realization' if field else 'parametric'}) at "
-        f"{len(draws.image_indices)} posterior draws (local solver), {solver.timing['exact_solver']:.1f}s of solver time"
-        + (f"; global search for extra images at {len(draws.indices)} draws" if extra_images else ""))
+        f"{len(draws.image_indices)} posterior draws (local solver)"
+        + (f"; global search for extra images at {len(draws.indices)} draws" if extra_images else "")
+        + f": {wall:.1f}s wall with {workers} worker thread{'s' if workers > 1 else ''}, "
+        f"{solver.timing['exact_solver']:.1f}s of solver time summed over the draws")
     draw_df, extra_df, counts = pd.DataFrame(rows), pd.DataFrame(extra_rows), pd.DataFrame(count_rows)
     image_df = per_image_table(draw_df, observed, ("x_model_arcsec", "y_model_arcsec", "image_residual_arcsec") + magnification)
     magnification_df = image_df[["family_id", "image_label", "x_obs_arcsec", "y_obs_arcsec", "z_source", "image_recovery_status",

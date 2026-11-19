@@ -1,5 +1,5 @@
 """Publication fold cutouts from cached geometry, also used by normal run outputs."""
-import json
+from ..io import store
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -85,7 +85,7 @@ def render_apj_fold_cutouts(config, data, imaging, output, *, max_separation=3.,
         raise ValueError('Figure output must be PDF')
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output,dpi=400,bbox_inches='tight',pad_inches=0);plt.close(fig)
-    output.with_suffix('.json').write_text(json.dumps(dict(run=str(run_directory),
+    store.write_figure_record(output, dict(run=str(run_directory),
         source_cache=str(source_cache),
         strict_max_separation_arcsec=max_separation,
         selected_pairs=[dict(labels=p['labels'],separation_arcsec=p['separation']) for p in pairs],
@@ -95,7 +95,7 @@ def render_apj_fold_cutouts(config, data, imaging, output, *, max_separation=3.,
         uncertainty_bands='parametric + GRF' if shared else 'parametric',
         critical_color=critical_color if shared else curve_color,
         grf_scope='system-specific' if config.likelihood.gp_blocks=='system' else 'shared',
-        draw_indices=data['draw_indices']),indent=2)+'\n')
+        draw_indices=data['draw_indices']))
     return output
 
 

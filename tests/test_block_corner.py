@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 import numpy as np
+from kappaccino.io import store
 from kappaccino.plotting.block_corner import posterior_corner_data, write_posterior_block_corner, BLOCK_COLORS
 
 
@@ -25,7 +26,7 @@ def test_blocks_and_joint_source_alignment(tmp_path):
     assert data['excluded']==['member.z']
     path=write_posterior_block_corner(samples,specs,tmp_path/'combined.pdf')
     assert path.read_bytes().startswith(b'%PDF')
-    assert path.with_suffix('.json').exists()
+    assert store.has_figure_record(path)
 
 
 def test_log_values_and_constant_exclusion():

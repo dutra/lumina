@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 import json
+from kappaccino.io import store
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -57,10 +58,10 @@ def test_pdf_provenance_and_style_isolation(tmp_path):
     path = write_chain_traces(p, specs, tmp_path/'figures', tmp_path/'tables', 'hera', log=lambda _: None)
     assert path.name == 'hera_chain_traces.pdf'
     assert path.read_bytes().startswith(b'%PDF')
-    meta = json.loads((tmp_path/'tables/chain_traces.json').read_text())
+    meta = store.read_record(tmp_path/'tables', 'chain_traces')
     assert meta['chains'] == 2 and meta['draws_per_chain'] == 30
     assert sum(meta['divergences_per_chain']) == p.diverging.sum()
-    assert (tmp_path/'tables/chain_convergence.csv').is_file()
+    assert store.has_table(tmp_path/'tables', 'chain_convergence')
     assert dict(style) == dict(plt.rcParams)
 
 

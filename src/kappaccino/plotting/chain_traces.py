@@ -1,7 +1,6 @@
 """Post-warmup chain traces and convergence diagnostics; no lens evaluations."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import matplotlib
@@ -10,6 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.lines import Line2D
 import numpy as np
+from ..io import store
 import pandas as pd
 
 STYLE = Path(__file__).with_name("style.mplstyle")
@@ -136,8 +136,7 @@ def write_chain_traces(posterior, specs, figures, tables, prefix=None, *, log=pr
             fig.tight_layout(rect=(0, 0, 1, .96), h_pad=1.2)
             pdf.savefig(fig)
             plt.close(fig)
-    pd.DataFrame({"parameter": [s.name for s in specs], "split_rhat": rhat, "ess": ess}).to_csv(
-        tables / "chain_convergence.csv", index=False)
+    store.write_table(tables, "chain_convergence", pd.DataFrame({"parameter": [s.name for s in specs], "split_rhat": rhat, "ess": ess}))
     metadata = {"chains": chains.shape[0], "draws_per_chain": chains.shape[1], "warmup_included": False,
                 "coordinates": "Saved reporting coordinates; noncentered member offsets remain standardized",
                 "rhat": "NumPyro split Gelman-Rubin; not rank-normalized",
@@ -146,6 +145,6 @@ def write_chain_traces(posterior, specs, figures, tables, prefix=None, *, log=pr
                 "plotted_parameters": [specs[i].name for i in data["selected"]]}
     if "diverging" in data["fields"]:
         metadata["divergences_per_chain"] = data["fields"]["diverging"].astype(bool).sum(axis=1).tolist()
-    (tables / "chain_traces.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    store.write_record(tables, "chain_traces", metadata)
     log(f"[outputs] chain traces: {path}")
     return path

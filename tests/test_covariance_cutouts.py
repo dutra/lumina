@@ -1,4 +1,5 @@
 import json
+from kappaccino.io import store
 import pytest
 from types import SimpleNamespace
 
@@ -60,7 +61,7 @@ def test_small_catalog_pdf_and_style(synthetic_config, tmp_path, monkeypatch):
     path=cc.write_covariance_cutouts(synthetic_config,state,draws,paths,({'F814W':band},('F814W',),None,'toy'))
     assert path.read_bytes().startswith(b'%PDF')
     assert dict(plt.rcParams)==style
-    metadata=json.loads((paths.tables/'small_lambda_covariance_cutouts.json').read_text())
+    metadata=store.read_record(paths.tables, 'small_lambda_covariance_cutouts')
     rows=metadata['records'];assert len(rows)==4
     assert [r['lambda_abs'] for r in rows]==sorted(r['lambda_abs'] for r in rows)
     assert {r['z_source'] for r in rows}=={2.,3.}

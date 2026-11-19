@@ -1,7 +1,6 @@
 """Render the member and likelihood diagnostic suite from shared numerical products."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import matplotlib
@@ -14,7 +13,7 @@ import pandas as pd
 
 from ..diagnostics.members import compute_member_diagnostics
 from .potfile import potfile_populations
-from ..io.hdf5 import save_arrays
+from ..io import store
 
 STYLE = Path(__file__).with_name('style.mplstyle')
 RC = {'font.family': 'sans-serif', 'mathtext.fontset': 'dejavusans', 'mathtext.default': 'regular',
@@ -247,28 +246,28 @@ def write_member_diagnostic_plots(config, state, evaluator, posterior, paths, *,
         log('[diagnostics] member suite skipped: no population members')
         return []
     data = compute_member_diagnostics(state, evaluator, posterior, config, log=log)
-    paths.tables.mkdir(parents=True, exist_ok=True)
     paths.figures.mkdir(parents=True, exist_ok=True)
-    data.members.to_csv(paths.tables / 'member_diagnostics.csv', index=False)
-    data.images.to_csv(paths.tables / 'diagnostic_image_index.csv', index=False)
-    save_arrays(paths.tables / 'member_diagnostic_draws.h5', **data.fields,
-                        deviations=data.deviations, prior_deviations=data.prior_deviations)
-    rows = []
-    for d, index in enumerate(data.provenance['selected_draw_indices']):
-        frame = data.images.copy()
-        frame['draw_index'] = index
-        for key in ('error_arcsec', 'error_whitened'):
-            frame[key] = data.fields[key][d]
-        frame['whitened_u1'], frame['whitened_u2'] = data.fields['residual'][d].T
-        rows.append(frame)
-    pd.concat(rows).to_csv(paths.tables / 'image_field_diagnostics.csv', index=False)
+    with store.batch(paths.tables):
+        store.write_table(paths.tables, 'member_diagnostics', data.members)
+        store.write_table(paths.tables, 'diagnostic_image_index', data.images)
+        store.write_arrays(paths.tables, 'member_diagnostic_draws', data.fields,
+                           deviations=data.deviations, prior_deviations=data.prior_deviations)
+        rows = []
+        for d, index in enumerate(data.provenance['selected_draw_indices']):
+            frame = data.images.copy()
+            frame['draw_index'] = index
+            for key in ('error_arcsec', 'error_whitened'):
+                frame[key] = data.fields[key][d]
+            frame['whitened_u1'], frame['whitened_u2'] = data.fields['residual'][d].T
+            rows.append(frame)
+        store.write_table(paths.tables, 'image_field_diagnostics', pd.concat(rows))
     far = data.members[data.members.member_class == 'far-field']
     data.provenance['failed_guard_members'] = far.loc[far.guard_ratio_min < data.provenance['guard_cut_radii'], 'member_id'].tolist()
     data.provenance['failed_error_members'] = far.loc[far.member_error_whitened_max >= data.provenance['tolerance'], 'member_id'].tolist()
     data.provenance['failed_error_images'] = data.images.loc[np.max(data.fields['error_whitened'], axis=0) >= data.provenance['tolerance'], 'image_label'].tolist()
     log(f"[diagnostics] selected-model max whitened error={data.fields['error_whitened'].max():.5g} "
         f"(limit={data.provenance['tolerance']:g}); guard failures={len(data.provenance['failed_guard_members'])}")
-    (paths.tables / 'member_diagnostic_provenance.json').write_text(json.dumps(data.provenance, indent=2)+'\n')
+    store.write_record(paths.tables, 'member_diagnostic_provenance', data.provenance)
     prefix = config.paths.figure_prefix
     def output(name):
         return paths.figures / ((f'{prefix}_' if prefix else '') + name + '.pdf')

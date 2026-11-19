@@ -7,13 +7,14 @@ realization.  Image contours are conditional on local root recovery; source cont
 including those on the no-local-fold-pair side of their own caustic.
 """
 from pathlib import Path
-import json
+
 import time
 from types import SimpleNamespace
 
 import contourpy
 from .grf import PLOT_FIELD_VERSION
 from ..likelihood.grf_fields import shared_field_evaluator
+from ..core.parallel import map_draws
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,7 +25,7 @@ from scipy.stats import gaussian_kde
 STYLE = Path(__file__).with_name('style.mplstyle')
 BLUE, ORANGE, MAGENTA = '#0072B2', '#D55E00', '#CC33AA'
 from .style import CRITICAL_COLOR
-from ..io.hdf5 import load_arrays, save_arrays
+from ..io import store
 GRF_COLOR = CRITICAL_COLOR
 NEWTON_ITERATIONS = 15   # damped Newton steps per caustic root; the seeds are tracked critical points
 CRITICAL_TRACK_STEPS = 16  # Newton steps along the normal that move the reference seeds onto each draw's critical curve
@@ -289,7 +290,8 @@ def compute_fold_diagnostics(config, state, draws, tables, *, log=print):
         axis = np.linspace(-fov*.85, fov*.85, 101)
         xx, yy = np.meshgrid(mid[0]+axis, mid[1]+axis)
         try:
-            median_det = np.median(draws.grid_maps(f'fold {"/".join(pair_labels)}', xx, yy, z, log=log)['detA_parametric'], axis=0)
+            median_det = np.median(draws.grid_maps(f'fold {"/".join(pair_labels)}', xx, yy, z, quantities=('detA_parametric',),
+                                                   from_reference=True, log=log)['detA_parametric'], axis=0)
             origin, normal, seeds = median_curve_geometry(median_det, xx, yy, mid, direction, separation, fov)
             _, a = map(np.asarray, stacked_fields(packed_at(z), jnp.asarray(origin[None])))
             ref_tangent = median_singular_direction(a[:, 0], np.array([normal[1], -normal[0]]))
@@ -407,7 +409,6 @@ def _contours(ax, points, color, transform=None, bounds=None, linewidths=None, o
 
 
 def save_fold_data(data, tables):
-    tables = Path(tables); tables.mkdir(parents=True, exist_ok=True)
     metadata = {k: v for k, v in data.items() if k not in {'pairs', 'systems'}}
     metadata['pairs'] = []; arrays = {}
     for i, pair in enumerate(data['pairs']):
@@ -434,15 +435,15 @@ def save_fold_data(data, tables):
             meta['source_draws_valid_by_knot'] = np.isfinite(system.get('source_aligned_grf', system.get('source_cartesian_grf', system['relative']))).all(2).sum(0).tolist()
             meta['image_draws_valid'] = np.isfinite(system['positions']).all(2).sum(0).tolist()
             metadata['systems'].append(meta)
-    save_arrays(tables/'fold_pairs_source_caustics.h5', **arrays)
-    (tables/'fold_pairs_source_caustics.json').write_text(json.dumps(metadata, indent=2))
+    with store.batch(tables):                  # arrays and record in one commit
+        store.write_arrays(tables, 'fold_pairs_source_caustics', arrays)
+        store.write_record(tables, 'fold_pairs_source_caustics', metadata)
 
 
 def load_fold_data(tables):
     """Read the numerical fold products, including optional system-level panels."""
-    tables = Path(tables)
-    data = json.loads((tables / 'fold_pairs_source_caustics.json').read_text())
-    arrays = load_arrays(tables / 'fold_pairs_source_caustics.h5')
+    data = store.read_record(tables, 'fold_pairs_source_caustics')
+    arrays = store.read_arrays(tables, 'fold_pairs_source_caustics')
     for kind, prefix in (('pairs', 'pair'), ('systems', 'system')):
         for i, record in enumerate(data.get(kind, [])):
             start = f'{prefix}_{i}_'
@@ -576,7 +577,7 @@ def add_median_critical_curves(state, draws, data, *, log=print, critical_only=F
         y = np.linspace(center[1]-.55*size, center[1]+.55*size, 256)
         xx, yy = np.meshgrid(x, y)
         maps = draws.grid_maps(f"fold system {system['system_id']} {'/'.join(system['image_ids'])}", xx, yy,
-                               float(system['z_source']), log=log)
+                               float(system['z_source']), quantities=('detA_parametric', 'detA'), from_reference=True, log=log)
         for key, name in (('critical_parametric_median', 'detA_parametric'), ('critical_grf_median', 'detA')):
             system[key] = _join_curves(contourpy.contour_generator(x=x, y=y, z=np.median(maps[name], axis=0)).lines(0.))
     if not critical_only:
@@ -653,7 +654,8 @@ def system_boxes(data):
 
 
 def add_grf_critical_band(state, draws, data, *, log=print):
-    """Each reporting draw's critical branch with its GRF realization on the systems' fixed normal cross-sections."""
+    """Each reporting draw's critical branch with its GRF realization on the systems' fixed normal cross-sections.
+    The draws are evaluated in ``draws.workers`` threads, each writing its own row."""
     systems = data.get('systems', [])
     if not systems:
         return data
@@ -664,8 +666,8 @@ def add_grf_critical_band(state, draws, data, *, log=print):
     reach = field_reach(state, system_boxes(data))
     for system in systems:
         system['critical_grf_draws'] = np.full_like(system['critical'], np.nan)
-    for draw, theta in enumerate(samples):
-        physical = physical_fn(theta)
+    def band(draw):
+        physical = physical_fn(samples[draw])
         correction = draws.correction(draw, reach)
         if correction is None:
             raise ValueError('GRF critical band requires a shared deflection field')
@@ -689,8 +691,8 @@ def add_grf_critical_band(state, draws, data, *, log=print):
             if missing.any():
                 curve[missing] = critical_crossings(determinant,seeds[missing],normal,targets[missing],.55*float(system['fov']))
             system['critical_grf_draws'][draw] = curve
-        if draw % 8 == 0 or draw == len(samples)-1:
-            log(f'[outputs] GRF critical band: {draw+1}/{len(samples)} draws')
+    map_draws(band, range(len(samples)), workers=int(getattr(draws, 'workers', 1)), desc='GRF critical band draws')
+    log(f'[outputs] GRF critical band: {len(samples)}/{len(samples)} draws')
     for system in systems:
         system['grf_band_valid_draws'] = np.isfinite(system['critical_grf_draws']).all(2).sum(0)
         log(f"[outputs] GRF band {system['system_id']}: {int(system['grf_band_valid_draws'].min())}-{int(system['grf_band_valid_draws'].max())} valid draws per cross-section")

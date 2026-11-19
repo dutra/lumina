@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import jax.numpy as jnp
+from kappaccino.io import store
 import numpy as np
 import pandas as pd
 import pytest
@@ -308,9 +309,9 @@ def test_outputs_from_posterior_draws(synthetic_config, tmp_path):
     assert saved["responsibilities"].shape[0] == 5 and saved["assignment"].shape == (10, len(truth))
     assert len(saved["groups"]) == len(model.groups)
     np.testing.assert_allclose(saved["probability"].sum(axis=1), 1.0, atol=1e-9)
-    images = pd.read_csv(stage.tables / "uncertain_images.csv")
+    images = store.read_table(stage.tables, 'uncertain_images')
     assert list(images["image_label"]) == [f"u{k}" for k in range(len(truth))]
-    assert (stage.tables / "uncertain_pairs.csv").is_file()
+    assert store.has_table(stage.tables, 'uncertain_pairs')
 
 
 def test_population_mixture_and_color_scatter_are_recovered():
@@ -425,6 +426,6 @@ def test_final_stage_samples_the_lens_with_the_uncertain_images(synthetic_config
     assert result.state.uncertain_images is not None and result.posterior.samples.shape[1] == result.init.state.n_parameters
     saved = load_arrays(result.paths.final.artifacts / groups.OUTPUT_FILE)
     assert saved["probability"].shape == (len(truth), len(result.state.uncertain_images.option_names()))
-    assert pd.read_csv(result.paths.final.tables / "uncertain_images.csv").shape[0] == len(truth)
+    assert store.read_table(result.paths.final.tables, 'uncertain_images').shape[0] == len(truth)
     resumed = pipeline.run(config)
     assert resumed.resumed and resumed.state.uncertain_images.groups == result.state.uncertain_images.groups

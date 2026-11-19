@@ -1,4 +1,5 @@
 import json
+from kappaccino.io import store
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -63,10 +64,10 @@ def test_writer_draws_truth_parametric_and_grf(tmp_path):
     path = write_cumulative_source_area(truth, draws, FlatLambdaCDM(H0=70, Om0=.3), tmp_path, tmp_path, 'toy', log=lambda _: None)
     assert path.name == 'toy_cumulative_source_area.pdf' and path.read_bytes().startswith(b'%PDF')
     assert plt.rcParams['font.size'] == before and draws.calls == [('truth', 9.)]
-    table = pd.read_csv(tmp_path / 'cumulative_source_area.csv')
+    table = store.read_table(tmp_path, 'cumulative_source_area')
     row = table.iloc[int(np.argmin(np.abs(table.mu - 5)))]
     assert abs(row.area_model_median_arcsec2 / row.area_true_arcsec2 - 1) < .1          # same Einstein radius as the truth
     assert row.area_parametric_median_arcsec2 < .9 * row.area_true_arcsec2             # smaller lens, smaller area
     assert row.area_model_q16_arcsec2 <= row.area_model_median_arcsec2 <= row.area_model_q84_arcsec2
-    provenance = json.loads((tmp_path / 'cumulative_source_area_provenance.json').read_text())
+    provenance = store.read_record(tmp_path, 'cumulative_source_area_provenance')
     assert provenance['posterior_draws'] == 6 and provenance['pixel_arcsec'] == 2.

@@ -1,5 +1,6 @@
 from types import SimpleNamespace as NS
 import json
+from kappaccino.io import store
 
 import numpy as np
 import pandas as pd
@@ -34,14 +35,14 @@ def test_uniform_mass_apertures_and_output(tmp_path,monkeypatch,prefix):
         def __len__(self):return len(self.physical)
     draws=Draws(evaluator=Evaluator(),physical=np.ones((2,1)),has_field=False)
     path=am.write_aperture_mass_histogram(config,state,draws,paths,images,log=lambda s:None)
-    table=pd.read_csv(paths.tables/'member_aperture_masses.csv')
+    table=store.read_table(paths.tables, 'member_aperture_masses')
     np.testing.assert_allclose(table.ratio[:2],1,atol=1e-12)
     np.testing.assert_allclose(table.model_mass_msun[:2],.5*np.pi*table.aperture_arcsec[:2]**2,rtol=1e-12)
     assert table.inside_image_hull.tolist()==[True,False,False]
     assert table.usable.tolist()==[True,True,False]
-    assert path.name=='aperture_mass_histogram.json'
+    assert path.name=='results.h5' and not list(paths.tables.glob('*.json'))
     assert table.n_draws.tolist()==[2,2,2]
-    stats=json.loads((paths.tables/'aperture_mass_histogram.json').read_text())
+    stats=store.read_record(paths.tables, 'aperture_mass_histogram')
     assert stats['samples']['all']['n']==2
     assert stats['samples']['image_hull']['n']==1
     assert stats['skipped_member_ids']==['p:3']
@@ -80,3 +81,81 @@ def test_quartiles_and_rendering_do_not_drop_display_tails(tmp_path):
     counts=am.render_histogram(table,tmp_path/'hist.pdf')
     assert counts.all_members.sum()==200
     assert counts.inside_image_hull.sum()==10
+
+
+def test_a_second_pass_reuses_the_saved_masses_until_an_input_changes(tmp_path,monkeypatch):
+    wcs=WCS(naxis=2)
+    wcs.wcs.crpix=[101,101];wcs.wcs.crval=[0,0]
+    wcs.wcs.cdelt=[-.1/3600,.1/3600];wcs.wcs.ctype=['RA---TAN','DEC--TAN']
+    truth=tmp_path/'truth.fits'
+    fits.writeto(truth,np.full((201,201),.5),wcs.to_header())
+    members=pd.DataFrame(dict(member_id=['p:1','p:2'],catalog_id=['1','2'],catalog_mag=[22.,22.],x_centre=[0.,5.],y_centre=[0.,0.]))
+    state=NS(reference=(3,0.,0.),kpc_per_arcsec=6.,members=NS(member_ids=tuple(members.member_id)))
+    calls=[]
+    class Evaluator:
+        def packed_state_for_z(self,p,z):return None
+        def total_fields_at(self,xy,packed,chunk):
+            calls.append(len(xy))
+            return .5*xy,np.broadcast_to(.5*np.eye(2),(len(xy),2,2))
+    monkeypatch.setattr(am,'mass_per_kappa_pixel_msun',lambda *a:.01)
+    paths=NS(tables=tmp_path/'tables',figures=tmp_path/'figures')
+    paths.tables.mkdir();paths.figures.mkdir()
+    store.write_table(paths.tables,'member_diagnostics',members)
+    images=pd.DataFrame(dict(x_obs_arcsec=[-2,2,2,-2],y_obs_arcsec=[-2,-2,2,2]))
+    config=NS(paths=NS(figure_prefix='hera'),truth=NS(kappa_true_fits=truth,caustic_source_redshift=9.))
+    class Draws(NS):
+        def __len__(self):return len(self.physical)
+    lines=[]
+    def run(key):
+        am.write_aperture_mass_histogram(config,state,Draws(evaluator=Evaluator(),physical=np.ones((2,1)),has_field=False,key=key),
+                                         paths,images,log=lines.append)
+        return store.read_table(paths.tables,'member_aperture_masses'),store.read_record(paths.tables,'aperture_mass_histogram')
+    first,record=run('a')
+    n=len(calls)
+    assert n>0 and 'none saved' in lines[0]
+    again,second=run('a')
+    assert len(calls)==n and 'reused' in lines[-2]
+    pd.testing.assert_frame_equal(again,first,check_exact=True)
+    assert second==record
+    run('b')
+    assert len(calls)==2*n and 'saved with other inputs' in lines[-2]
+
+
+def test_a_pass_interrupted_between_the_masses_and_their_fingerprint_leaves_the_old_masses_reusable(tmp_path,monkeypatch):
+    wcs=WCS(naxis=2)
+    wcs.wcs.crpix=[101,101];wcs.wcs.crval=[0,0]
+    wcs.wcs.cdelt=[-.1/3600,.1/3600];wcs.wcs.ctype=['RA---TAN','DEC--TAN']
+    truth=tmp_path/'truth.fits'
+    fits.writeto(truth,np.full((201,201),.5),wcs.to_header())
+    members=pd.DataFrame(dict(member_id=['p:1','p:2'],catalog_id=['1','2'],catalog_mag=[22.,22.],x_centre=[0.,5.],y_centre=[0.,0.]))
+    state=NS(reference=(3,0.,0.),kpc_per_arcsec=6.,members=NS(member_ids=tuple(members.member_id)))
+    scale={'v':.5}
+    class Evaluator:
+        def packed_state_for_z(self,p,z):return None
+        def total_fields_at(self,xy,packed,chunk):
+            return scale['v']*xy,np.broadcast_to(scale['v']*np.eye(2),(len(xy),2,2))
+    monkeypatch.setattr(am,'mass_per_kappa_pixel_msun',lambda *a:.01)
+    paths=NS(tables=tmp_path/'tables',figures=tmp_path/'figures')
+    paths.tables.mkdir();paths.figures.mkdir()
+    store.write_table(paths.tables,'member_diagnostics',members)
+    images=pd.DataFrame(dict(x_obs_arcsec=[-2,2,2,-2],y_obs_arcsec=[-2,-2,2,2]))
+    config=NS(paths=NS(figure_prefix='hera'),truth=NS(kappa_true_fits=truth,caustic_source_redshift=9.))
+    class Draws(NS):
+        def __len__(self):return len(self.physical)
+    def run(key):
+        am.write_aperture_mass_histogram(config,state,Draws(evaluator=Evaluator(),physical=np.ones((2,1)),has_field=False,key=key),
+                                         paths,images,log=lambda m:None)
+        return store.read_table(paths.tables,'member_aperture_masses')
+    first=run('a')                                   # inputs A: masses and their fingerprint
+    scale['v']=.9                                    # inputs B give other masses, and the pass dies at the fingerprint
+    write_record=store.write_record
+    def dies(stage,name,*a,**k):
+        if name=='aperture_mass_histogram':
+            raise KeyboardInterrupt
+        return write_record(stage,name,*a,**k)
+    monkeypatch.setattr(store,'write_record',dies)
+    with pytest.raises(KeyboardInterrupt):
+        run('b')
+    monkeypatch.setattr(store,'write_record',write_record)
+    scale['v']=.5
+    pd.testing.assert_frame_equal(run('a'),first,check_exact=True)   # back to inputs A: A's masses, not B's
