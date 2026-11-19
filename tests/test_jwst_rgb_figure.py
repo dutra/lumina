@@ -77,18 +77,13 @@ def test_critical_band_shading_preserves_subpixel_interval():
     plt.close(fig)
 
 
-@pytest.mark.parametrize('cluster',['hera','ares','as1063','newcluster','m0416'])
-def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, cluster):
+def _fake_overview(monkeypatch):
+    """Small stand-ins for the imaging, the overview geometry (1 arcsec = 10 pixels about pixel 16) and the RGB
+    cutout of the RGB critical overview; returns the reporting-draw stand-in class."""
     from types import SimpleNamespace as NS
     from astropy.wcs import WCS
-    from kappaccino.plotting import jwst_rgb as rgb, mass_figure
+    from kappaccino.plotting import mass_figure
     from kappaccino.imaging import cutouts
-    from kappaccino.diagnostics import position_contours as image_position_contours
-    position_calls=[]
-    def positions(*args, **kwargs):
-        position_calls.append(True)
-        return {'curves': []}
-    monkeypatch.setattr(image_position_contours, 'load_or_compute_contours', positions)
     wcs=WCS(naxis=2)
     wcs.wcs.ctype=['RA---TAN','DEC--TAN'];wcs.wcs.crval=[64.,-24.]
     wcs.wcs.crpix=[16.,16.];wcs.wcs.cdelt=[-.1/3600,.1/3600]
@@ -102,11 +97,34 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
     class Draws:
         indices=np.arange(3); key='test'; evaluator=NS(gp_knee=False)
         def __len__(self):return 3
-        def grid_maps(self,name,x,y,z,log=print):
+        def grid_maps(self,name,x,y,z,log=print,**kwargs):
             assert name=='overview' and z==9.
             x,y=np.meshgrid(np.linspace(-1,1,32),np.linspace(-1,1,32))
             return {'detA':np.array([x*x+y*y-r for r in [.3,.4,.5]])}
-    catalog=pd.DataFrame(dict(image_label=['a','b'],family_id=['1','2'],x_obs_arcsec=[-.3,.3],y_obs_arcsec=[-.3,.3]))
+    return Draws
+
+
+def _overview_catalog():
+    return pd.DataFrame(dict(image_label=['1.a','2.b'],family_id=['1','2'],x_obs_arcsec=[-.3,.3],y_obs_arcsec=[-.3,.3],
+                             x_model_arcsec=[-.31,.29],y_model_arcsec=[-.3,.31],image_recovery_status=['recovered','not_recovered']))
+
+
+@pytest.mark.parametrize('cluster',['hera','ares','as1063','newcluster','m0416'])
+def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, cluster):
+    from types import SimpleNamespace as NS
+    from kappaccino.plotting import jwst_rgb as rgb, mass_figure
+    from kappaccino.diagnostics import position_contours as image_position_contours
+    Draws=_fake_overview(monkeypatch)
+    position_calls=[]
+    def positions(*args, **kwargs):
+        position_calls.append(True)
+        return {'curves': []}
+    monkeypatch.setattr(image_position_contours, 'load_or_compute_contours', positions)
+    # One defined and one undefined stretch direction: a stick is drawn for the first only.
+    monkeypatch.setattr(mass_figure,'arc_direction_table',lambda draws,catalog:pd.DataFrame(dict(
+        image_label=catalog.image_label,e_arc_x=[1.,np.nan],e_arc_y=[0.,np.nan])))
+    catalog=_overview_catalog()
+    extra=pd.DataFrame(dict(family_id=['1'],x_model_arcsec=[.1],y_model_arcsec=[-.2]))
     config=NS(paths=NS(run_name=cluster),image_catalog=NS(candidate_catalog_path='must-not-read.json'))
     if cluster == 'm0416':
         import json
@@ -118,21 +136,27 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
         catalog['family_id'] = ['K66','K67']
     state=NS(reference=(3,64.,-24.))
     output=tmp_path/f'{cluster}_hst_rgb_critical_z9.pdf'
-    rgb.render_rgb_critical(config,state,Draws(),catalog,pd.DataFrame(),
-        ({'F814W':object()},('F814W',),None,cluster),output,tmp_path,log=lambda _:None)
+    assert rgb.render_rgb_critical(config,state,Draws(),catalog,extra,
+        ({'F814W':object()},('F814W',),None,cluster),output,tmp_path,log=lambda _:None) == output
     import json
     info=json.loads(output.with_suffix('.json').read_text())
     assert output.exists() and info['candidate_overlays']==[]
     assert len(position_calls) == 1
+    assert 'own redshift' in info['stretch_direction'] and info['not_recovered_images'] == 1 and info['extra_images'] == 1
+    assert info['stretch_sticks'] == 1
+    assert info['recovered_position_probability'] == .682689492 and info['recovered_position_contour_scale'] == 4.0
     assert info['candidate_catalog'] is None
     assert (info['marker_photometry'] is None) == (cluster != 'm0416')
     assert info['insets'] is None
     assert info['magnitude_band'] == []
-    assert (tmp_path/'hst_rgb_critical_z9.h5').exists()
+    assert (tmp_path/'hst_rgb_critical_z9.h5').exists() and (tmp_path/'hst_rgb_critical_z9_band.json').exists()
     assert not (tmp_path/'jwst_rgb_critical_z9.h5').exists()
+    # The stretch directions are saved beside the band.
+    saved=pd.read_csv(tmp_path/'hst_rgb_critical_z9_stretch_directions.csv')
+    assert saved.image_label.tolist()==['1.a','2.b'] and saved.e_arc_x.iloc[0]==1.
     markers=pd.read_csv(tmp_path/'hst_rgb_markers.csv')
     assert len(markers)==2 and (markers.marker_area_pt2==9).all()
-    assert set(markers.color) == {'#FF9500'}
+    assert list(markers.color) == ['#FF9500', '#FF3030']        # the second image is not recovered
     candidate_output = output.with_name(output.stem+'_candidates.pdf')
     assert candidate_output.exists() == (cluster == 'm0416')
     if cluster == 'm0416':
@@ -140,7 +164,30 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
         assert variant['candidate_marker'] == 'diamond'
         assert variant['candidate_overlays'] == ['K66.c1','A.1']
         colored = pd.read_csv(tmp_path/'hst_rgb_markers_candidates.csv')
-        assert colored.color.tolist() == ['#40DFFF','#FF9500']
+        assert colored.color.tolist() == ['#40DFFF','#FF3030']
+
+
+def test_recovered_contours_are_enlarged_about_their_own_mean_position():
+    from kappaccino.plotting.jwst_rgb import (enlarged_contour_segments, recovered_contour_segments,
+                                              RECOVERED_CONTOUR_PROBABILITY, RECOVERED_CONTOUR_SCALE)
+    assert RECOVERED_CONTOUR_PROBABILITY == .682689492 and RECOVERED_CONTOUR_SCALE == 4.
+    positions=np.array([[1.,2.],[3.,2.],[np.nan,np.nan],[2.,5.]])         # finite mean (2, 3)
+    segments=[np.array([[2.1,3.],[2.,3.2]]),np.array([[1.9,2.9]])]
+    enlarged=enlarged_contour_segments(segments,positions,scale=10.)
+    np.testing.assert_allclose(enlarged[0],[[3.,3.],[2.,5.]])
+    np.testing.assert_allclose(enlarged[1],[[1.,2.]])                    # both segments share the centre
+    np.testing.assert_allclose(enlarged_contour_segments(segments,positions)[0],[[2.4,3.],[2.,3.8]])   # the figure's factor
+    with pytest.raises(ValueError):
+        enlarged_contour_segments(segments,np.full((3,2),np.nan))
+    # Only the 1 sigma contours of the observed images, each about its own image's positions.
+    data=dict(image_labels=np.array(['1.a','2.b']),recovered=np.stack([positions,positions+10.],1))
+    curves=[dict(kind='recovered',identity='2.b',probability=.682689492,segments=[np.array([[12.,13.5]])]),
+            dict(kind='recovered',identity='2.b',probability=.954499736,segments=[np.array([[0.,0.]])]),
+            dict(kind='extra',identity='1 extra 1',probability=.682689492,segments=[np.array([[0.,0.]])])]
+    selected=recovered_contour_segments(dict(curves=curves,position_data=data))
+    assert [identity for identity,_ in selected]==['2.b']
+    np.testing.assert_allclose(selected[0][1][0],[[12.,13.+.5*RECOVERED_CONTOUR_SCALE]])   # 0.5 above the mean (12, 13)
+    assert recovered_contour_segments(dict(curves=[]))==[]
 
 
 def test_overview_catalog_magnitude_scaling_and_id_alignment(tmp_path):

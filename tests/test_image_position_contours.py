@@ -31,6 +31,10 @@ def test_contour_positions_are_predicted_observed_for_catalog_images_and_true_fo
     np.testing.assert_allclose(data['recovered_true'][:,0],[[2.,2.],[2.1,2.]])
     np.testing.assert_allclose(data['extra_true'][:,0],[[10.3,.1],[9.8,-.1]])
     np.testing.assert_array_equal(data['draw_indices'],[5,7])
+    # The table is saved as it is: the family ids of the extra images are strings, not objects.
+    from kappaccino.io.hdf5 import save_arrays
+    assert data['extra_family_ids'].dtype.kind=='U'
+    save_arrays(tmp_path/'positions.h5',**data)
 
 
 def test_gaussian_contour_probabilities_and_no_covariance_fallback():
