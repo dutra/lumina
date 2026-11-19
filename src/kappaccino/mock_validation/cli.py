@@ -40,7 +40,7 @@ CUT_SCATTER_LN = 0.0
 UNMODELLED_MEMBERS = 0
 # Correlated errors, drawn per realization (mock_validation.field): the mass field of unmodelled mass and line-of-sight
 # structure with sigma_grf 0.04-0.10" at z = 2 (the M0416 fits give 0.06-0.11"), knee 3-12" (log-uniform) and slope 3-5;
-# the image-plane displacement with sigma 0.02-0.06" and ell 0.5-2" (log-uniform).  Raised back from the JWST amplitudes
+# the image-plane displacement with sigma 0.04-0.06" and ell 0.5-2" (log-uniform).  Raised back from the JWST amplitudes
 # (sigma_grf 0.02-0.05", sigma_gp 0.01-0.04", nov6b_correlated_v1) on 2026-11-06: at those the free lens absorbed a
 # quarter of the field (sigma_grf 0.67-0.89x truth, 0/4 covered; .agents/nov6-mock-sigma-alpha-free-lens.md) and ell was
 # measurable in one seed of four (it needs sigma_gp well above the 5-20 mas white noise).  The solver samples the slope
@@ -48,7 +48,9 @@ UNMODELLED_MEMBERS = 0
 FIELD_SIGMA_GRF_RANGE_ARCSEC = (0.04, 0.10)
 FIELD_KNEE_RANGE_ARCSEC = (3.0, 12.0)
 FIELD_GAMMA_RANGE = (3.0, 5.0)
-IMAGE_PLANE_SIGMA_RANGE_ARCSEC = (0.02, 0.06)
+# Lower end raised from 0.02 to 0.04" (2026-11-16): below about 0.04" the images do not measure ell (Fisher width at the
+# truth 0.5-0.9 in ln against a prior of 0.4, 0.2-0.3 above it), whatever the number of knotted sources.
+IMAGE_PLANE_SIGMA_RANGE_ARCSEC = (0.04, 0.06)
 IMAGE_PLANE_ELL_RANGE_ARCSEC = (0.5, 2.0)
 # Sources with knots (2026-11-06): this many primary families are galaxies with 2-3 knots 0.05-1.0" apart in the source
 # plane (log-uniform), each knot its own family of one system, so images come in groups that sample the image-plane GP's
@@ -76,12 +78,13 @@ def likelihood(name: str, gp_blocks: str):
     priors centred on the mock's injection ranges (sigma_grf 0.06", sigma_gp 0.035" median); the shared field's
     translation, convergence and shear projected out on all blocks (system blocks, the --fast default, have no projection)."""
     from ..config import LikelihoodConfig
+    import numpyro.distributions as dist
     from ..priors import truncated_lognormal
     mode, kernel = LIKELIHOODS[name]
     return LikelihoodConfig(
         likelihood_mode=mode, sigma_sel_prior=None, gp_kernel=kernel, gp_blocks=gp_blocks,
         gp_knee_project_modes=(("translation", "convergence", "shear") if name == "grf_gp" and gp_blocks == "all" else ()),
-        gp_knee_gamma_prior=(2.0, 6.0), gp_knee_gamma=4.0,     # sampled: the injected field varies the slope
+        gp_knee_gamma_prior=dist.Uniform(2.0, 6.0), gp_knee_gamma=4.0,     # sampled: the injected field varies the slope
         gp_knee_scales_arcsec=(0.2, 1000.0),                   # the long end of the cluster run files
         lambda_b_prior=truncated_lognormal(6.0, 0.5, low=2.5, high=20.0),   # centred on the injection: the mocks inject 3-12"
         lambda_b_start_arcsec=6.0,
@@ -126,8 +129,8 @@ def solver(*, production: bool, fast: bool, seed: int, likelihood_name: str, gp_
         # (reclassified at the MAP), as for the observed clusters.
         members=MemberConfig(centering="auto", classification_prior_quantile=None),
         image_diagnostics=ImageDiagnosticsConfig(match_tolerance_arcsec=3.0),
-        reporting=ReportingConfig(draws=64, image_draws=64, extra_images=True) if production
-                  else ReportingConfig(draws=32, image_draws=32, extra_images=False),
+        # No search for extra images: the mock catalog holds every image of the true lens, and no recovery table reads them.
+        reporting=ReportingConfig(draws=64 if production else 32, image_draws=64 if production else 32, extra_images=False),
     )
     if fast:
         config = replace(

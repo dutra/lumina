@@ -129,7 +129,9 @@ def test_map_search_from_the_prior_recovers_the_truth(tmp_path):
     from kappaccino.likelihood.evaluator import Evaluator
     from kappaccino.inference.search import multistart_map, prior_starts
     config = MockConfig(seed=11, n_members=4, n_primary_families=3, n_member_families=0, mode="idealized",
-                        measurement_noise_arcsec=0.01, sigma_def_arcsec=0.0)
+                        measurement_noise_arcsec=0.01, sigma_def_arcsec=0.0,
+                        pivot_magnitude=19.82, schechter_magnitude=19.0, sigma_star_range_kms=(160.0, 240.0),
+                        cut_star_range_kpc=(8.0, 20.0))   # the member population this test was tuned on
     paths = generate_mock(tmp_path / "mock", config, 11)
     truth = json.loads(paths.truth.read_text())
     solver = solver_config_for_mock(MockValidationConfig(mock=config, solver=LensClusterSolverConfig()), truth,

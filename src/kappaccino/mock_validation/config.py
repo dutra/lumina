@@ -77,18 +77,20 @@ class MockConfig:
         Half width in arcsec of the box about the reference point in which the halo centre is drawn uniformly (each axis).
         Default ``10.0``.
     bcg_mass_fraction_median : float, optional
-        Median fraction (dimensionless) of the total mass in the BCG.  Default ``0.02``.
+        Median fraction (dimensionless) of the total mass in the BCG.  Default ``0.005``, a BCG of 5e12 Msun in a
+        cluster of 1e15 Msun.
     bcg_mass_fraction_scatter_dex : float, optional
         Log-normal scatter in dex of the BCG mass fraction about its median.  Default ``0.25``.
     bcg_mass_fraction_range : tuple of float, optional
-        (min, max) dimensionless bounds the drawn BCG mass fraction is clipped to.  Default ``(0.005, 0.08)``.
+        (min, max) dimensionless bounds the drawn BCG mass fraction is clipped to.  Default ``(0.00125, 0.02)``.
     bcg_mass_pivot_msun : float, optional
         BCG mass in Msun at which the BCG radii equal ``bcg_core_pivot_kpc`` and ``bcg_cut_pivot_kpc``.
-        Default ``1.7e13``.
+        Default ``5.0e12``, a dPIE with a dispersion of 302 km s^-1 (Lenstool convention) at a cut radius of 50 kpc.
     bcg_core_pivot_kpc : float, optional
         BCG core radius in kpc at ``bcg_mass_pivot_msun``.  Default ``0.8``.
     bcg_cut_pivot_kpc : float, optional
-        BCG cut radius in kpc at ``bcg_mass_pivot_msun``.  Default ``187.0``.
+        BCG cut radius in kpc at ``bcg_mass_pivot_msun``.  Default ``50.0``, near the cut radii of dPIE fits to BCG
+        light (19-69 kpc, Newman et al. 2013).
     bcg_radius_scatter_dex : float, optional
         Log-normal scatter in dex of each BCG radius about its mass-size relation.  Default ``0.10``.
     bcg_ellipticity_range : tuple of float, optional
@@ -111,20 +113,24 @@ class MockConfig:
     schechter_magnitude : float, optional
         Characteristic magnitude (mag, member band) of the Schechter luminosity function, separate from
         ``pivot_magnitude``: members are drawn from :math:`L^\\alpha e^{-L/L_c}` with
-        :math:`L_c / L^* = 10^{-0.4(m_c - m^*)}`.  Default ``19.0``, matching the bright-member counts of M0416 and
-        AS1063 and the CLASH red-sequence M* of Martinet et al. (2017) at z ~ 0.4.
+        :math:`L_c / L^* = 10^{-0.4(m_c - m^*)}`.  Default ``18.7``, an absolute F160W magnitude of -23 at
+        z = 0.4, the L* of early-type members to which Bergamini et al. (2019) normalize their three clusters.
     pivot_magnitude : float, optional
         Magnitude m* (mag, member band) of an L* member: member magnitudes are
         :math:`m^* - 2.5 \\log_{10}(L / L^*)`, the scaling relation is quoted here, and the solver's member population
-        uses it as its prior pivot magnitude.  Default ``19.82``.
+        uses it as its prior pivot magnitude.  Default ``18.7``, equal to ``schechter_magnitude``, so L* is also the
+        knee of the luminosity function.
     luminosity_range : tuple of float, optional
         (min, max) :math:`L / L^*` (dimensionless, L* the pivot luminosity) the Schechter draw is truncated to.  Default ``(0.02, 20.0)``.
     sigma_star_range_kms : tuple of float, optional
         (min, max) velocity dispersion of an L* member in km s^-1.  A member's dispersion is
-        :math:`\\sigma^* (L / L^*)^{\\alpha}` times its scatter.  Default ``(160.0, 240.0)``.
+        :math:`\\sigma^* (L / L^*)^{\\alpha}` times its scatter, in the Lenstool convention (central dispersion
+        over :math:`\\sqrt{3/2}`).  Default ``(150.0, 210.0)``, around the 180 km s^-1 (central 220 km s^-1) of
+        Bergamini et al. (2019, eq. 9) at L*.
     cut_star_range_kpc : tuple of float, optional
         (min, max) cut radius of an L* member in kpc; a member's cut radius is :math:`r^*_\\mathrm{cut} (L / L^*)^{\\beta}`
-        times its scatter.  Default ``(8.0, 20.0)``.
+        times its scatter.  Default ``(7.0, 13.0)``, the range of Bergamini et al. (2019, eq. 9) at L* over their three
+        clusters (10.1 kpc for the combined fit).
     core_star_kpc : float, optional
         Core radius of an L* member in kpc (fixed, not drawn); a member's core radius is
         :math:`r^*_\\mathrm{core} (L / L^*)^{\\beta}` without scatter.  Default ``0.15``.
@@ -283,12 +289,12 @@ class MockConfig:
     halo_radius_scatter_dex: float = 0.08
     halo_ellipticity_range: tuple[float, float] = (0.10, 0.40)
     halo_position_half_width_arcsec: float = 10.0
-    bcg_mass_fraction_median: float = 0.02
+    bcg_mass_fraction_median: float = 0.005
     bcg_mass_fraction_scatter_dex: float = 0.25
-    bcg_mass_fraction_range: tuple[float, float] = (0.005, 0.08)
-    bcg_mass_pivot_msun: float = 1.7e13
+    bcg_mass_fraction_range: tuple[float, float] = (0.00125, 0.02)
+    bcg_mass_pivot_msun: float = 5.0e12
     bcg_core_pivot_kpc: float = 0.8
-    bcg_cut_pivot_kpc: float = 187.0
+    bcg_cut_pivot_kpc: float = 50.0
     bcg_radius_scatter_dex: float = 0.10
     bcg_ellipticity_range: tuple[float, float] = (0.0, 0.30)
     bcg_offset_arcsec: float = 1.0
@@ -297,11 +303,11 @@ class MockConfig:
     # Member population.
     n_members: int = 50
     schechter_alpha: float = -0.8
-    schechter_magnitude: float = 19.0
-    pivot_magnitude: float = 19.82
+    schechter_magnitude: float = 18.7
+    pivot_magnitude: float = 18.7
     luminosity_range: tuple[float, float] = (0.02, 20.0)
-    sigma_star_range_kms: tuple[float, float] = (160.0, 240.0)
-    cut_star_range_kpc: tuple[float, float] = (8.0, 20.0)
+    sigma_star_range_kms: tuple[float, float] = (150.0, 210.0)
+    cut_star_range_kpc: tuple[float, float] = (7.0, 13.0)
     core_star_kpc: float = 0.15
     alpha_sigma_range: tuple[float, float] = (0.22, 0.32)
     beta_radius_range: tuple[float, float] = (0.50, 0.80)
@@ -585,11 +591,11 @@ def _bcg_halo(id: str, x: float, y: float, z_lens: float, *, v_disp: float, cut_
         core = 1.0
         priors = {"x_centre": dist.Uniform(x - half_width, x + half_width), "y_centre": dist.Uniform(y - half_width, y + half_width),
                   **ellipticity_box(0.6), "core_radius_kpc": dist.LogUniform(0.1, 5.0),
-                  "cut_excess_kpc": cut_excess_from_moments(cut_kpc, 0.5 * cut_kpc, low=20.0, high=600.0, core=core),
+                  "cut_excess_kpc": cut_excess_from_moments(cut_kpc, 0.5 * cut_kpc, low=10.0, high=300.0, core=core),
                   "v_disp": lognormal_from_moments(v_disp, 0.35 * v_disp, low=100.0, high=800.0)}
         return DPIEHaloConfig(id=id, x_centre=x, y_centre=y, ellipticite=0.2, angle_pos=0.0, core_radius_kpc=core, cut_radius_kpc=cut_kpc,
                               v_disp=v_disp, z_lens=z_lens, priors=priors)
-    return _idealized_halo(id, truth, z_lens, half_width=half_width, core_bounds=(0.1, 5.0), cut_bounds=(20.0, 600.0), v_bounds=(100.0, 800.0))
+    return _idealized_halo(id, truth, z_lens, half_width=half_width, core_bounds=(0.1, 5.0), cut_bounds=(10.0, 300.0), v_bounds=(100.0, 800.0))
 
 
 def _idealized_halo(id: str, t: dict[str, float], z_lens: float, *, half_width: float, core_bounds, cut_bounds, v_bounds) -> DPIEHaloConfig:
@@ -612,7 +618,7 @@ def mock_lens_model_config(config: MockConfig, truth: dict[str, Any], *, image_c
     has_members = member_catalog is not None and int(truth.get("n_modelled_members", 0)) > 0
     if config.mode == "idealized":
         halos = (_idealized_halo("halo", halo, z_lens, half_width=2.0, core_bounds=(1.0, 200.0), cut_bounds=(300.0, 4000.0), v_bounds=(100.0, 2200.0)),
-                 _idealized_halo("bcg", bcg, z_lens, half_width=1.0, core_bounds=(0.1, 5.0), cut_bounds=(20.0, 600.0), v_bounds=(100.0, 800.0)),
+                 _idealized_halo("bcg", bcg, z_lens, half_width=1.0, core_bounds=(0.1, 5.0), cut_bounds=(10.0, 300.0), v_bounds=(100.0, 800.0)),
                  ShearHaloConfig.free("shear", z_lens, gamma_upper=0.1))
         members = ()
         if has_members:
@@ -625,7 +631,8 @@ def mock_lens_model_config(config: MockConfig, truth: dict[str, Any], *, image_c
     else:
         # An observer centres the cluster halo on the BCG light and knows nothing else about the truth.
         halos = (DPIEHaloConfig.cluster_scale("halo", bcg["x_centre"], bcg["y_centre"], z_lens, v_disp=800.0, position_half_width_arcsec=5.0),
-                 _bcg_halo("bcg", bcg["x_centre"], bcg["y_centre"], z_lens, v_disp=300.0, cut_kpc=150.0, half_width=1.0, truth=None),
+                 # The prior follows the generator: a BCG of 5e12 Msun with a 50 kpc cut radius has a dispersion of 302 km/s.
+                 _bcg_halo("bcg", bcg["x_centre"], bcg["y_centre"], z_lens, v_disp=300.0, cut_kpc=50.0, half_width=1.0, truth=None),
                  ShearHaloConfig.free("shear", z_lens, gamma_upper=0.1))
         members = (MemberPopulationConfig.bergamini2019("potfile", member_catalog, z_lens, mag0=float(relation["pivot_magnitude"])),) if has_members else ()
     return LensModelConfig(
