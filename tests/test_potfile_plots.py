@@ -127,7 +127,7 @@ def test_corner_headers_physical_with_log_axes(tmp_path, monkeypatch):
     monkeypatch.setattr(Figure, 'savefig', capture)
     path = plot_parameter_corner(samples, [(0,spec,r'$\sigma_{\rm def}$')], tmp_path/'corner.pdf')
     assert any(r'\sigma_{\rm def}=0.010' in text for text in captured)
-    assert any(r'\log_{10}' in text for text in captured)
+    assert any(r'\log(' in text for text in captured)
     metadata = json.loads(path.with_suffix('.json').read_text())
     assert metadata['marginal_summary_coordinates'] == 'physical'
     assert metadata['coordinates'].startswith('log10')

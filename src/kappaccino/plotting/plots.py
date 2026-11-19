@@ -18,7 +18,7 @@ from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 from skimage.measure import find_contours
 
-from .style import APJ_COLUMN_WIDTH_IN, BLUE, DASHES, FIGURE_STYLE, ORANGE, PAPER_STYLE, save_page
+from .style import APJ_COLUMN_WIDTH_IN, BLUE, DASHES, FIGURE_STYLE, GREEN, ORANGE, PAPER_STYLE, save_page
 from ..likelihood.evaluator import Evaluator
 from ..core.model import ModelState, ParameterSpec, PosteriorResults, member_log_deviations
 from ..diagnostics.truth_recovery import PROFILE_INNER_ARCSEC, smoothed_digitized_curve
@@ -59,14 +59,19 @@ def posterior_residual_histogram_counts(draws: pd.DataFrame | None, bins: np.nda
 
 
 @plt.rc_context(fname=STYLE, rc=FIGURE_STYLE)
-def residual_histogram_figure(groups: list[np.ndarray], path: Path, *, bins: int = 24) -> Path:
+def residual_histogram_figure(groups: list[np.ndarray], path: Path, *, bins: int = 24, injected=None) -> Path:
     """Histogram of image-position residuals, one ApJ column wide.  ``groups`` holds the residuals (arcsec) of the
     recovered images of each posterior draw (of each mock, for a campaign).  Blue: the median count per bin over the
     groups with its 16-84 per cent band.  Orange: the RMS, median of the per-group values with their 16-84 per cent
-    range, quoted in the legend."""
+    range, quoted in the legend.  Green, with ``injected``: the rms separation (arcsec) between the observed and
+    true image positions of each mock, median and 16-84 per cent range over the mocks."""
     fig, ax = plt.subplots(figsize=(APJ_COLUMN_WIDTH_IN, 2.4))
     if groups:
         x_max = float(np.ceil(np.quantile(np.concatenate(groups), 0.99) / 0.05) * 0.05)
+        injected = np.asarray([] if injected is None else injected, float)
+        injected = injected[np.isfinite(injected)]
+        if injected.size:                                  # the axis reaches past the band of the injected offset
+            x_max = max(x_max, float(np.ceil(1.08 * np.percentile(injected, 84) / 0.05) * 0.05))
         edges = np.linspace(0.0, max(x_max, 1e-6), bins + 1)
         h16, h50, h84 = np.percentile(np.stack([np.histogram(g, bins=edges)[0] for g in groups]), [16, 50, 84], axis=0)
         rms_low, rms, rms_high = (float(v) for v in np.percentile([np.sqrt(np.mean(g ** 2)) for g in groups], [16, 50, 84]))
@@ -78,8 +83,17 @@ def residual_histogram_figure(groups: list[np.ndarray], path: Path, *, bins: int
         # One legend entry per quantity: its line over its band.
         handles = [(Patch(facecolor=band, edgecolor="none"), Line2D([], [], color=BLUE, linewidth=1.4)),
                    (Patch(facecolor=rms_band, edgecolor="none"), Line2D([], [], color=ORANGE, linewidth=1.2, linestyle=DASHES))]
-        ax.legend(handles, ["Images per bin", rf"RMS $= {rms:.3f}^{{+{rms_high - rms:.3f}}}_{{-{rms - rms_low:.3f}}}$ arcsec"],
-                  frameon=False, loc="upper right", handlelength=1.9, borderaxespad=.5)
+        labels = ["Images per bin", rf"RMS $= {rms:.3f}^{{+{rms_high - rms:.3f}}}_{{-{rms - rms_low:.3f}}}$ arcsec"]
+        if injected.size:
+            low, mid, high = (float(v) for v in np.percentile(injected, [16, 50, 84]))
+            injected_band = matplotlib.colors.to_rgba(GREEN, .16)
+            ax.axvspan(low, high, color=injected_band, linewidth=0, zorder=0)
+            ax.axvline(mid, color=GREEN, linestyle=(0, (1, 1.6)), linewidth=1.3, zorder=4)
+            handles.append((Patch(facecolor=injected_band, edgecolor="none"), Line2D([], [], color=GREEN, linewidth=1.3, linestyle=(0, (1, 1.6)))))
+            labels.append(rf"Injected $= {mid:.3f}^{{+{high - mid:.3f}}}_{{-{mid - low:.3f}}}$ arcsec")
+        ax.legend(handles, labels,
+                  frameon=True, fancybox=False, facecolor="white", edgecolor="0.6", framealpha=.7, fontsize="small",
+                  loc="upper right", handlelength=1.9, borderaxespad=.5).get_frame().set_linewidth(.6)
         ax.set_xlim(0.0, edges[-1])
         ax.set_ylim(0.0, max(float(h84.max()), 1.0) * 1.08)
     ax.set_xlabel("Image-position residual (arcsec)")
@@ -226,7 +240,7 @@ def plot_scaling_relation(table: pd.DataFrame, posterior_physical: np.ndarray, s
     from matplotlib.patches import Patch
     fields = [("v_disp", r"$\sigma$ (km s$^{-1}$)", True),
               ("cut_radius_kpc", r"$r_{\rm cut}$ (kpc)", True),
-              ("log10_mass_msun", r"$\log_{10}(M/M_\odot)$", False)]
+              ("log10_mass_msun", r"$\log(M/M_\odot)$", False)]
     relations = population_scaling_draws(table, np.asarray(posterior_physical), specs, fixed)
     names = {spec.name: i for i, spec in enumerate(specs)}
     pivots = {}

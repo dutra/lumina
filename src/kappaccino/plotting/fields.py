@@ -81,7 +81,7 @@ def render_grf(data, output):
     plt.style.use(Path(__file__).with_name('style.mplstyle'));plt.rcParams.update(PAPER_STYLE)
     fig=plt.figure(figsize=(7.1,2.8));bottom=.20;width=.235;height=width*7.1/2.8*np.ptp(y)/np.ptp(x)
     positions=[.07,.325];positive=np.concatenate([param[param>0],total[total>0]]);norm=LogNorm(vmin=positive.min(),vmax=positive.max());lim=max(.01,np.ceil(np.max(abs(grf))*100)/100)
-    for j,(values,cmap,n,label) in enumerate([(total,'inferno',norm,r'$\log_{10}\kappa_{\rm tot}$'),(grf,cm.vik,TwoSlopeNorm(vmin=-lim,vcenter=0,vmax=lim),r'$\delta\kappa_{\rm GRF}$')]):
+    for j,(values,cmap,n,label) in enumerate([(total,'inferno',norm,r'$\log\kappa_{\rm tot}$'),(grf,cm.vik,TwoSlopeNorm(vmin=-lim,vcenter=0,vmax=lim),r'$\delta\kappa_{\rm GRF}$')]):
      left=positions[j];ax=fig.add_axes([left,bottom,width,height]);cax=fig.add_axes([left,bottom+height+.025,width,.028])
      im=ax.pcolormesh(x,y,values,cmap=cmap,norm=n,shading='nearest',rasterized=True)
      ax.scatter(*xy.T,s=4,facecolors='none',edgecolors='white',linewidths=.6,zorder=4);ax.scatter(*xy.T,s=4,facecolors='none',edgecolors='.12',linewidths=.25,zorder=5)

@@ -109,6 +109,36 @@ def test_mock_export(tmp_path):
     for name, values in (('RMS', [np.sqrt(12.5), 2.0]), ('MedianResidual', [3.5, 2.0])):
         low, mid, high = np.percentile(values, [16, 50, 84])
         assert rf'\Mock{name}}}{{{{{mid:.3f}_{{-{mid - low:.3f}}}^{{+{high - mid:.3f}}}}}}}' in text
+    assert r'\MockInjectedOffset}{\textnormal{not available}}' in text
+    # With the mock catalog: one mock whose two images sit 0.03 and 0.04 arcsec from their true positions.
+    mock = tmp_path / 'seed_00000001/mock'
+    mock.mkdir(parents=True)
+    (mock / 'mock_images.json').write_text(json.dumps([
+        {'x_true_arcsec': 1.0, 'y_true_arcsec': 2.0, 'x_obs_arcsec': 1.03, 'y_obs_arcsec': 2.0},
+        {'x_true_arcsec': -1.0, 'y_true_arcsec': 0.5, 'x_obs_arcsec': -1.0, 'y_obs_arcsec': 0.46}]))
+    campaign.root = tmp_path
+    text = write_mock_results(campaign, tmp_path, rhat_cut=1.01, min_ess=50).read_text()
+    assert r'\MockInjectedOffset}{{0.035_{-0.000}^{+0.000}}}' in text
+    assert r'\MockInjectedSigmaGRF}{\textnormal{not available}}' in text
+    # With the truth file: the injected scales, their ranges and the member population.
+    (mock / 'truth.json').write_text(json.dumps({
+        'config': {'measurement_noise_arcsec': 0.0101, 'measurement_noise_range_arcsec': [0.005, 0.02],
+                   'field_sigma_grf_range_arcsec': [0.04, 0.1], 'field_knee_range_arcsec': [3.0, 12.0],
+                   'field_gamma_range': [3.0, 5.0], 'image_plane_sigma_range_arcsec': [0.02, 0.06],
+                   'image_plane_ell_range_arcsec': [0.5, 2.0], 'field_reference_redshift': 2.0},
+        'field': {'sigma_grf_arcsec': 0.0634, 'knee_arcsec': 5.46, 'gamma': 3.92},
+        'image_plane_error': {'sigma_arcsec': 0.0381, 'ell_arcsec': 1.14},
+        'images': [{'system_id': '1', 'family_id': '1A'}, {'system_id': '1', 'family_id': '1A'}, {'system_id': '1', 'family_id': '1B'}],
+        'relation': {'schechter_alpha': -0.8, 'schechter_magnitude': 18.7, 'pivot_magnitude': 18.7, 'sigma_scatter_ln': 0.1}}))
+    text = write_mock_results(campaign, tmp_path, rhat_cut=1.01, min_ess=50).read_text()
+    for macro, value in (('InjectedSigmaGRF', '0.063'), ('InjectedSigmaGP', '0.038'), ('InjectedSigmaMeas', '0.010'),
+                         ('InjectedLambdaB', '5.5'), ('InjectedGammaKappa', '3.9'), ('InjectedEllGP', '1.1'),
+                         ('SigmaGRFMin', '0.04'), ('SigmaGRFMax', '0.10'), ('LambdaBMin', '3'), ('LambdaBMax', '12'),
+                         ('EllGPMin', '0.5'), ('EllGPMax', '2.0'), ('SigmaMeasMin', '0.005'), ('SigmaMeasMax', '0.020'),
+                         ('FieldReferenceRedshift', '2'), ('SchechterAlpha', '-0.8'), ('SchechterMagnitude', '18.7'),
+                         ('VelocityScatterDex', '0.04'), ('VelocityScatterPercent', '10'),
+                         ('NSystemsPerMock', '1'), ('NFamiliesPerMock', '2'), ('NImagesPerMock', '3'), ('NImagesPerMockMax', '3')):
+        assert rf'\Mock{macro}}}{{{value}}}' in text, macro
 
 
 def test_member_table_uses_joint_deviation_draws(tmp_path):
@@ -174,3 +204,34 @@ def test_error_budget_adds_the_scales_in_quadrature_per_draw(tmp_path):
     (tmp_path / 'init/artifacts/state.json').write_text(json.dumps({'parameter_specs': [{'name': 'x'}, {'name': names[1]}, {'name': names[2]}]}))
     text = write_run_results(final, name='hera').read_text()
     assert r'\HeraSigmaTotal}{0.400}' in text and r'\HeraGRFVariancePercent}{\textnormal{not available}}' in text
+
+
+def test_halo_table_macros_and_table(tmp_path):
+    """A sampled parameter gives its prior and posterior, a fixed one its value; the cut radius is excess plus core."""
+    from kappaccino.reporting.results_tex import halo_table_metrics, interval, write_halo_table
+    final = tmp_path / 'final'
+    (final / 'artifacts').mkdir(parents=True)
+    (tmp_path / 'init/artifacts').mkdir(parents=True)
+    specs = [{'name': '1.x_centre', 'prior': {'family': 'Uniform', 'log': False, 'low': -2.0, 'high': 4.0}},
+             {'name': '1.core_radius_kpc', 'prior': {'family': 'Uniform', 'log': True, 'low': np.log(5.0), 'high': np.log(100.0)}},
+             {'name': '1.cut_excess_kpc', 'prior': {'family': 'Normal', 'log': True, 'loc': np.log(40.0), 'scale': 0.5}},
+             {'name': '1.v_disp', 'prior': {'family': 'TruncatedNormal', 'log': True, 'loc': np.log(800.0), 'scale': 0.25,
+                                            'low': np.log(100.0), 'high': 'inf'}},
+             {'name': 'shear.gamma1', 'prior': {'family': 'Uniform', 'log': False, 'low': -0.3, 'high': 0.3}}]
+    (tmp_path / 'init/artifacts/state.json').write_text(json.dumps({'kpc_per_arcsec': 5.0, 'parameter_specs': specs}))
+    halos = [{'id': '1', 'x_centre': 0.0, 'y_centre': 1.5, 'ellipticite': 0.0, 'angle_pos': 0.0, 'core_radius_kpc': 10.0,
+              'cut_radius_kpc': 1000.0, 'v_disp': 800.0, 'profile_type': 81},
+             {'id': '3', 'x_centre': 1.0, 'y_centre': 1.0, 'ellipticite': 0.2, 'angle_pos': 10.0, 'core_radius_kpc': 10.0,
+              'cut_radius_kpc': 1000.0, 'v_disp': 300.0, 'profile_type': 81},
+             {'id': 'shear', 'gamma': 0.0, 'angle_pos': 0.0, 'profile_type': 14}]
+    (tmp_path / 'init/artifacts/config.json').write_text(json.dumps({'model': {'large_halos': halos}}))
+    save_arrays(final / 'artifacts/posterior.h5', physical=np.tile([1.0, 20.0, 30.0, 900.0, 0.01], (5, 1)))
+    metrics, rows = halo_table_metrics(final, 'toy')
+    assert [key for _, _, key in rows] == ['CompOne' + s for s in ('X', 'Y', 'E', 'Core', 'Cut', 'Sigma')]   # halo 3 and the shear are fixed or not dPIE
+    assert metrics['CompOneX'] == interval(1.0, 0, 0, 2) and metrics['CompOneXPrior'] == r'\mathcal{U}(-2,4)'
+    assert metrics['CompOneY'] == '1.5' and metrics['CompOneYPrior'] == r'\textnormal{fixed}'
+    assert metrics['CompOneCorePrior'] == r'\mathcal{LU}(5,100)'
+    assert metrics['CompOneCut'] == interval(50.0, 0, 0, 0) and metrics['CompOneCutPrior'] == r'\mathcal{LN}(\ln 40,0.50)'
+    assert metrics['CompOneSigmaPrior'] == r'\mathcal{LN}_{[100,\infty)}(\ln 800,0.25)'
+    text = write_halo_table(tmp_path / 'toy_halo_table.tex', 'toy', 'Toy', rows).read_text()
+    assert r'Halo 1 & $x$ (arcsec) & $\ToyCompOneXPrior$ & $\ToyCompOneX$ \\' in text and r'\label{tab:halos_toy}' in text

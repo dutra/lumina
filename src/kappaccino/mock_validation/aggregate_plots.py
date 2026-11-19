@@ -46,8 +46,8 @@ PARAMETER_LABELS = {
     "lambda_b2": r"$\lambda_{\rm b,2}$", "gp_knee_beta_low": r"$\beta_{\rm low}$",
     "sigma_gp": r"$\sigma_{\rm GP}$", "ell_gp": r"$\ell_{\rm GP}$",
     "sigma_meas": r"$\sigma_{\rm meas}$",
-    "log10_aperture_mass_msun": r"$\log_{10} M_{\rm ap}$",
-    "log10_mass_msun": r"$\log_{10} M_{\rm tot}$", "x_centre": r"$x$", "y_centre": r"$y$", "v_disp": r"$\sigma$", "core_radius_kpc": r"$r_{\rm core}$",
+    "log10_aperture_mass_msun": r"$\log M_{\rm ap}$",
+    "log10_mass_msun": r"$\log M_{\rm tot}$", "x_centre": r"$x$", "y_centre": r"$y$", "v_disp": r"$\sigma$", "core_radius_kpc": r"$r_{\rm core}$",
     "cut_radius_kpc": r"$r_{\rm cut}$", "sigma": r"$\sigma^\star$", "cutkpc": r"$r_{\rm cut}^\star$", "alpha_sigma": r"$\alpha$",
     "beta_radius": r"$\beta$", "gamma_ml": r"$\gamma_{M/L}$",
 }
@@ -182,9 +182,9 @@ def _axis_label(parameter: str, role: str) -> str:
     component, field = parameter.split(".", 1)
     label = PARAMETER_LABELS.get(field, field)
     if field == "log10_mass_msun":
-        label = r"$\log_{10}(M_{\rm tot}/M_\odot)$"
+        label = r"$\log(M_{\rm tot}/M_\odot)$"
     if field == "log10_aperture_mass_msun":
-        label = r"$\log_{10}(M_{\rm ap}/M_\odot)$"
+        label = r"$\log(M_{\rm ap}/M_\odot)$"
     unit = PARAMETER_UNITS.get(field)
     unit = None if field == "log10_mass_msun" else unit
     prefix = "True" if role == "truth" else "Fit"
@@ -349,9 +349,11 @@ def plot_parameter_recovery(campaign: Campaign, path: Path, *, ncols: int = 6) -
 
 # ----------------------------------------------------------------------------- subhalo mass function
 def _schechter_curve(selection: dict[str, Any], x: np.ndarray, normalization: float,
-                     luminosity_range: tuple[float, float] | None = None) -> np.ndarray | None:
+                     luminosity_range: tuple[float, float] | None = None, *, truncated: bool = True) -> np.ndarray | None:
     """Input luminosity distribution mapped to dN/dlog10(M), without scatter.  L is in pivot units (L*); the Schechter
-    cutoff L_c = 10^(-0.4 (schechter_magnitude - pivot_magnitude)) L*."""
+    cutoff L_c = 10^(-0.4 (schechter_magnitude - pivot_magnitude)) L*.  The curve is normalized over
+    ``luminosity_range``, the range the members are drawn from; ``truncated`` sets it to zero outside that range,
+    otherwise the function continues past both ends."""
     try:
         alpha, anchor, exponent = (float(selection[k]) for k in ("schechter_alpha", "dpie_mass_anchor_msun", "mass_luminosity_exponent"))
         cutoff = 10.0 ** (-0.4 * (float(selection["schechter_magnitude"]) - float(selection["pivot_magnitude"])))
@@ -367,14 +369,14 @@ def _schechter_curve(selection: dict[str, Any], x: np.ndarray, normalization: fl
                 epsabs=1e-12, epsrel=1e-12)[0]
     density = np.power(luminosity, alpha + 1.0) * np.exp(-luminosity / cutoff)
     density *= normalization * np.log(10.0) / (exponent * norm)
-    return np.where((luminosity >= lower) & (luminosity <= upper), density, 0.0)
+    return np.where((luminosity >= lower) & (luminosity <= upper), density, 0.0) if truncated else density
 
 
 # Member-function axes: x = scale * log10(M/M*) / q (q = 1 for mass, p for luminosity); per-unit-L densities on log y.
 MEMBER_FUNCTION_AXES = {
-    "mass": dict(scale=1.0, luminosity=False, per_unit=False, x=r"$\log_{10}(M/M_\ast)$", y=r"$\langle dN/d\log_{10}M\rangle$"),
-    "luminosity": dict(scale=1.0, luminosity=True, per_unit=True, x=r"$\log_{10}(L/L_\ast)$", y=r"$\langle dN/d(L/L_\ast)\rangle$"),
-    "log_luminosity": dict(scale=1.0, luminosity=True, per_unit=False, x=r"$\log_{10}(L/L_\ast)$", y=r"$\langle dN/d\log_{10}L\rangle$"),
+    "mass": dict(scale=1.0, luminosity=False, per_unit=False, x=r"$\log(M/M_\ast)$", y=r"$\langle dN/d\log M\rangle$"),
+    "luminosity": dict(scale=1.0, luminosity=True, per_unit=True, x=r"$\log(L/L_\ast)$", y=r"$\langle dN/d(L/L_\ast)\rangle$"),
+    "log_luminosity": dict(scale=1.0, luminosity=True, per_unit=False, x=r"$\log(L/L_\ast)$", y=r"$\langle dN/d\log L\rangle$"),
     "magnitude": dict(scale=-2.5, luminosity=True, per_unit=False, x=r"$m$", y=r"$\langle dN/dm\rangle$ (mag$^{-1}$)"),
 }
 
@@ -444,13 +446,14 @@ def _draw_member_function(top, bottom, campaign: Campaign, axis: str):
                         if config_path.exists() else None)
     reference_x = np.linspace(edges[0], edges[-1], 2000)
     # The curve is per dex of M; per unit x it is q / |scale| times that, and per unit L/L* a further 1/(ln 10 L).
-    curves = [_schechter_curve(subhalo.get("selection", {}), anchor + q * (reference_x - o) / scale, float(len(masses)), luminosity_range)
+    curves = [_schechter_curve(subhalo.get("selection", {}), anchor + q * (reference_x - o) / scale, float(len(masses)), luminosity_range, truncated=False)
               for subhalo, anchor, q, o, masses in zip(campaign.subhalos, anchors, exponents, offsets, truth_all)]
     if all(curve is not None for curve in curves):
         mean_curve = np.mean([q / abs(scale) * curve for q, curve in zip(exponents, curves)], axis=0)
         if per_unit:
             mean_curve = mean_curve / (np.log(10.0) * 10.0 ** reference_x)
-        # Not drawn outside the luminosity range the mocks are drawn from (no vertical drop at the magnitude limit).
+        # The analytic function itself, not cut at the luminosity range of each mock: the mocks differ in the mass of
+        # their faintest member, so the mean of the cut curves rolls over at the faint end like a histogram.
         drawn = np.where((mean_curve > 0) & (mean_curve >= floor), mean_curve, np.nan)
         reference, = top.plot(reference_x, drawn,
                               color=ORANGE, linestyle=(0, (1, 1.6)), linewidth=1.5, dash_capstyle="round", zorder=4)
@@ -494,20 +497,29 @@ def _draw_member_function(top, bottom, campaign: Campaign, axis: str):
 
 @plt.rc_context(fname=STYLE, rc=FIGURE_STYLE)
 def plot_subhalo_mass_function(campaign: Campaign, path: Path) -> Path | None:
-    """The member mass function against M/M* with its residual panel (see :func:`_draw_member_function`)."""
-    fig, (top, bottom) = plt.subplots(2, 1, figsize=(APJ_COLUMN_WIDTH_IN, 3.1), sharex=True,
-                                      gridspec_kw={"height_ratios": [3.1, 1], "hspace": .07})
-    legend = _draw_member_function(top, bottom, campaign, "mass")
+    """The luminosity function dN/d(L/L*) against L/L* on log-log axes (left) and the member mass function against
+    M/M* (right), each with its residual panel (see :func:`_draw_member_function`); the full text width, without the
+    slope labels."""
+    fig, axes = plt.subplots(2, 2, figsize=(APJ_TEXT_WIDTH_IN, 3.1), sharex="col",
+                             gridspec_kw={"height_ratios": [3.1, 1], "hspace": .07, "wspace": .27})
+    legend = None
+    for column, axis in enumerate(("luminosity", "mass")):
+        top = axes[0, column]
+        legend = _draw_member_function(top, axes[1, column], campaign, axis) or legend
+        for text in list(top.texts):                              # no slope labels in this figure
+            text.remove()
     if legend is None:
         plt.close(fig)
         return None
-    top.set_ylim(top.get_ylim()[0], top.get_ylim()[1] * 1.12)     # room for the legend row above the slope labels
-    top.legend(*legend, loc="upper center", ncol=len(legend[0]), frameon=False, handlelength=1.5, columnspacing=.9,
-               handletextpad=.4, borderaxespad=.35)
-    for text in top.texts:
-        text.set_y(.82)
-    fig.align_ylabels((top, bottom))
-    fig.subplots_adjust(left=.165, right=.985, bottom=.125, top=.985)
+    low, high = axes[0, 1].get_ylim()
+    axes[0, 1].set_ylim(low, high * 1.05 / 1.3)                   # the limits of the histograms, without the label room
+    low, high = axes[0, 0].get_ylim()
+    axes[0, 0].set_ylim(low, high / 3.)
+    fig.legend(*legend, loc="upper center", ncol=len(legend[0]), frameon=False, handlelength=1.5, columnspacing=1.2,
+               handletextpad=.4, bbox_to_anchor=(.5, 1.0))
+    for column in range(2):
+        fig.align_ylabels(axes[:, column])
+    fig.subplots_adjust(left=.08, right=.99, bottom=.125, top=.915)
     return save_page(fig, path)
 
 
@@ -639,8 +651,25 @@ def binned_magnification_summary(df: pd.DataFrame, bins: int = 10) -> pd.DataFra
 
 
 # ----------------------------------------------------------------------------- image residual distribution
+def injected_position_offsets(campaign: Campaign) -> pd.Series:
+    """Rms separation in arcsec between the observed and true image positions of each mock, indexed by seed.
+
+    The offset the mock added to its catalog, correlated image-plane displacement plus measurement noise, over both
+    axes; the residual rms of a model with the true lens.  Read from ``seed_*/mock/mock_images.json``; mocks without
+    that file are left out.
+    """
+    offsets = {}
+    for seed in campaign.seeds:
+        path = campaign.root / f"seed_{seed:08d}" / "mock" / "mock_images.json"
+        if path.exists():
+            images = pd.DataFrame(json.loads(path.read_text()))
+            offsets[seed] = float(np.sqrt(np.mean((images.x_obs_arcsec - images.x_true_arcsec) ** 2 + (images.y_obs_arcsec - images.y_true_arcsec) ** 2)))
+    return pd.Series(offsets, dtype=float)
+
+
 def plot_image_residual_distribution(campaign: Campaign, path: Path) -> Path | None:
-    """The run figure (``plotting.plots.residual_histogram_figure``) over every posterior draw of every mock."""
+    """The run figure (``plotting.plots.residual_histogram_figure``) over every posterior draw of every mock, with the
+    injected position offsets (:func:`injected_position_offsets`) over the mocks."""
     from ..plotting.plots import residual_histogram_figure
     df = campaign.residual_draws
     residual = pd.to_numeric(df["image_residual_arcsec"], errors="coerce").to_numpy(float)
@@ -649,7 +678,7 @@ def plot_image_residual_distribution(campaign: Campaign, path: Path) -> Path | N
         return None
     groups = [residual[recovered & (df["seed"] == seed).to_numpy() & (df["draw_index"] == draw).to_numpy()]
               for seed, draw in df.loc[recovered, ["seed", "draw_index"]].drop_duplicates().itertuples(index=False)]
-    return residual_histogram_figure(groups, path)
+    return residual_histogram_figure(groups, path, injected=injected_position_offsets(campaign).to_numpy(float))
 
 
 # ----------------------------------------------------------------------------- aperture mass components

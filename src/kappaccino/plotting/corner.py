@@ -50,7 +50,7 @@ def plot_parameter_corner(samples, selection, path, *, grouped_physical=None):
         if spec.log:
             symbol = label.split('$')[1] if '$' in label else label.replace('_', r'\_')
             units = label.split('$', 2)[2] if '$' in label else ''
-            label = r'$\log_{10}(' + symbol + ')$' + units
+            label = r'$\log(' + symbol + ')$' + units
         labels.append(label)
     n = len(selection)
     with plt.rc_context(fname=STYLE,
