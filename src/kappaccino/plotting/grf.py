@@ -26,14 +26,50 @@ from ..likelihood import gp_knee
 PLOT_FIELD_VERSION = 'conditional-realization-hermite-v4'   # v2: all-block twin; v3: JAX evaluation; v4: realization, not the mean
 
 
-CHUNK = 4096   # points per compiled call; a shorter chunk is padded to one of SIZES, so few shapes are compiled
-SIZES = (64, 512, CHUNK)
+CHUNK = 4096   # points per compiled call; a shorter chunk is padded to a power of two from 64, so few shapes are compiled
+N_MODES = 4096 # random Fourier modes of one prior draw of the field
+GRID_ROWS = 64    # rows of a separable grid per compiled call: its arrays are (GRID_ROWS, 2 mode, 6) float64, 25 MB
 
 
 def _padded_size(n: int) -> int:
-    """The compiled size that holds ``n`` points: an image solver calls with a handful of points per iteration."""
-    return next(size for size in SIZES if n <= size)
-N_MODES = 4096 # random Fourier modes of one prior draw of the field
+    """The compiled size that holds ``n`` points (at most ``CHUNK``): the power of two from 64 up, so an image solver
+    calling with a handful of points per iteration does not pay for a full chunk."""
+    return min(CHUNK, max(64, 1 << max(0, int(n) - 1).bit_length()))
+
+
+# Cody-Waite reduction by pi/2 in three 33-bit pieces (fdlibm __ieee754_rem_pio2): q * piece is exact for |q| < 2^20.
+_PIO2_1, _PIO2_2, _PIO2_3 = 1.57079632673412561417e+00, 6.07710050630396597660e-11, 2.02226624871116645580e-21
+_PIO2_3T = 8.47842766036889956997e-32
+
+
+def sincos(x):
+    """``(sin x, cos x)`` in float64 from the fdlibm kernels after a Cody-Waite reduction to [-pi/4, pi/4].
+
+    Agrees with ``numpy.sin``/``numpy.cos`` to a few units in the last place for |x| up to about 1e6 (beyond, the
+    reduction loses accuracy like a plain float64 reduction would); NaN and infinite arguments give NaN.  XLA on CPU
+    does not vectorise ``jnp.sin``/``jnp.cos`` in float64, while this is plain arithmetic and selects, which it does."""
+    q = jnp.round(x * (2 / np.pi))
+    r = (((x - q * _PIO2_1) - q * _PIO2_2) - q * _PIO2_3) - q * _PIO2_3T
+    z = r * r
+    s = r + r * z * (-1.66666666666666324348e-01 + z * (8.33333333332248946124e-03 + z * (-1.98412698298579493134e-04 + z * (
+        2.75573137070700676789e-06 + z * (-2.50507602534068634195e-08 + z * 1.58969099521155010221e-10)))))
+    c = 1 - 0.5 * z + z * z * (4.16666666666666019037e-02 + z * (-1.38888888888741095749e-03 + z * (2.48015872894767294178e-05 + z * (
+        -2.75573143513906633035e-07 + z * (2.08757232129817482790e-09 + z * -1.13596475577881948265e-11)))))
+    quadrant = q - 4 * jnp.floor(q / 4)                          # 0, 1, 2, 3 (float, no integer overflow)
+    sine = jnp.where(quadrant == 0, s, jnp.where(quadrant == 1, c, jnp.where(quadrant == 2, -s, -c)))
+    cosine = jnp.where(quadrant == 0, c, jnp.where(quadrant == 1, -s, jnp.where(quadrant == 2, -c, s)))
+    return sine, cosine
+
+
+def mode_weights(kvec, a, b):
+    """Weights W (2 mode, 6) of the curl-free plane waves: ``[cos(k.x) | sin(k.x)] @ W`` is the deflection (x, y) and
+    the Jacobian (00, 01, 10, 11) of sum_m khat_m [a_m cos(k_m.x) + b_m sin(k_m.x)]."""
+    kvec, a, b = (np.asarray(v, dtype=float) for v in (kvec, a, b))
+    norm = np.linalg.norm(kvec, axis=1)
+    khat = kvec / norm[:, None]
+    outer = (khat[:, :, None] * khat[:, None, :]).reshape(-1, 4)
+    return np.vstack([np.column_stack([a[:, None] * khat, (b * norm)[:, None] * outer]),
+                      np.column_stack([b[:, None] * khat, (-a * norm)[:, None] * outer])])
 
 
 @jax.jit
@@ -61,8 +97,31 @@ def _smooth_fields(points, xy, u, coefficients, breaks, origin_second):
 
 
 @jax.jit
+def _mode_points(points, kvec, weights):
+    """Deflection and Jacobian (P, 6) of the plane waves at ``points`` (P, 2); ``weights`` from :func:`mode_weights`."""
+    sine, cosine = sincos(points @ kvec.T)
+    return jnp.concatenate([cosine, sine], axis=1) @ weights
+
+
+@jax.jit
+def _mode_grid(rows, columns, kvec, weights):
+    """The plane waves (R, C, 6) at the points rows[i] + columns[j] (rows (R, 2), columns (C, 2)): with
+    e^{ik.(r+c)} = e^{ik.r} e^{ik.c} the mode sums are two real matrix products, and only R + C phases are needed."""
+    m = kvec.shape[0]
+    sr, cr = sincos(rows @ kvec.T)                          # (R, M)
+    sc, cc = sincos(columns @ kvec.T)                       # (C, M)
+    wc, ws = weights[:m], weights[m:]
+    # cos(r + c) = cos r cos c - sin r sin c, sin(r + c) = sin r cos c + cos r sin c; field = cos @ wc + sin @ ws.
+    times_cos = cr[:, :, None] * wc[None] + sr[:, :, None] * ws[None]          # (R, M, 6), multiplies cos c
+    times_sin = cr[:, :, None] * ws[None] - sr[:, :, None] * wc[None]          # multiplies sin c
+    stacked = jnp.concatenate([times_cos, times_sin], axis=1)                  # (R, 2M, 6)
+    return jnp.einsum('cm,rmq->rcq', jnp.concatenate([cc, sc], axis=1), stacked)
+
+
+@jax.jit
 def _mode_fields(points, kvec, a, b):
-    """Deflection (P, 2) and Jacobian (P, 2, 2) of the curl-free plane waves sum_m khat_m [a_m cos(k_m.x) + b_m sin(k_m.x)]."""
+    """Deflection (P, 2) and Jacobian (P, 2, 2) of the curl-free plane waves sum_m khat_m [a_m cos(k_m.x) + b_m sin(k_m.x)]
+    with ``jnp.cos``/``jnp.sin`` (the reference for :func:`_mode_points`; draws condition on it at the images)."""
     phase = points @ kvec.T
     cosine, sine = jnp.cos(phase), jnp.sin(phase)
     norm = jnp.sqrt(jnp.sum(kvec * kvec, axis=1))
@@ -77,11 +136,47 @@ def _chunked(function, points, *arguments):
         chunk = points[start:start + CHUNK]
         n = len(chunk)
         result = function(jnp.asarray(np.pad(chunk, ((0, _padded_size(n) - n), (0, 0)), mode='edge')), *arguments)
+        if not isinstance(result, (tuple, list)):
+            result = (result,)
         if outputs is None:
             outputs = [np.empty((len(points),) + r.shape[1:]) for r in result]
         for output, r in zip(outputs, result):
             output[start:start + n] = np.asarray(r)[:n]
     return outputs
+
+
+def separable_grid(x, y):
+    """``(rows, columns)`` with every point (x[i, j], y[i, j]) equal to rows[i] + columns[j] (shapes (R, 2), (C, 2)), or
+    None when the points are not such a grid: a meshgrid (non-uniform spacing allowed) or any affine grid, rotated or
+    not.  Requires 2-D arrays of finite points; the reconstruction must hold to a few units in the last place of the
+    coordinates."""
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    if x.ndim != 2 or x.shape != y.shape or x.size == 0 or not (np.isfinite(x).all() and np.isfinite(y).all()):
+        return None
+    if (x == x[:1]).all() and (y == y[:, :1]).all():          # a meshgrid: exact, no reconstruction error
+        rows = np.column_stack([np.zeros(x.shape[0]), y[:, 0]])
+        return rows, np.column_stack([x[0], np.zeros(x.shape[1])])
+    points = np.stack([x, y], axis=-1)
+    rows, columns = points[:, 0], points[0] - points[0, 0]
+    residual = np.abs(points - rows[:, None] - columns[None]).max()
+    if residual > 16 * np.finfo(float).eps * max(1.0, float(np.abs(points).max())):
+        return None
+    return rows, columns
+
+
+def _mode_grid_values(rows, columns, kvec, weights):
+    """:func:`_mode_grid` in blocks of ``GRID_ROWS`` rows, the columns padded to a power of two: (R * C, 6) in row-major
+    order of the grid."""
+    n_rows, n_columns = len(rows), len(columns)
+    width = max(64, 1 << max(0, n_columns - 1).bit_length())
+    columns = jnp.asarray(np.pad(columns, ((0, width - n_columns), (0, 0)), mode='edge'))
+    out = np.empty((n_rows, n_columns, 6))
+    for start in range(0, n_rows, GRID_ROWS):
+        block = rows[start:start + GRID_ROWS]
+        n = len(block)
+        values = _mode_grid(jnp.asarray(np.pad(block, ((0, GRID_ROWS - n), (0, 0)), mode='edge')), columns, kvec, weights)
+        out[start:start + n] = np.asarray(values)[:n, :n_columns]
+    return out.reshape(-1, 6)
 
 
 def image_field_covariance(xy, mask, r_grid, cl, ct, amplitude):
@@ -145,23 +240,36 @@ class SmoothPlotDeflection:
                 self.affine_offset[block],self.affine_jacobian[block]=_affine(pattern)
         self.u=u.reshape(n_blocks,size,2)
 
+    def _block_fields(self, points, block):
+        """Unweighted deflection (P, 2) and Jacobian (P, 2, 2) of block ``block`` at ``points`` (P, 2)."""
+        xy=jnp.asarray(self.xy[block,self.mask[block]]);u=jnp.asarray(self.u[block,self.mask[block]])
+        value=np.empty((len(points),2));deriv=np.empty((len(points),2,2))
+        for start in range(0,len(points),CHUNK):
+            chunk=points[start:start+CHUNK];n=len(chunk)
+            padded=np.pad(chunk,((0,_padded_size(n)-n),(0,0)),mode='edge')
+            v,j,reach=_smooth_fields(jnp.asarray(padded),xy,u,self.coefficients,self.breaks,self.origin_second)
+            if float(reach)>self.r[-1]:
+                raise ValueError('Plotting GRF separation exceeds the saved covariance table')
+            value[start:start+n],deriv[start:start+n]=np.asarray(v)[:n],np.asarray(j)[:n]
+        value=self.amplitude*value-self.affine_offset[block]-points@self.affine_jacobian[block].T
+        deriv=self.amplitude*deriv-self.affine_jacobian[block]
+        return value,deriv
+
+    def unweighted(self,points):
+        """The field of a one-block layout at ``points`` (P, 2) for a family of weight 1: (P, 6), deflection (x, y) and
+        Jacobian (00, 01, 10, 11)."""
+        if len(self.mask)!=1:
+            raise ValueError('An unweighted field needs one shared block over all images')
+        value,deriv=self._block_fields(np.asarray(points,float).reshape(-1,2),0)
+        return np.column_stack([value,deriv.reshape(-1,4)])
+
     def __call__(self,x,y,families):
         points=np.column_stack([np.asarray(x,float).ravel(),np.asarray(y,float).ravel()])
         families=np.asarray(families,int).ravel()
         delta=np.empty_like(points);jac=np.empty((len(points),2,2))
         for block in np.unique(self.blocks[families]):
             rows=np.flatnonzero(self.blocks[families]==block)
-            xy=jnp.asarray(self.xy[block,self.mask[block]]);u=jnp.asarray(self.u[block,self.mask[block]])
-            value=np.empty((len(rows),2));deriv=np.empty((len(rows),2,2))
-            for start in range(0,len(rows),CHUNK):
-                chunk=points[rows[start:start+CHUNK]];n=len(chunk)
-                padded=np.pad(chunk,((0,_padded_size(n)-n),(0,0)),mode='edge')
-                v,j,reach=_smooth_fields(jnp.asarray(padded),xy,u,self.coefficients,self.breaks,self.origin_second)
-                if float(reach)>self.r[-1]:
-                    raise ValueError('Plotting GRF separation exceeds the saved covariance table')
-                value[start:start+n],deriv[start:start+n]=np.asarray(v)[:n],np.asarray(j)[:n]
-            value=self.amplitude*value-self.affine_offset[block]-points[rows]@self.affine_jacobian[block].T
-            deriv=self.amplitude*deriv-self.affine_jacobian[block]
+            value,deriv=self._block_fields(points[rows],block)
             weight=self.weights[families[rows]]
             delta[rows]=value*weight[:,None]
             jac[rows]=deriv*weight[:,None,None]
@@ -170,24 +278,51 @@ class SmoothPlotDeflection:
 
 class FieldRealization:
     """One conditional realization of the shared field (see the module docstring), called like the mean operator with
-    (x, y, family indices) in arcsec; returns the deflection components and the four Jacobian components, each (point,)."""
+    (x, y, family indices) in arcsec; returns the deflection components and the four Jacobian components, each (point,).
+
+    The field of a family is its weight (``weights``) times :meth:`unweighted`.  The plane waves of the prior draw are
+    summed with :func:`sincos` and one matrix product per chunk of points; on a separable grid (2-D ``x``, ``y`` that
+    :func:`separable_grid` accepts) with one matrix product per block of rows from phases of the rows and columns
+    alone.  Both agree with the direct sum to round-off.
+    """
 
     def __init__(self, layout, tables, draw, weights_per_family, modes=()):
         self.conditioned = SmoothPlotDeflection(layout, tables, draw['coefficients'], draw['lam'], draw['sigma'] ** 2, weights_per_family,
                                                 gamma=draw['curve_gamma'], modes=modes)
-        self.kvec, self.a, self.b = (jnp.asarray(draw[key]) for key in ('kvec', 'a', 'b'))
+        self.kvec = jnp.asarray(draw['kvec'])
+        self.mode_weights = jnp.asarray(mode_weights(draw['kvec'], draw['a'], draw['b']))
         self.offset, self.affine = np.asarray(draw['prior_offset']), np.asarray(draw['prior_affine'])
         self.weights = np.asarray(weights_per_family)
 
+    def _prior(self, modes, points):
+        """The prior draw (P, 6) from the plane waves ``modes`` (P, 6) at ``points``: the removed low-order pattern
+        subtracted."""
+        return np.column_stack([modes[:, :2] - self.offset - points @ self.affine.T, modes[:, 2:] - self.affine.reshape(4)])
+
+    def unweighted(self, x, y, select=None):
+        """The field for a family of weight 1 at the points (x, y), shape (point, 6): deflection (x, y) and Jacobian
+        (00, 01, 10, 11), in the ravelled order of ``x``.  When ``x`` and ``y`` form a separable grid (2-D), the plane
+        waves are summed by rows and columns; ``select`` (boolean, the shape of ``x``) then keeps only those points."""
+        x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+        grid = separable_grid(x, y) if x.ndim == 2 and x.size > 1 else None
+        points = np.column_stack([x.ravel(), y.ravel()])
+        keep = None if select is None else np.asarray(select, bool).ravel()
+        if keep is not None and grid is None:
+            points, keep = points[keep], None
+        if grid is not None:
+            modes = _mode_grid_values(*grid, self.kvec, self.mode_weights)
+            if keep is not None:
+                points, modes = points[keep], modes[keep]
+        elif len(points):
+            modes = _chunked(_mode_points, points, self.kvec, self.mode_weights)[0]
+        else:
+            return np.zeros((0, 6))
+        return self.conditioned.unweighted(points) + self._prior(modes, points)
+
     def __call__(self, x, y, families):
-        points = np.column_stack([np.asarray(x, float).ravel(), np.asarray(y, float).ravel()])
-        families = np.asarray(families, int).ravel()
-        conditioned = np.stack(self.conditioned(points[:, 0], points[:, 1], families), axis=-1)
-        if not len(points):
-            return tuple(conditioned.T)
-        value, derivative = _chunked(_mode_fields, points, self.kvec, self.a, self.b)
-        prior = np.column_stack([value - self.offset - points @ self.affine.T, (derivative - self.affine).reshape(-1, 4)])
-        return tuple((conditioned + self.weights[families][:, None] * prior).T)
+        values = self.unweighted(x, y)
+        weight = self.weights[np.asarray(families, int).ravel()]
+        return tuple((values * weight[:, None]).T)
 
 
 def draw_field(layout, tables, cholesky, coefficients, sigma, lam, gamma, *, curve_gamma=None, modes=(), rng, n_modes=N_MODES):

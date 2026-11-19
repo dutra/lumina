@@ -257,7 +257,7 @@ def image_recovery_tables(state: ModelState, evaluator: Evaluator, draws, config
     Every row carries its ``posterior_index``."""
     solver = ExactImageSolver(evaluator, config)
     field = bool(getattr(draws, "has_field", False))
-    reach = draws.reach(window_corners(solver, state)) if field else 0.0        # the realization must reach every search window
+    reach = draws.reach(window_corners(solver, state)) if field else 0.0        # the realization must reach every grid point of the search
     product = {int(index): k for k, index in enumerate(draws.indices)}
     magnification = ("magnification_model", "magnification_model_at_model_position")
     rows, lens_only_rows, extra_rows, count_rows, rms_rows = [], [], [], [], []
@@ -325,10 +325,10 @@ def _position_rows(prediction: dict[str, Any], draw_index: int, posterior_index:
 
 
 def window_corners(solver: ExactImageSolver, state: ModelState) -> np.ndarray:
-    """Corners of the families' search windows, shape (point, 2): the points farthest from the images that a solve can visit."""
+    """Corners of the region the global search's grids cover, shape (point, 2), arcsec: the families' search windows
+    snapped outward onto the coarse lattice and widened by the fine sub-grid (``ExactImageSolver.search_extent``)."""
     family_by_id = {f.family_id: f for f in state.family_data}
-    windows = np.asarray(solver.search_windows([family_by_id[family_id] for family_id in state.images.family_ids]))
-    return np.concatenate([windows[:, :2] + windows[:, 2:] * sign for sign in ((-1, -1), (1, 1))])
+    return solver.search_extent([family_by_id[family_id] for family_id in state.images.family_ids])
 
 
 def family_count_table(counts: pd.DataFrame) -> pd.DataFrame:
