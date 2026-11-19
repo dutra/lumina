@@ -20,9 +20,10 @@ likelihood:
   gp_knee_gamma_prior: null
   # Wavelengths from 0.2" to 100".
   gp_knee_scales_arcsec: [0.2, 100.0]
-  # The knee free over the knee tables (0.5-80") so the field can take the scale of the cluster halos (2026-11-10).
-  lambda_b_prior: lognormal(20.0, 1.0) in [0.5, 80.0]
-  lambda_b_start_arcsec: 20.0
+  # The knee kept below the scale of the cluster halos (2026-11-16).  Free up to 100" it went to 68" with sigma_grf
+  # 0.55": the field carried 4% of the mass inside 50" and the mass beyond the images (49") came out 6% low at 100".
+  lambda_b_prior: lognormal(6.0, 0.5) in [0.5, 20.0]
+  lambda_b_start_arcsec: 6.0
   # The rms deflection error of the substructure at z_ref: 0.08" median, 0.05-0.13" at 1 sigma.
   sigma_grf_prior: lognormal(0.08, 0.5) in [1.0e-4, 1.0]
   sigma_grf_start_arcsec: 0.08

@@ -1195,7 +1195,7 @@ class LikelihoodConfig:
     lambda_b_prior : numpyro distribution, optional
         Knee kernel: prior of the break scale :math:`\\lambda_b = 2\\pi/k_t`, in arcsec.  Its upper bound must not
         exceed ``gp_knee_scales_arcsec[1]`` (a knee above it is the scale of the cluster halos and the external shear)
-        nor the largest tabulated wavelength.  Default: median 6 arcsec, ln-width 0.5, truncated at 30 arcsec.
+        nor the largest tabulated wavelength.  Default: median 6 arcsec, ln-width 0.5, truncated at 20 arcsec.
     lambda_b_start_arcsec : float, optional
         Start of the knee wavelength, in arcsec, strictly inside the bounds of ``lambda_b_prior``.  Default ``6.0``.
     gp_knee_sigma_gp_prior : numpyro distribution, optional
@@ -1316,7 +1316,7 @@ class LikelihoodConfig:
     gp_knee_r_step_arcsec: float = 0.02
     sigma_grf_prior: Any | None = field(default_factory=lambda: _error_scale_prior(0.08, 0.7, 0.3))
     sigma_grf_start_arcsec: float = 0.08
-    lambda_b_prior: Any = field(default_factory=lambda: _error_scale_prior(6.0, 0.5, 30.0))
+    lambda_b_prior: Any = field(default_factory=lambda: _error_scale_prior(6.0, 0.5, 20.0))
     lambda_b_start_arcsec: float = 6.0
     gp_knee_sigma_gp_prior: Any = field(default_factory=lambda: _error_scale_prior(0.10, 0.7, 0.3))
     gp_knee_sigma_gp_start_arcsec: float = 0.10

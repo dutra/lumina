@@ -72,7 +72,7 @@ FIELD_OPTIONS = {"chains": ("runtime.chains",), "starts": ("search.n_starts",), 
 
 def likelihood(name: str, gp_blocks: str):
     """The likelihood of the cluster run.yaml files (keep them in step): no selection term; the GRF of unmodelled mass with
-    a knee spectrum (slope sampled on 2-6, knee 2.5-15" around 6") and the image-plane GP (ell 0.4-3" around 1"), with the
+    a knee spectrum (slope sampled on 2-6, knee from 2.5" up to the end of the knee tables, around 6") and the image-plane GP (ell 0.4-3" around 1"), with the
     priors centred on the mock's injection ranges (sigma_grf 0.06", sigma_gp 0.035" median); the shared field's
     translation, convergence and shear projected out on all blocks (system blocks, the --fast default, have no projection)."""
     from ..config import LikelihoodConfig
@@ -83,7 +83,7 @@ def likelihood(name: str, gp_blocks: str):
         gp_knee_project_modes=(("translation", "convergence", "shear") if name == "grf_gp" and gp_blocks == "all" else ()),
         gp_knee_gamma_prior=(2.0, 6.0), gp_knee_gamma=4.0,     # sampled: the injected field varies the slope
         gp_knee_scales_arcsec=(0.2, 100.0),
-        lambda_b_prior=truncated_lognormal(6.0, 0.6, low=2.5, high=15.0),
+        lambda_b_prior=truncated_lognormal(6.0, 0.5, low=2.5, high=20.0),   # below the scale of the cluster halos; the mocks inject 3-12"
         lambda_b_start_arcsec=6.0,
         # Mock only (the cluster runs keep median 0.08", cap 0.5", and the library sigma_gp prior, median 0.10", cap 0.3"):
         # the geometric centres of the mock's injection ranges, each range inside about one prior width of the median.
