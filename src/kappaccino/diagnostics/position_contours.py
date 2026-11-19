@@ -52,7 +52,8 @@ def position_draws(indices, tables) -> dict:
     common = _read(tables / 'image_recovery_extra_images.csv')
     per_draw = _read(tables / 'posterior_extra_images.csv')
     anchors = common[['x_model_arcsec', 'y_model_arcsec']].to_numpy(float) if len(common) else np.empty((0, 2))
-    families = common['family_id'].astype(str).to_numpy() if len(common) else np.empty(0, str)
+    # A fixed-width string array: pandas hands back object strings, which the HDF5 writer refuses.
+    families = np.asarray(common['family_id'].astype(str).to_numpy(), dtype=str) if len(common) else np.empty(0, str)
     extra = np.full((n, len(anchors), 2), np.nan)
     extra_lens, extra_predicted = extra.copy(), extra.copy()
     if len(anchors) and len(per_draw):
