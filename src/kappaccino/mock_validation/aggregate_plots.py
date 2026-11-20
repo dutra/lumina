@@ -678,7 +678,10 @@ def plot_image_residual_distribution(campaign: Campaign, path: Path) -> Path | N
         return None
     groups = [residual[recovered & (df["seed"] == seed).to_numpy() & (df["draw_index"] == draw).to_numpy()]
               for seed, draw in df.loc[recovered, ["seed", "draw_index"]].drop_duplicates().itertuples(index=False)]
-    return residual_histogram_figure(groups, path, injected=injected_position_offsets(campaign).to_numpy(float))
+    injected = injected_position_offsets(campaign).to_numpy(float)
+    injected = injected[np.isfinite(injected)]
+    reference = ("Injected", *np.percentile(injected, [16, 50, 84])) if injected.size else None
+    return residual_histogram_figure(groups, path, reference=reference)
 
 
 # ----------------------------------------------------------------------------- aperture mass components

@@ -186,7 +186,7 @@ Everything else (figures, fold diagnostics, the GRF critical band, contours) is 
 
 | figure | content |
 |---|---|
-| `image_residual_histogram.pdf` | image-plane residuals |
+| `image_residual_histogram.pdf` | image-plane residuals; with `truth.deflection_true_fits`, the true-lens RMS: the rms of the true deflection map on the catalog with a free source per family and one free amplitude, a reference value and not a lower bound on the RMS (band from a bootstrap over families; table `true_lens_residuals`, record `true_lens_rms`) |
 | `image_recovery.pdf` | observed and model images per family |
 | `corner_globals.pdf` | posterior of the global parameters |
 | `scaling_relation.pdf` | member scaling relation and deviations |

@@ -59,19 +59,19 @@ def posterior_residual_histogram_counts(draws: pd.DataFrame | None, bins: np.nda
 
 
 @plt.rc_context(fname=STYLE, rc=FIGURE_STYLE)
-def residual_histogram_figure(groups: list[np.ndarray], path: Path, *, bins: int = 24, injected=None) -> Path:
+def residual_histogram_figure(groups: list[np.ndarray], path: Path, *, bins: int = 24, reference=None) -> Path:
     """Histogram of image-position residuals, one ApJ column wide.  ``groups`` holds the residuals (arcsec) of the
     recovered images of each posterior draw (of each mock, for a campaign).  Blue: the median count per bin over the
     groups with its 16-84 per cent band.  Orange: the RMS, median of the per-group values with their 16-84 per cent
-    range, quoted in the legend.  Green, with ``injected``: the rms separation (arcsec) between the observed and
-    true image positions of each mock, median and 16-84 per cent range over the mocks."""
+    range, quoted in the legend.  Green, with ``reference = (label, low, value, high)`` in arcsec: a reference rms
+    with its band, quoted like the RMS; "Injected" for a mock campaign (the rms separation between the observed and
+    true image positions of each mock, median and 16-84 per cent range over the mocks), "True-lens RMS" for a
+    simulated cluster (``diagnostics.true_lens.true_lens_rms``, its band from a bootstrap over families)."""
     fig, ax = plt.subplots(figsize=(APJ_COLUMN_WIDTH_IN, 2.4))
     if groups:
         x_max = float(np.ceil(np.quantile(np.concatenate(groups), 0.99) / 0.05) * 0.05)
-        injected = np.asarray([] if injected is None else injected, float)
-        injected = injected[np.isfinite(injected)]
-        if injected.size:                                  # the axis reaches past the band of the injected offset
-            x_max = max(x_max, float(np.ceil(1.08 * np.percentile(injected, 84) / 0.05) * 0.05))
+        if reference is not None:                          # the axis reaches past the band of the reference
+            x_max = max(x_max, float(np.ceil(1.08 * reference[3] / 0.05) * 0.05))
         edges = np.linspace(0.0, max(x_max, 1e-6), bins + 1)
         h16, h50, h84 = np.percentile(np.stack([np.histogram(g, bins=edges)[0] for g in groups]), [16, 50, 84], axis=0)
         rms_low, rms, rms_high = (float(v) for v in np.percentile([np.sqrt(np.mean(g ** 2)) for g in groups], [16, 50, 84]))
@@ -84,13 +84,13 @@ def residual_histogram_figure(groups: list[np.ndarray], path: Path, *, bins: int
         handles = [(Patch(facecolor=band, edgecolor="none"), Line2D([], [], color=BLUE, linewidth=1.4)),
                    (Patch(facecolor=rms_band, edgecolor="none"), Line2D([], [], color=ORANGE, linewidth=1.2, linestyle=DASHES))]
         labels = ["Images per bin", rf"RMS $= {rms:.3f}^{{+{rms_high - rms:.3f}}}_{{-{rms - rms_low:.3f}}}$ arcsec"]
-        if injected.size:
-            low, mid, high = (float(v) for v in np.percentile(injected, [16, 50, 84]))
-            injected_band = matplotlib.colors.to_rgba(GREEN, .16)
-            ax.axvspan(low, high, color=injected_band, linewidth=0, zorder=0)
+        if reference is not None:
+            name, low, mid, high = reference[0], *(float(v) for v in reference[1:])
+            reference_band = matplotlib.colors.to_rgba(GREEN, .16)
+            ax.axvspan(low, high, color=reference_band, linewidth=0, zorder=0)
             ax.axvline(mid, color=GREEN, linestyle=(0, (1, 1.6)), linewidth=1.3, zorder=4)
-            handles.append((Patch(facecolor=injected_band, edgecolor="none"), Line2D([], [], color=GREEN, linewidth=1.3, linestyle=(0, (1, 1.6)))))
-            labels.append(rf"Injected $= {mid:.3f}^{{+{high - mid:.3f}}}_{{-{mid - low:.3f}}}$ arcsec")
+            handles.append((Patch(facecolor=reference_band, edgecolor="none"), Line2D([], [], color=GREEN, linewidth=1.3, linestyle=(0, (1, 1.6)))))
+            labels.append(rf"{name} $= {mid:.3f}^{{+{high - mid:.3f}}}_{{-{mid - low:.3f}}}$ arcsec")
         ax.legend(handles, labels,
                   frameon=True, fancybox=False, facecolor="white", edgecolor="0.6", framealpha=.7, fontsize="small",
                   loc="upper right", handlelength=1.9, borderaxespad=.5).get_frame().set_linewidth(.6)
@@ -104,8 +104,10 @@ def residual_histogram_figure(groups: list[np.ndarray], path: Path, *, bins: int
     return save_page(fig, path)
 
 
-def plot_image_residual_histogram(image_df: pd.DataFrame, path: Path, *, draws: pd.DataFrame | None = None, log=None) -> Path:
-    """``residual_histogram_figure`` over the reporting draws of one run."""
+def plot_image_residual_histogram(image_df: pd.DataFrame, path: Path, *, draws: pd.DataFrame | None = None,
+                                  true_lens: dict | None = None, log=None) -> Path:
+    """``residual_histogram_figure`` over the reporting draws of one run, with the true-lens RMS
+    (``diagnostics.true_lens.true_lens_rms``) of a simulated cluster when given."""
     groups = []
     if draws is not None and not draws.empty:
         for _, group in draws.groupby("draw_index", sort=True):
@@ -113,7 +115,8 @@ def plot_image_residual_histogram(image_df: pd.DataFrame, path: Path, *, draws: 
             r = r[group["recovered"].astype(bool).to_numpy() & np.isfinite(r) & (r >= 0)]
             if r.size:
                 groups.append(r)
-    return residual_histogram_figure(groups, path)
+    reference = None if true_lens is None else ("True-lens RMS", true_lens["p16_arcsec"], true_lens["rms_arcsec"], true_lens["p84_arcsec"])
+    return residual_histogram_figure(groups, path, reference=reference)
 
 
 def plot_image_recovery(image_df: pd.DataFrame, extra_df: pd.DataFrame, path: Path) -> Path:
