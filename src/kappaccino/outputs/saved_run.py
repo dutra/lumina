@@ -1,4 +1,5 @@
-"""A finished run loaded back from its folder: configuration, model state, evaluator and posterior, without fitting."""
+"""A finished run loaded back from its folder: configuration, model state, posterior and (for a compute) the evaluator,
+without fitting."""
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -127,11 +128,11 @@ def catalog_fields(config) -> list[str]:
     return fields
 
 
-def load_run(run_directory, *, physical_draw_indices=None, remap=(), overrides=(), transform=None, log=print):
-    """``(config, state, evaluator, posterior, paths)`` of the finished run in ``run_directory``: the configuration of
-    ``final/artifacts``, the state rebuilt with the init stage's member classes and checked against the saved parameter
-    order, and the saved posterior; ``paths`` has the final ``figures`` and ``tables``.  ``physical_draw_indices``
-    rebuilds the latent vectors of those saved draws from their physical values (checked to round-trip).
+def load_saved_run(run_directory, *, remap=(), overrides=(), transform=None, log=print):
+    """``(config, state, posterior)`` of the finished run in ``run_directory``, without its evaluator: the
+    configuration of ``final/artifacts``, the state rebuilt with the init stage's member classes and checked against
+    the saved parameter order, and the saved posterior.  Building the state reads the catalogs and packs the lens; it
+    evaluates no lens and compiles nothing, so this is what a render pass loads (:func:`load_run` adds the evaluator).
 
     The saved paths are as the run wrote them: relative to the folder it was started from, or absolute.  ``remap``
     (``(OLD, NEW)`` pairs, :func:`remap_paths`) relocates them, ``overrides`` (``section.field=value``,
@@ -147,7 +148,6 @@ def load_run(run_directory, *, physical_draw_indices=None, remap=(), overrides=(
     jax.config.update('jax_enable_x64', True)
     import numpy as np
     from ..io import artifacts
-    from ..likelihood.evaluator import Evaluator
     from ..core.state import build_state, with_member_classes
     run = Path(run_directory).resolve()
     init, final = run / 'init/artifacts', run / 'final'
@@ -166,7 +166,25 @@ def load_run(run_directory, *, physical_draw_indices=None, remap=(), overrides=(
     saved = json.loads((init / artifacts.STATE_FILE).read_text())
     assert [p.name for p in state.parameter_specs] == [p['name'] for p in saved['parameter_specs']]
     assert list(state.members.member_ids) == saved['member_ids']
-    posterior = artifacts.load_posterior(final / 'artifacts')
+    return config, state, artifacts.load_posterior(final / 'artifacts')
+
+
+def load_run(run_directory, *, physical_draw_indices=None, remap=(), overrides=(), transform=None, log=print):
+    """``(config, state, evaluator, posterior, paths)`` of the finished run in ``run_directory``: :func:`load_saved_run`
+    (``remap``, ``overrides``, ``transform``) and the evaluator, checked to reproduce the saved physical parameters of
+    the best draw; ``paths`` has the final ``figures`` and ``tables``.  ``physical_draw_indices`` rebuilds the latent
+    vectors of those saved draws from their physical values (checked to round-trip).
+
+    Raises
+    ------
+    FileNotFoundError
+        When a catalog the model is built from does not exist; the message names the field.
+    """
+    import jax
+    import numpy as np
+    from ..likelihood.evaluator import Evaluator
+    config, state, posterior = load_saved_run(run_directory, remap=remap, overrides=overrides, transform=transform, log=log)
+    final = Path(run_directory).resolve() / 'final'
     best = int(np.nanargmax(posterior.log_prob))
     evaluator = Evaluator(state, config.likelihood.likelihood_mode)
     if physical_draw_indices is not None:

@@ -319,14 +319,26 @@ def plot_scaling_relation(table: pd.DataFrame, posterior_physical: np.ndarray, s
 
 
 # ----------------------------------------------------------------------------- critical curves
-def plot_critical_curves(state: ModelState, draws, z_source: float, path: Path, *, half_fov_arcsec: float | None = None,
-                         grid_scale_arcsec: float = 0.5, log=print) -> Path:
-    """Critical curves and caustics over the reporting draws (parametric plus each draw's GRF realization): the zero
-    contours of the per-pixel median tangential (solid) and radial (dashed) eigenvalues 1 - kappa -/+ |gamma|, shaded
-    where their 16-84% range contains zero; the caustics are the per-point median over draws of the median curves
-    mapped through each draw's lens; the sources are the medians over draws with their 16-84% range.  The grid spans
-    ``half_fov_arcsec`` about the reference (default: the farthest image plus 20", rounded up to 10")."""
-    from .jwst_rgb import draw_critical_interval
+EIGENVALUES = (("tangential", "-"), ("radial", "--"))      # 1 - kappa - |gamma| (solid) and 1 - kappa + |gamma| (dashed)
+
+
+def critical_curve_contours(median: np.ndarray, axis: np.ndarray) -> list[np.ndarray]:
+    """The zero contours of a median eigenvalue map on the square grid ``axis`` x ``axis``, as (point, 2) arrays in
+    arcsec."""
+    pixel = np.arange(len(axis), dtype=float)
+    return [np.stack((np.interp(vertices[:, 1], pixel, axis), np.interp(vertices[:, 0], pixel, axis)), -1)
+            for vertices in find_contours(median, 0.0)]
+
+
+def critical_curve_maps(state: ModelState, draws, z_source: float, *, half_fov_arcsec: float | None = None,
+                        grid_scale_arcsec: float = 0.5, log=print) -> dict[str, np.ndarray]:
+    """What :func:`render_critical_curves` draws, over the reporting draws (parametric plus each draw's GRF
+    realization): the grid ``axis`` (arcsec about the reference; default half width the farthest image plus 20",
+    rounded up to 10"), the per-pixel 16th, 50th and 84th percentiles of the tangential and radial eigenvalues
+    1 - kappa -/+ |gamma| (``tangential_q16``, ``tangential_median``, ``tangential_q84``, ``radial_...``), the caustics
+    ``caustic`` (the per-point median over draws of the median curves mapped through each draw's lens; absent when
+    there is no curve) and the sources (``source_q16``, ``source_median``, ``source_q84``, per image, from each draw's
+    source positions) at ``z_source``."""
     if half_fov_arcsec is None:
         # The images and 20" around them, in steps of 10": the grid covers the constrained region, not empty sky.
         reach = float(np.max(np.abs(np.concatenate([state.images.x_obs, state.images.y_obs]))))
@@ -336,23 +348,37 @@ def plot_critical_curves(state: ModelState, draws, z_source: float, path: Path, 
     xx, yy = np.meshgrid(axis, axis)
     maps = draws.grid_maps("critical curves", xx, yy, z_source, quantities=("kappa", "gamma1", "gamma2"), log=log)
     shear = np.hypot(maps["gamma1"], maps["gamma2"])
-    fig, (image_ax, source_ax) = plt.subplots(1, 2, figsize=(12, 5))
-    pixel = np.arange(n, dtype=float)
+    out = {"axis": axis}
     curves = []
-    for eigenvalue, linestyle in ((1.0 - maps["kappa"] - shear, "-"), (1.0 - maps["kappa"] + shear, "--")):
+    for (kind, _), eigenvalue in zip(EIGENVALUES, (1.0 - maps["kappa"] - shear, 1.0 - maps["kappa"] + shear)):
         low, median, high = np.nanpercentile(eigenvalue, [16, 50, 84], axis=0)
-        draw_critical_interval(image_ax, low, high, CRITICAL_COLOR, coordinates=(xx, yy))
-        for vertices in find_contours(median, 0.0):
-            cx, cy = np.interp(vertices[:, 1], pixel, axis), np.interp(vertices[:, 0], pixel, axis)
-            image_ax.plot(cx, cy, color=CRITICAL_COLOR, linestyle=linestyle, linewidth=1.0)
-            curves.append(np.stack((cx, cy), -1))
+        out.update({f"{kind}_q16": low, f"{kind}_median": median, f"{kind}_q84": high})
+        curves += critical_curve_contours(median, axis)
     if curves:
         xy = np.concatenate(curves)
-        beta = np.median([xy - draws.deflections(k, xy, z_source) for k in range(len(draws))], axis=0)
-        source_ax.scatter(beta[:, 0], beta[:, 1], color=CRITICAL_COLOR, s=2, alpha=0.75, linewidths=0.0)
+        out["caustic"] = np.median([xy - draws.deflections(k, xy, z_source) for k in range(len(draws))], axis=0)
     evaluator = draws.evaluator
     sources = np.stack([np.asarray(evaluator.source_positions(jnp.asarray(theta))) for theta in draws.samples])
-    s16, s50, s84 = np.percentile(sources, [16, 50, 84], axis=0)
+    out["source_q16"], out["source_median"], out["source_q84"] = np.percentile(sources, [16, 50, 84], axis=0)
+    return out
+
+
+def render_critical_curves(state: ModelState, maps: dict[str, np.ndarray], path: Path) -> Path:
+    """Critical curves and caustics from :func:`critical_curve_maps`: the zero contours of the median tangential
+    (solid) and radial (dashed) eigenvalues, shaded where their 16-84% range contains zero, the caustics, and the
+    sources at their median with the 16-84% range, colored by family (``state.family_data``)."""
+    from .jwst_rgb import draw_critical_interval
+    axis = maps["axis"]
+    xx, yy = np.meshgrid(axis, axis)
+    fig, (image_ax, source_ax) = plt.subplots(1, 2, figsize=(12, 5))
+    for kind, linestyle in EIGENVALUES:
+        draw_critical_interval(image_ax, maps[f"{kind}_q16"], maps[f"{kind}_q84"], CRITICAL_COLOR, coordinates=(xx, yy))
+        for cx, cy in (curve.T for curve in critical_curve_contours(maps[f"{kind}_median"], axis)):
+            image_ax.plot(cx, cy, color=CRITICAL_COLOR, linestyle=linestyle, linewidth=1.0)
+    if "caustic" in maps:
+        beta = maps["caustic"]
+        source_ax.scatter(beta[:, 0], beta[:, 1], color=CRITICAL_COLOR, s=2, alpha=0.75, linewidths=0.0)
+    s16, s50, s84 = maps["source_q16"], maps["source_median"], maps["source_q84"]
     cmap = plt.get_cmap("tab20", max(1, len(state.family_data)))
     for idx, family in enumerate(state.family_data):
         image_ax.scatter(family.x_obs, family.y_obs, color=cmap(idx), s=14, label=family.family_id)
@@ -368,6 +394,14 @@ def plot_critical_curves(state: ModelState, draws, z_source: float, path: Path, 
     source_ax.set_ylabel(r"$\beta_y$ (arcsec)")
     fig.tight_layout()
     return _finish(fig, path, dpi=180)
+
+
+def plot_critical_curves(state: ModelState, draws, z_source: float, path: Path, *, half_fov_arcsec: float | None = None,
+                         grid_scale_arcsec: float = 0.5, log=print) -> Path:
+    """:func:`render_critical_curves` of :func:`critical_curve_maps`, in one call (the init stage's figure, which saves
+    nothing)."""
+    return render_critical_curves(state, critical_curve_maps(state, draws, z_source, half_fov_arcsec=half_fov_arcsec,
+                                                             grid_scale_arcsec=grid_scale_arcsec, log=log), path)
 
 
 # ----------------------------------------------------------------------------- truth recovery

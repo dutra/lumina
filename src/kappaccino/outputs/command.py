@@ -5,6 +5,7 @@ it, or absolute.  ``--remap OLD=NEW`` relocates the saved paths of a run made on
 
     kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c
     kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --only truth,mass
+    kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --render
     kappaccino outputs results/m0416_canucs2025/<run> --skip rgb --fail-fast
     kappaccino outputs RUN --remap /home/me/burkelenscluster=$PWD --set truth.deflection_true_fits=defl.fits
     kappaccino outputs --list [RUN_DIR]
@@ -12,6 +13,11 @@ it, or absolute.  ``--remap OLD=NEW`` relocates the saved paths of a run made on
 Module selection: ``--only``/``--skip`` replace the run's saved ``outputs.only`` and ``outputs.skip`` (both of them,
 an option not given counts as empty), ``--all`` runs every module, and with none of the three the saved selection
 applies.  The products go to the run's ``final/`` folder, as after the fit.
+
+Pass mode: by default each module computes its results into the store and draws its figures from the store.
+``--render`` only draws the figures again from what an earlier pass saved, without building the evaluator or the
+reporting draws (a module whose compute never completed is reported unavailable); ``--compute`` writes the results
+and no figures.
 """
 from __future__ import annotations
 
@@ -52,6 +58,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--skip", type=_names, metavar="C,D", help="do not run these modules nor the modules that require them")
     p.add_argument("--all", action="store_true", help="run every module, whatever the run's saved outputs.only and outputs.skip")
     p.add_argument("--fail-fast", action="store_true", help="stop at the first step that raises")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--render", action="store_const", const="render", dest="mode",
+                      help="only draw the figures again from the saved results: no evaluator, no reporting draws")
+    mode.add_argument("--compute", action="store_const", const="compute", dest="mode",
+                      help="only compute the results into the store: no figures")
     p.add_argument("--draws", type=_positive_int, metavar="N",
                    help="reporting draws (reporting.draws and reporting.image_draws, as the run command's --draws).  "
                         "Default: the run's")
@@ -63,9 +74,19 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def step_line(module) -> str:
+    """The indented line of ``--list`` with the steps of ``module``: its compute and its render steps (TRANSITIONAL: or
+    the steps of a module not yet converted, which computes and draws in one)."""
+    if module.converted:
+        return (f"    compute: {', '.join(module.compute_steps) or '-'}; "
+                f"render: {', '.join(module.render_steps) or '-'}")
+    return f"    steps: {', '.join(module.steps)} (compute and render in one: not converted yet)"
+
+
 def module_table(config=None) -> str:
-    """The modules in run order with their ``requires`` and ``after``, each followed by an indented line of its steps,
-    and, given the run's ``config``, whether each is active (from the configuration alone: conditions on the products of other modules show only in a pass)."""
+    """The modules in run order with their ``requires`` and ``after``, each followed by an indented line of its steps
+    by kind (:func:`step_line`), and, given the run's ``config``, whether each is active (from the configuration alone:
+    conditions on the products of other modules show only in a pass)."""
     from .base import OutputContext, order_modules
     from .registry import MODULES
     ctx = OutputContext(config, None, None, None, None, None) if config is not None else None
@@ -76,13 +97,13 @@ def module_table(config=None) -> str:
             last = "yes" if reason is None else f"no: {reason}"
         else:
             last = module.description
-        rows.append((module.name, ",".join(module.requires) or "-", ",".join(module.after) or "-", last, module.steps))
+        rows.append((module.name, ",".join(module.requires) or "-", ",".join(module.after) or "-", last, step_line(module)))
     widths = [max(len(row[i]) for row in rows) for i in range(3)]
     lines = []
     for row in rows:
         lines.append("  ".join(cell.ljust(width) for cell, width in zip(row[:3], widths)) + "  " + row[3])
-        if len(row) > 4 and row[4]:
-            lines.append("    steps: " + ", ".join(row[4]))
+        if len(row) > 4:
+            lines.append(row[4])
     return "\n".join(lines)
 
 
@@ -123,11 +144,13 @@ def check_module_paths(config) -> None:
 
 
 def prepare_rerun(run_directory, *, only=None, skip=None, all_modules=False, fail_fast=False, draws=None, remap=(),
-                  overrides=(), transform=None, log=print):
+                  overrides=(), transform=None, mode="full", log=print):
     """The arguments of ``reporting.outputs.write_outputs`` for the finished run in ``run_directory``:
     ``(config, state, evaluator, posterior, audit, final StagePaths)``, loaded with ``saved_run.load_run`` (``remap``,
     ``overrides``, ``transform``).  The selection is :func:`select_modules`; ``draws`` sets ``reporting.draws`` and
-    ``reporting.image_draws``, the one change to the fit's settings a rerun allows (both are in the run hash).
+    ``reporting.image_draws``, the one change to the fit's settings a rerun allows (both are in the run hash).  For a
+    render pass (``mode`` "render") the run is loaded without its evaluator (``saved_run.load_saved_run``; evaluator
+    None) and the files the modules' computes read are not checked, since render reads only the store.
 
     Raises
     ------
@@ -141,24 +164,31 @@ def prepare_rerun(run_directory, *, only=None, skip=None, all_modules=False, fai
     matplotlib.use("Agg")
     from ..io import artifacts
     from ..pipeline import StagePaths
-    from .saved_run import load_run
+    from .saved_run import load_run, load_saved_run
     run = Path(run_directory).resolve()
-    config, state, evaluator, posterior, _ = load_run(run, remap=remap, overrides=overrides, transform=transform, log=log)
+    if mode == "render":
+        if draws is not None:
+            raise ValueError("--draws chooses the draws a compute uses; a render pass draws what was computed")
+        config, state, posterior = load_saved_run(run, remap=remap, overrides=overrides, transform=transform, log=log)
+        evaluator = None
+    else:
+        config, state, evaluator, posterior, _ = load_run(run, remap=remap, overrides=overrides, transform=transform, log=log)
     config = select_modules(config, only=only, skip=skip, all_modules=all_modules, fail_fast=fail_fast)
     if draws is not None:
         config = replace(config, reporting=replace(config.reporting, draws=int(draws), image_draws=int(draws)))
-    check_module_paths(config)
+    if mode != "render":
+        check_module_paths(config)
     final = StagePaths(run / "final")
     audit_file = final.artifacts / artifacts.AUDIT_FILE
     audit = json.loads(audit_file.read_text()) if audit_file.is_file() else {}
     return config, state, evaluator, posterior, audit, final
 
 
-def rerun_outputs(run_directory, *, log=print, **options) -> dict:
-    """Run the outputs stage of the finished run in ``run_directory`` into its ``final/`` folder
+def rerun_outputs(run_directory, *, log=print, mode="full", **options) -> dict:
+    """Run the outputs stage of the finished run in ``run_directory`` into its ``final/`` folder in ``mode``
     (:func:`prepare_rerun` with ``options``, then ``reporting.outputs.write_outputs``); returns this pass's summary."""
     from ..reporting.outputs import write_outputs
-    return write_outputs(*prepare_rerun(run_directory, log=log, **options), log=log)
+    return write_outputs(*prepare_rerun(run_directory, log=log, mode=mode, **options), log=log, mode=mode)
 
 
 def main(argv=None) -> int:
@@ -177,6 +207,9 @@ def main(argv=None) -> int:
         p.error("the run folder is required (or use --list)")
     if args.all and (args.only is not None or args.skip is not None):
         p.error("--all runs every module; it cannot be combined with --only or --skip")
+    mode = args.mode or "full"
+    if mode == "render" and args.draws is not None:
+        p.error("--draws chooses the draws of a compute; --render draws what the last compute saved")
     from .registry import check_module_names
     for label, names in (("--only", args.only), ("--skip", args.skip)):
         if names is not None:
@@ -187,13 +220,13 @@ def main(argv=None) -> int:
     log = lambda text: print(text, flush=True)
     try:
         prepared = prepare_rerun(args.run, only=args.only, skip=args.skip, all_modules=args.all, fail_fast=args.fail_fast,
-                                 draws=args.draws, remap=args.remap, overrides=args.overrides, log=log)
+                                 draws=args.draws, remap=args.remap, overrides=args.overrides, mode=mode, log=log)
     except (FileNotFoundError, ValueError) as error:
         print(f"kappaccino outputs: {error}", flush=True)
         return 2
     from ..reporting.outputs import write_outputs
     try:
-        summary = write_outputs(*prepared, log=log)
+        summary = write_outputs(*prepared, log=log, mode=mode)
     except Exception as error:          # --fail-fast: the step logged its traceback; one line here
         print(f"kappaccino outputs: stopped at the first error ({type(error).__name__}: {error})", flush=True)
         return 1

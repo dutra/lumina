@@ -10,12 +10,15 @@ from ..likelihood.evaluator import Evaluator
 from ..outputs.base import OutputContext, plan_modules, run_modules
 
 
-def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator: Evaluator, posterior: PosteriorResults,
+def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator: Evaluator | None, posterior: PosteriorResults,
                   audit: dict[str, Any], paths, *, log=print, only: Iterable[str] | None = None,
-                  skip: Iterable[str] | None = None, fail_fast: bool | None = None) -> dict[str, Any]:
+                  skip: Iterable[str] | None = None, fail_fast: bool | None = None, mode: str = "full") -> dict[str, Any]:
     """Run the output modules (``outputs.registry.MODULES``) and write the record ``run_summary`` and the results
     macros; returns the summary.  ``paths`` is the final StagePaths.  ``only``, ``skip`` and ``fail_fast`` default to
-    the ``outputs`` section of ``config`` (``config.OutputsConfig``).
+    the ``outputs`` section of ``config`` (``config.OutputsConfig``).  ``mode`` is the pass mode
+    (``outputs.base.MODES``): ``full``, ``compute`` (no figures) or ``render`` (figures from the store only; the
+    evaluator may be None and is never used).  A render pass always merges its summary into the saved one and keeps
+    every module's numbers (``summary_keys``) from the last compute.
 
     Every product is computed over one set of reporting draws (``reporting.draws.reporting_draws``), each draw
     evaluated once and shared by all of them; none uses the single best sample.  The summary and the macros are written
@@ -36,8 +39,8 @@ def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator:
     skip = settings.skip if skip is None else tuple(skip)
     fail_fast = settings.fail_fast if fail_fast is None else fail_fast
     plan_modules(MODULES, only=only, skip=skip)          # unknown names fail here, before anything is written
-    ctx = OutputContext(config, state, evaluator, posterior, audit, paths, log=log)
-    partial = only is not None or bool(skip)
+    ctx = OutputContext(config, state, evaluator, posterior, audit, paths, log=log, mode=mode)
+    partial = only is not None or bool(skip) or mode == "render"
     try:
         run_modules(ctx, MODULES, only=only, skip=skip, fail_fast=fail_fast,
                     checkpoint=lambda: write_run_summary(ctx, partial=partial))
@@ -58,14 +61,16 @@ def merged_summary(saved: dict[str, Any], summary: dict[str, Any], modules) -> d
     """The record ``run_summary`` after a pass that did not run every module: ``summary`` (this pass) over ``saved``
     (the record before it).  For each module that ran in this pass (done or failed), its ``summary_keys`` are dropped
     from ``saved`` first, so a failed module leaves no old numbers; a module that did not run (not selected, skipped or
-    inactive) keeps its saved keys and its saved module record.  ``warnings`` belong to the reporting draws and are
-    replaced when this pass built them; ``reporting_draws`` is that of the last pass that built draws.  The module
-    records are in the order of ``modules`` (the registry), then any other saved ones."""
+    inactive) keeps its saved keys and its saved module record.  A module that ran in a render pass (``mode``
+    "render") gets this pass's record but keeps its saved keys, which come from its last compute.  ``warnings`` belong
+    to the reporting draws and are replaced when this pass built them; ``reporting_draws`` is that of the last pass
+    that built draws.  The module records are in the order of ``modules`` (the registry), then any other saved ones."""
     records = summary.get("modules", {})
     ran = {name for name, record in records.items() if record["status"] in ("done", "failed")}
+    computed = {name for name in ran if records[name].get("mode") != "render"}
     base = {key: value for key, value in saved.items() if key != "modules"}
     for module in modules:
-        if module.name in ran:
+        if module.name in computed:
             for key in module.summary_keys:
                 base.pop(key, None)
     if "reporting_draws" in summary:
