@@ -49,11 +49,28 @@ def singular_eigenvalue(jacobian):
     return selected,asymmetry
 
 
-@plt.rc_context()
+def small_lambda_stem(config):
+    return f'{config.paths.figure_prefix}_small_lambda_a_image_posteriors_jwst'
+
+
 def write_small_lambda_jwst(config, state, draws, paths, imaging, position_contours,
                            *, count=24, minimum_fov=3., minimum_major_sigma=.1, minimum_axis_ratio=2., log=print):
-    """Cutouts of the images with the widest predicted observed positions, from the reporting draws' image recovery (no
-    new image search) and each draw's Jacobian with its own realization of the shared GRF."""
+    """:func:`save_small_lambda_jwst` then :func:`render_small_lambda_jwst`; the figure path, or None when no
+    image was selected."""
+    if save_small_lambda_jwst(config, state, draws, paths, imaging, position_contours, count=count, minimum_fov=minimum_fov,
+                              minimum_major_sigma=minimum_major_sigma, minimum_axis_ratio=minimum_axis_ratio, log=log) is None:
+        return None
+    return render_small_lambda_jwst(config, state, paths, imaging, log=log)
+
+
+def save_small_lambda_jwst(config, state, draws, paths, imaging, position_contours,
+                           *, count=24, minimum_fov=3., minimum_major_sigma=.1, minimum_axis_ratio=2., log=print):
+    """The images with the widest predicted observed positions, from the reporting draws' image recovery (no new image
+    search) and each draw's Jacobian with its own realization of the shared GRF: the ranking (table ``<stem>``, with
+    the panels shown and their fields of view), the eigenvalues (arrays ``<stem>``), the median det A of each panel
+    (arrays and record ``<stem>_critical``) and the figure's settings (record ``<stem>_selection``).  Of the imaging
+    only the reference band's WCS and shape (the footprint) are read.  Returns the stem, or None when no image is
+    shown (the ranking is still written)."""
     evaluator=draws.evaluator
     if count < 1 or minimum_fov <= 0:
         raise ValueError('count and minimum_fov must be positive')
@@ -72,7 +89,7 @@ def write_small_lambda_jwst(config, state, draws, paths, imaging, position_conto
         return None
     xy=np.column_stack((state.images.x_obs,state.images.y_obs))
     families=np.asarray(state.images.family_index_per_image,dtype=int)
-    stem=f'{config.paths.figure_prefix}_small_lambda_a_image_posteriors_jwst'
+    stem=small_lambda_stem(config)
     field=jax.jit(lambda t:evaluator.fields(evaluator.physical(t),force_exact=True,derivative=False)['jacobian'])
     reach=float(np.linalg.norm(xy[:,None]-xy[None],axis=-1).max())
     values=[];asymmetries=[]
@@ -95,7 +112,7 @@ def write_small_lambda_jwst(config, state, draws, paths, imaging, position_conto
         abs_lambda_a_p84=quantiles[2],recovered_draws=np.isfinite(positions).all(2).sum(0),total_draws=len(indices)))
     rows=rows.sort_values(['posterior_sigma_major_arcsec','image_label'],ascending=[False,True],kind='stable').reset_index(names='image_index')
     rows['rank']=np.arange(1,len(rows)+1);rows['shown']=False;rows['skip_reason']='';rows['fov_arcsec']=np.nan
-    images,bands,display,cluster=imaging
+    images,bands=imaging[:2]
     reference=images[rgb_reference_band(bands)]
     selected=[]
     for row_index,row in rows.iterrows():
@@ -127,13 +144,48 @@ def write_small_lambda_jwst(config, state, draws, paths, imaging, position_conto
         store.write_table(paths.tables,stem,rows)
         log('[outputs] small-lambda JWST cutouts skipped: no resolved posterior contours within imaging')
         return None
-    stem=f'{config.paths.figure_prefix}_small_lambda_a_image_posteriors_jwst'
     from .critical_fields import median_cutout_determinants
-    critical_grids,critical_determinants,critical_lower,critical_upper=median_cutout_determinants(
+    median_cutout_determinants(
         draws,[[r.x_arcsec,r.y_arcsec] for r,_,_,_,_ in selected],
         [f for _,_,_,_,f in selected],[r.z_source for r,_,_,_,_ in selected],
         paths.tables/f'{stem}_critical.h5',log=log)
     critical_indices=draws.indices
+    with store.batch(paths.tables):
+        store.write_table(paths.tables,stem,rows)
+        store.write_arrays(paths.tables,stem,lambda_a=values,draw_indices=indices,image_labels=labels,
+                            abs_lambda_a_quantiles=quantiles,observed_xy=xy,posterior_axis_statistics=axis_statistics)
+        store.write_record(paths.tables,f'{stem}_selection',dict(run=str(paths.figures.parent),image_dir=config.image_catalog.image_dir,bands=list(bands),minimum_fov_arcsec=minimum_fov,
+            critical_curve='Blue: zero contour of posterior median determinant at each source redshift; parametric + shared GRF when enabled',critical_draw_indices=critical_indices.tolist(),critical_band='16-84% determinant interval from the same smoothed parametric + GRF draws',
+            minimum_major_sigma_arcsec=minimum_major_sigma,minimum_axis_ratio=minimum_axis_ratio,maximum_cutouts=count,
+            ranking='Descending major-axis standard deviation (sqrt of largest eigenvalue of recovered image-position sample covariance); ties by image label; at least 10 recovered draws and positive-definite covariance',
+            model='exact parametric + conditional GRF realization of each draw, smooth plotting derivatives',grf_version=PLOT_FIELD_VERSION,
+            jacobian_max_asymmetry=max(asymmetries),singular_value_check='abs(lambda_a) checked against smallest singular value for every image/draw',
+            position_contours='Predicted observed positions; 68.2689492% (solid) and 95.4499736% (dashed) KDE highest-density regions, conditional on successful local image recovery; no covariance ellipses',
+            draw_indices=indices.tolist(),posterior_cache_fingerprint=fingerprint))
+    return stem
+
+
+@plt.rc_context()
+def render_small_lambda_jwst(config, state, paths, imaging, *, log=print):
+    """The figure ``<stem>.pdf`` of the panels :func:`save_small_lambda_jwst` selected, with their posterior KDE
+    regions from the saved positions (arrays ``posterior_overview_positions``) and the saved median det A; writes the
+    figure's record ``<stem>`` (the settings of ``<stem>_selection`` and the panels drawn)."""
+    from .critical_fields import cutout_grids
+    stem=small_lambda_stem(config)
+    rows=store.read_table(paths.tables,stem)
+    info=store.read_record(paths.tables,f'{stem}_selection')
+    positions=store.read_arrays(paths.tables,'posterior_overview_positions')['recovered']
+    indices=info['draw_indices']
+    images,bands,display,cluster=imaging
+    reference=images[rgb_reference_band(bands)]
+    selected=[]
+    for _,row in rows[rows['shown'].to_numpy(bool)].iterrows():
+        coord=arcsec_to_skycoord(row.x_arcsec,row.y_arcsec,state.reference)
+        fov=row.fov_arcsec
+        selected.append((row,coord,cutout_window(reference,coord,fov),_credible_density_grid(positions[:,int(row.image_index)]),fov))
+    critical=store.read_arrays(paths.tables,f'{stem}_critical')
+    critical_grids=cutout_grids(critical['centers'],critical['fovs'],store.read_record(paths.tables,f'{stem}_critical')['resolution'])
+    critical_determinants,critical_lower,critical_upper=critical['median_determinant'],critical['lower'],critical['upper']
     plt.style.use(Path(__file__).with_name('style.mplstyle'));plt.rcParams.update(PAPER_STYLE)
     columns=min(3,len(selected));nrows=int(np.ceil(len(selected)/columns))
     fig,axes=plt.subplots(nrows,columns,figsize=(7.1,7.1*nrows/columns),squeeze=False)
@@ -171,17 +223,6 @@ def write_small_lambda_jwst(config, state, draws, paths, imaging, position_conto
         ax.set(xlim=(-.5,rgb.shape[1]-.5),ylim=(-.5,rgb.shape[0]-.5),xticks=[],yticks=[]);ax.grid(False)
     for ax in axes.flat[len(selected):]:ax.set_visible(False)
     output=paths.figures/f'{stem}.pdf';fig.savefig(output,dpi=350,bbox_inches='tight',pad_inches=0);plt.close(fig)
-    store.write_table(paths.tables,stem,rows)
-    store.write_arrays(paths.tables,stem,lambda_a=values,draw_indices=indices,image_labels=labels,
-                        abs_lambda_a_quantiles=quantiles,observed_xy=xy,posterior_axis_statistics=axis_statistics)
-    info=dict(run=str(paths.figures.parent),image_dir=config.image_catalog.image_dir,bands=list(bands),minimum_fov_arcsec=minimum_fov,
-        critical_curve='Blue: zero contour of posterior median determinant at each source redshift; parametric + shared GRF when enabled',critical_draw_indices=critical_indices.tolist(),critical_band='16-84% determinant interval from the same smoothed parametric + GRF draws',
-        minimum_major_sigma_arcsec=minimum_major_sigma,minimum_axis_ratio=minimum_axis_ratio,maximum_cutouts=count,
-        ranking='Descending major-axis standard deviation (sqrt of largest eigenvalue of recovered image-position sample covariance); ties by image label; at least 10 recovered draws and positive-definite covariance',
-        model='exact parametric + conditional GRF realization of each draw, smooth plotting derivatives',grf_version=PLOT_FIELD_VERSION,
-        jacobian_max_asymmetry=max(asymmetries),singular_value_check='abs(lambda_a) checked against smallest singular value for every image/draw',
-        position_contours='Predicted observed positions; 68.2689492% (solid) and 95.4499736% (dashed) KDE highest-density regions, conditional on successful local image recovery; no covariance ellipses',
-        draw_indices=indices.tolist(),posterior_cache_fingerprint=fingerprint,selected=contour_rows)
-    store.write_record(paths.tables,stem,info)
+    store.write_record(paths.tables,stem,dict(info,selected=contour_rows))
     log(f'[outputs] small-lambda JWST cutouts: {output}')
     return output

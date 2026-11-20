@@ -94,19 +94,25 @@ def test_output_reuses_loaded_imaging(monkeypatch, synthetic_config, tmp_path, c
             raise FileNotFoundError('HST unavailable')
         bands = ['F115W','F150W','F200W'] if image_config.figure_suffix == '_jwst' else ['F435W','F606W','F814W']
         return (None,bands,None,imaging)
-    monkeypatch.setattr(mass_figure,'render_cluster_mass_figure',lambda *a,**k:None)
-    calls=[];monkeypatch.setattr(covariance_cutouts,'write_covariance_cutouts',lambda *a,**k:calls.append(a[4]))
+    monkeypatch.setattr(mass_figure,'save_cluster_mass_figure',lambda *a,**k:{})
+    monkeypatch.setattr(mass_figure,'draw_cluster_mass_figure',lambda *a,**k:None)
+    calls=[];monkeypatch.setattr(covariance_cutouts,'save_covariance_cutouts',lambda *a,**k:calls.append(a[4]) or 'saved')
+    renders=[];monkeypatch.setattr(covariance_cutouts,'render_covariance_cutouts',lambda *a,**k:renders.append(a[3]))
     from kappaccino.diagnostics import position_contours
-    monkeypatch.setattr(position_contours,"load_or_compute_contours",lambda *a,**k:None)
-    from kappaccino.plotting import small_lambda_jwst
+    monkeypatch.setattr(position_contours,"load_or_compute_contours",lambda *a,**k:{})
+    monkeypatch.setattr(position_contours,"load_position_contours",lambda *a,**k:{})
+    from kappaccino.plotting import small_lambda_jwst, paper_cutouts
     lambda_calls=[]
-    monkeypatch.setattr(small_lambda_jwst,'write_small_lambda_jwst',lambda *a,**k:lambda_calls.append(a))
+    monkeypatch.setattr(small_lambda_jwst,'save_small_lambda_jwst',lambda *a,**k:lambda_calls.append(a))
+    monkeypatch.setattr(paper_cutouts,'prepare_paper_cutouts',lambda *a,**k:None)
     from kappaccino.plotting import jwst_rgb
     rgb_calls=[]
-    monkeypatch.setattr(jwst_rgb,'render_rgb_critical',lambda *a,**k:rgb_calls.append(a))
+    monkeypatch.setattr(jwst_rgb,'save_rgb_critical',lambda *a,**k:'saved')
+    monkeypatch.setattr(jwst_rgb,'render_saved_rgb_critical',lambda *a,**k:rgb_calls.append(a))
     fold_calls=[]; fold_renders=[]
     monkeypatch.setattr(fold_pairs,"compute_fold_diagnostics",lambda *a,**k: fold_calls.append(1) or {"pairs":[],"systems":[]})
     monkeypatch.setattr(fold_pairs,"save_fold_data",lambda *a:None)
+    monkeypatch.setattr(fold_pairs,"load_fold_data",lambda *a:{"pairs":[],"systems":[]})
     monkeypatch.setattr(fold_pairs,"render_fold_diagnostics",lambda *a,**k:fold_renders.append(a[4]))
     loads=[];monkeypatch.setattr(cutouts,'load_cluster_imaging',lambda *a:loads.append(a[0].figure_suffix) or load(*a))
     summary=outputs.write_outputs(config,state,evaluator,posterior,{},paths,log=lambda _:None,only=('rgb',),fail_fast=True)
@@ -115,13 +121,14 @@ def test_output_reuses_loaded_imaging(monkeypatch, synthetic_config, tmp_path, c
     assert len(loads)==len(set(loads))
     # One RGB critical overview per loaded imaging variant, named by its instrument.
     assert len(rgb_calls)==expected
-    assert sorted(call[6].name for call in rgb_calls)==sorted(
+    assert sorted(call[5].name for call in rgb_calls)==sorted(
         ("jwst" if call[0].image_catalog.figure_suffix=="_jwst" else "hst")+"_rgb_critical_z9.pdf" for call in rgb_calls)
-    assert any(call[6].name=="jwst_rgb_critical_z9.pdf" for call in rgb_calls)==(cluster in {"m0416","as1063"})
+    assert any(call[5].name=="jwst_rgb_critical_z9.pdf" for call in rgb_calls)==(cluster in {"m0416","as1063"})
     assert len(lambda_calls)==(1 if cluster in {"m0416","as1063"} else 0)
     assert all(call[4][3] is imaging for call in lambda_calls)
     assert len(fold_calls)==1 and len(fold_renders)==expected
     assert len(calls)==expected and all(call[3] is imaging for call in calls)
+    assert len(renders)==expected and all(call[3] is imaging for call in renders)
 
 
 def test_default_jwst_variants(synthetic_config):

@@ -42,19 +42,38 @@ def resolve_panel(selector, systems):
     return kind, system['system_id'], system
 
 
+def paper_cutout_groups(config):
+    return [('small_lambda_posteriors', config.image_catalog.paper_small_lambda_cutouts),
+            ('fold_cutouts', config.image_catalog.paper_fold_cutouts)]
+
+
 def write_paper_cutouts(config, state, draws, tables, figures, imaging, *, log=print):
-    """Create the selected figures after position and fold products are saved.  A system whose fold pairs were all
-    skipped is drawn from its partial entry, without the anchor products.  A figure with a panel that has no saved
-    posterior (an image recovered in fewer than three reporting draws) or no saved fold region at all is skipped with a
-    log line."""
-    groups = [('small_lambda_posteriors', config.image_catalog.paper_small_lambda_cutouts),
-              ('fold_cutouts', config.image_catalog.paper_fold_cutouts)]
-    if not any(selectors for _, selectors in groups):
+    """Create the selected figures after position and fold products are saved: :func:`prepare_paper_cutouts` then
+    :func:`render_paper_cutouts`.  Returns the written figures."""
+    if prepare_paper_cutouts(config, tables, draws, log=log) is None:
         return []
-    tables, figures = Path(tables), Path(figures)
+    return render_paper_cutouts(config, state, tables, figures, imaging, log=log)
+
+
+def prepare_paper_cutouts(config, tables, draws, *, log=print):
+    """Save what the configured paper cutouts need beyond the saved position and fold products: the median det A of
+    the image panels the small-lambda figure did not save (``<prefix>_rgb_inset_critical``, from the reporting
+    ``draws``).  Returns the stems of the figures to draw, or None when there is none."""
+    stems = [stem for stem, _, _, _, _ in _paper_panels(config, tables, draws, log=log)]
+    return stems or None
+
+
+def _paper_panels(config, tables, draws, *, log=print):
+    """``(stem, selectors, resolved, reduced, data)`` of each configured figure that can be drawn.  A system whose fold
+    pairs were all skipped is drawn from its partial entry, without the anchor products.  A figure with a panel that
+    has no saved posterior (an image recovered in fewer than three reporting draws) or no saved fold region at all is
+    skipped with a log line."""
+    groups = paper_cutout_groups(config)
+    if not any(selectors for _, selectors in groups):
+        return
+    tables = Path(tables)
     folds = load_fold_data(tables)
     systems = folds['systems'] + folds.get('partial_systems', [])
-    outputs = []
     for stem, selectors in groups:
         if not selectors:
             continue
@@ -79,6 +98,15 @@ def write_paper_cutouts(config, state, draws, tables, figures, imaging, *, log=p
         if data is None:  # overview_cutout_data logged which panel has no saved posterior
             log(f'[outputs] paper cutouts skipped: {stem}')
             continue
+        yield stem, selectors, resolved, reduced, data
+
+
+def render_paper_cutouts(config, state, tables, figures, imaging, *, log=print):
+    """Draw the configured paper cutouts from the saved position and fold products and what
+    :func:`prepare_paper_cutouts` saved (never the reporting draws).  Returns the written figures."""
+    tables, figures = Path(tables), Path(figures)
+    outputs = []
+    for stem, selectors, resolved, reduced, data in _paper_panels(config, tables, None, log=log):
         with plt.style.context(str(Path(__file__).with_name('style.mplstyle'))):
             # One row of square panels over a legend strip (stacked entries under a single panel).
             side, strip = 2.05, .26 if len(selectors) > 1 else .62
