@@ -7,9 +7,13 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 import numpy as np
 
-from .fold_pairs import load_fold_data
+from .fold_pairs import PARTIAL_CRITICAL_BAND, load_fold_data
 from .rgb_overview_cutouts import overview_cutout_data, render_overview_cutouts
 from .style import CRITICAL_COLOR
+
+
+class NoSavedFoldRegion(ValueError):
+    """A family or system selector names no saved fold region, full or partial, e.g. a system with no fold candidate."""
 
 
 def resolve_panel(selector, systems):
@@ -21,6 +25,8 @@ def resolve_panel(selector, systems):
         return kind, identity, None
     matches = [s for s in systems if (s['system_id'] == identity if kind == 'system'
                                      else identity in s['family_ids'])]
+    if not matches:
+        raise NoSavedFoldRegion(f'Paper cutout {selector!r} has no saved fold region')
     if len(matches) != 1:
         raise ValueError(f'Paper cutout {selector!r} requires exactly one saved fold region; found {len(matches)}')
     system = dict(matches[0])
@@ -37,21 +43,35 @@ def resolve_panel(selector, systems):
 
 
 def write_paper_cutouts(config, state, draws, tables, figures, imaging, *, log=print):
-    """Create the selected figures after position and fold products are saved.  A figure with a panel that has no
-    saved posterior (an image recovered in fewer than three reporting draws) is skipped with a log line."""
+    """Create the selected figures after position and fold products are saved.  A system whose fold pairs were all
+    skipped is drawn from its partial entry, without the anchor products.  A figure with a panel that has no saved
+    posterior (an image recovered in fewer than three reporting draws) or no saved fold region at all is skipped with a
+    log line."""
     groups = [('small_lambda_posteriors', config.image_catalog.paper_small_lambda_cutouts),
               ('fold_cutouts', config.image_catalog.paper_fold_cutouts)]
     if not any(selectors for _, selectors in groups):
         return []
     tables, figures = Path(tables), Path(figures)
-    systems = load_fold_data(tables)['systems']
+    folds = load_fold_data(tables)
+    systems = folds['systems'] + folds.get('partial_systems', [])
     outputs = []
     for stem, selectors in groups:
         if not selectors:
             continue
         if len(selectors) > 5:
             raise ValueError(f'{stem} supports at most five panels')
-        resolved = [resolve_panel(selector, systems) for selector in selectors]
+        try:
+            resolved = [resolve_panel(selector, systems) for selector in selectors]
+        except NoSavedFoldRegion as error:  # e.g. a typo, or a system with no fold candidate in this run
+            log(f'[outputs] paper cutouts skipped: {stem} ({error})')
+            continue
+        reduced = [dict(selector=selector, system=system['system_id'], reason=system['partial_reason'])
+                   for selector, (_, _, system) in zip(selectors, resolved) if system is not None and 'partial_reason' in system]
+        for panel, (_, _, system) in zip(reduced, [r for r in resolved if r[2] is not None and 'partial_reason' in r[2]]):
+            log(f"[outputs] paper cutouts {stem}: {panel['selector']} drawn without its fold anchor ({panel['reason']})")
+            if 'critical_points' not in system:
+                log(f"[outputs] paper cutouts {stem}: {panel['selector']} drawn without a critical line (the saved fold "
+                    'record predates the critical-line position band)')
         data = overview_cutout_data(tables, config.paths.figure_prefix,
             image_labels=tuple(dict.fromkeys(identity for kind, identity, _ in resolved if kind == 'image')),
             system_ids=tuple(dict.fromkeys(identity for kind, identity, _ in resolved if kind != 'image')),
@@ -91,7 +111,8 @@ def write_paper_cutouts(config, state, draws, tables, figures, imaging, *, log=p
             run=config.paths.run_name, selectors=list(selectors), source_tables=str(tables),
             layout='one row over a legend strip', position_probability=.954499736,
             position_contours='predicted observed positions, conditional on successful image recovery',
-            family_framing='parent fold region', bands=list(imaging[1])))
+            family_framing='parent fold region', bands=list(imaging[1]),
+            **(dict(panels_without_fold_anchor=reduced, partial_critical_band=PARTIAL_CRITICAL_BAND) if reduced else {})))
         outputs.append(output)
         log(f'[outputs] paper cutouts written: {output}')
     return outputs

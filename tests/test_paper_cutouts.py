@@ -74,3 +74,46 @@ def test_figure_without_a_saved_posterior_is_skipped_not_fatal(tmp_path, monkeyp
                                 ({},(),None,'m0416'),log=lines.append)
     assert [path.name for path in paths]==['m0416_fold_cutouts.pdf']
     assert '[outputs] paper cutouts skipped: small_lambda_posteriors' in lines
+
+
+def partial(identity='K8'):
+    return dict(system(), system_id=identity, family_ids=[f'{identity}A', f'{identity}B'], partial_reason='changes branch')
+
+
+def test_partial_system_is_drawn_reduced_and_unknown_selector_skips_figure(tmp_path, monkeypatch):
+    cfg = ImageCatalogCutoutConfig(paper_small_lambda_cutouts=('system:K6','system:K9'),
+                                   paper_fold_cutouts=('system:K6','system:K8','family:K8B'))
+    config = NS(image_catalog=cfg, paths=NS(figure_prefix='test',run_name='test'))
+    monkeypatch.setattr(pc,'load_fold_data',lambda _:dict(systems=[system()],partial_systems=[partial()]))
+    monkeypatch.setattr(pc,'overview_cutout_data',lambda *a, **k: dict(images=[],systems=[]))
+    drawn=[]
+    def render(fig,data,*a,**k):
+        drawn.append(data['systems'][0]); fig.add_axes(k['image_rects'][0])
+    monkeypatch.setattr(pc,'render_overview_cutouts',render)
+    lines=[]
+    paths=pc.write_paper_cutouts(config,NS(reference=(3,0,0)),None,tmp_path,tmp_path,
+                                ({},(),None,'m0416'),log=lines.append)
+    assert [path.name for path in paths]==['m0416_fold_cutouts.pdf']
+    assert "[outputs] paper cutouts skipped: small_lambda_posteriors (Paper cutout 'system:K9' has no saved fold region)" in lines
+    assert [s['system_id'] for s in drawn]==['K6','K8','K8'] and drawn[2]['labels']==['K6B.a','K6B.b']
+    assert "[outputs] paper cutouts fold_cutouts: system:K8 drawn without its fold anchor (changes branch)" in lines
+    assert "[outputs] paper cutouts fold_cutouts: family:K8B drawn without its fold anchor (changes branch)" in lines
+    record=store.read_figure_record(paths[0])
+    assert record['panels_without_fold_anchor']==[dict(selector='system:K8',system='K8',reason='changes branch'),
+                                                  dict(selector='family:K8B',system='K8',reason='changes branch')]
+    assert record['partial_critical_band']==pc.PARTIAL_CRITICAL_BAND
+    with pytest.raises(ValueError, match='exactly one'):
+        pc.resolve_panel('system:K6', [system(), system()])
+
+
+def test_partial_system_saved_before_the_position_band_is_logged(tmp_path, monkeypatch):
+    cfg = ImageCatalogCutoutConfig(paper_fold_cutouts=('system:K6','system:K8'))
+    config = NS(image_catalog=cfg, paths=NS(figure_prefix='test',run_name='test'))
+    monkeypatch.setattr(pc,'load_fold_data',lambda _:dict(systems=[system()],partial_systems=[dict(partial(),critical_x=np.zeros(4))]))
+    monkeypatch.setattr(pc,'overview_cutout_data',lambda *a, **k: dict(images=[],systems=[]))
+    monkeypatch.setattr(pc,'render_overview_cutouts',lambda fig,*a,**k: fig.add_axes(k['image_rects'][0]))
+    lines=[]
+    paths=pc.write_paper_cutouts(config,NS(reference=(3,0,0)),None,tmp_path,tmp_path,({},(),None,'m0416'),log=lines.append)
+    assert [path.name for path in paths]==['m0416_fold_cutouts.pdf']
+    assert ('[outputs] paper cutouts fold_cutouts: system:K8 drawn without a critical line (the saved fold record predates '
+            'the critical-line position band)') in lines
