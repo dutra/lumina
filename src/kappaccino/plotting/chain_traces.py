@@ -85,16 +85,39 @@ def _overview(pdf, data, colors, handles):
     plt.close(fig)
 
 
-@plt.rc_context(fname=STYLE, rc=RC)
-def write_chain_traces(posterior, specs, figures, tables, prefix=None, *, log=print):
-    """Write the sampler overview, global traces, and twelve worst other traces."""
+def save_chain_traces(posterior, specs, tables, *, log=print):
+    """Write the table ``chain_convergence`` (split R-hat and ESS of every parameter) and the record ``chain_traces``
+    (what the figure plots); None, after logging, when the posterior has no recorded chains."""
     data = trace_data(posterior, specs)
     if data is None:
         log("[outputs] chain traces skipped: no recorded chain samples")
         return None
-    figures, tables = Path(figures), Path(tables)
-    figures.mkdir(parents=True, exist_ok=True)
+    tables = Path(tables)
     tables.mkdir(parents=True, exist_ok=True)
+    chains, rhat, ess = (data[k] for k in ("chains", "rhat", "ess"))
+    metadata = {"chains": chains.shape[0], "draws_per_chain": chains.shape[1], "warmup_included": False,
+                "coordinates": "Saved reporting coordinates; noncentered member offsets remain standardized",
+                "rhat": "NumPyro split Gelman-Rubin; not rank-normalized",
+                "ess": "NumPyro effective_sample_size; not bulk/tail ESS",
+                "selection": "All global parameters and twelve remaining parameters with largest split R-hat",
+                "plotted_parameters": [specs[i].name for i in data["selected"]]}
+    if "diverging" in data["fields"]:
+        metadata["divergences_per_chain"] = data["fields"]["diverging"].astype(bool).sum(axis=1).tolist()
+    with store.batch(tables):
+        store.write_table(tables, "chain_convergence", pd.DataFrame({"parameter": [s.name for s in specs], "split_rhat": rhat, "ess": ess}))
+        store.write_record(tables, "chain_traces", metadata)
+    return "chain_convergence"
+
+
+@plt.rc_context(fname=STYLE, rc=RC)
+def render_chain_traces(posterior, specs, figures, prefix=None, *, log=print):
+    """Draw the sampler overview, global traces, and twelve worst other traces from the posterior's chains (the
+    diagnostics are recomputed from the posterior exactly as :func:`save_chain_traces` saved them)."""
+    data = trace_data(posterior, specs)
+    if data is None:
+        return None
+    figures = Path(figures)
+    figures.mkdir(parents=True, exist_ok=True)
     path = figures / (f"{prefix}_chain_traces.pdf" if prefix else "chain_traces.pdf")
     chains, rhat, ess = (data[k] for k in ("chains", "rhat", "ess"))
     colors = [plt.get_cmap("tab10")(i % 10) for i in range(len(chains))]
@@ -136,15 +159,12 @@ def write_chain_traces(posterior, specs, figures, tables, prefix=None, *, log=pr
             fig.tight_layout(rect=(0, 0, 1, .96), h_pad=1.2)
             pdf.savefig(fig)
             plt.close(fig)
-    store.write_table(tables, "chain_convergence", pd.DataFrame({"parameter": [s.name for s in specs], "split_rhat": rhat, "ess": ess}))
-    metadata = {"chains": chains.shape[0], "draws_per_chain": chains.shape[1], "warmup_included": False,
-                "coordinates": "Saved reporting coordinates; noncentered member offsets remain standardized",
-                "rhat": "NumPyro split Gelman-Rubin; not rank-normalized",
-                "ess": "NumPyro effective_sample_size; not bulk/tail ESS",
-                "selection": "All global parameters and twelve remaining parameters with largest split R-hat",
-                "plotted_parameters": [specs[i].name for i in data["selected"]]}
-    if "diverging" in data["fields"]:
-        metadata["divergences_per_chain"] = data["fields"]["diverging"].astype(bool).sum(axis=1).tolist()
-    store.write_record(tables, "chain_traces", metadata)
     log(f"[outputs] chain traces: {path}")
     return path
+
+
+def write_chain_traces(posterior, specs, figures, tables, prefix=None, *, log=print):
+    """:func:`save_chain_traces`, then :func:`render_chain_traces`; None when there are no recorded chains."""
+    if save_chain_traces(posterior, specs, tables, log=log) is None:
+        return None
+    return render_chain_traces(posterior, specs, figures, prefix, log=log)

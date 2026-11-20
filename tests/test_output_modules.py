@@ -189,7 +189,7 @@ def test_outputs_stage_builds_draws_only_in_the_step_that_needs_them(monkeypatch
         raise RuntimeError("draws built")
 
     monkeypatch.setattr(draws_module, "reporting_draws", no_draws)
-    for module, name in ((members, "write_member_diagnostic_plots"), (gp, "write_gp_plots"), (chain_traces, "write_chain_traces"),
+    for module, name in ((members, "save_member_diagnostics"), (gp, "save_gp_diagnostics"), (chain_traces, "save_chain_traces"),
                          (potfile, "write_potfile_plots"), (block_corner, "write_posterior_block_corner"),
                          (block_corner, "write_cosmology_corner"), (plots, "plot_corner"), (chain_traces, "trace_data")):
         monkeypatch.setattr(module, name, lambda *a, **k: None)
@@ -349,7 +349,9 @@ def test_outputs_list_command(capsys, synthetic_config, tmp_path):
     assert lines[0].split()[:4] == ["module", "requires", "after", "description"]
     assert lines[5].split()[:3] == ["mass", "images", "fit"]
     assert lines[6] == "    compute: critical_curves, aperture_masses, zeta_masses; render: critical_curves, zeta_masses"
-    assert lines[2].startswith("    steps: tables, chain_traces") and lines[2].endswith("(compute and render in one: not converted yet)")
+    assert lines[2] == ("    compute: tables, chain_traces, audit, scaling_table, covariance, fields, members; render: "
+                        "chain_traces, potfiles, block_corner, cosmology_corner, covariance, fields, members, scaling_plot, "
+                        "globals_corner")
     # With a run: whether each module applies, from its saved configuration.
     run = tmp_path / "run"
     config = replace(synthetic_config, image_catalog=replace(synthetic_config.image_catalog, image_dir=None),

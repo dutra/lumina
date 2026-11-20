@@ -55,7 +55,7 @@ def test_normal_output_calls_covariance_suite(monkeypatch, synthetic_config, tmp
         pass
     def reached(*args, **kwargs):
         raise ReachedCovariance
-    monkeypatch.setattr(covariance, 'write_covariance_plots', reached)
+    monkeypatch.setattr(covariance, 'save_covariance_errors', reached)
     state = SimpleNamespace(parameter_specs=[])
     posterior = SimpleNamespace(samples=np.zeros((1, 1)), physical=np.ones((1, 1)), log_prob=np.zeros(1))
     evaluator = SimpleNamespace(physical=lambda p: p)

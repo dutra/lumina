@@ -190,15 +190,15 @@ of a full pass and of a later render-only pass come from the same code and the s
 
 | module | compute steps | render steps | requires | runs when |
 |---|---|---|---|---|
-| `fit` | not converted yet: `tables` (`posterior_summary`, `member_classification`), `chain_traces`, `audit` (the record), `scaling_table` (`member_scaling_relation`), `potfiles`, `block_corner` (`corner_combined.pdf`), `cosmology_corner`, `covariance` (covariance corner and `covariance_errors_both_planes`), `fields` (GP and GRF plots), `members` (`member_diagnostics` and the member plots), `scaling_plot`, `globals_corner` | | | always |
+| `fit` | `tables` (`posterior_summary`, `member_classification`), `chain_traces` (`chain_convergence`, record `chain_traces`), `audit` (the record), `scaling_table` (`member_scaling_relation`), `covariance` (`covariance_errors_both_planes`), `fields` (`gp_diagnostics`, `conditional_field_maps`), `members` (`member_diagnostics` and its companions) | `chain_traces`, `potfiles`, `block_corner` (`corner_combined.pdf`), `cosmology_corner`, `covariance` (covariance corner and errors), `fields` (GP and GRF plots), `members` (the member plots), `scaling_plot`, `globals_corner` | | always |
 | `images` | `recovery` (the image-recovery tables, record `image_recovery_fingerprint`, `position_coverage`, `fit` in `run_summary`), `true_lens` (with `truth.deflection_true_fits` and observed images: `true_lens_residuals`, record `true_lens_rms`) | `residual_histogram`, `recovery_figure` (both with observed images) | | always |
 | `mass` | `critical_curves` (arrays `critical_curves`), `aperture_masses` (`member_aperture_masses`, record `aperture_mass_histogram`), `zeta_masses` (`member_zeta_masses`, record `zeta_masses`, arrays `subhalo_mass_concentration`) | `critical_curves`, `zeta_masses` (the figure and the table `zeta_mass_function`) | `images` | always; the masses with a truth convergence map |
 | `truth` | `truth_maps` (FITS, profile tables, record `truth_recovery`, arrays `truth_recovery_residuals`, the published ratios), `magnification_recovery`, `cumulative_source_area`, `magnification_scatter` | `magnification_recovery`, `cumulative_source_area`, `truth_residuals`, `mass_profile`, `kappa_mass_residuals` | `images` | with `truth.kappa_true_fits` |
 | `rgb` | not converted yet: per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and, computed once, `fold_data`, then `fold_cutouts`; for the JWST overview also `position_contours` and `small_lambda` (before the mass figure) and `apj_fold_cutouts` and `paper_cutouts` (after the folds) | | `images` | with `image_catalog.image_dir` and observed images |
 
-`fit` and `rgb` are being converted. Until then each still computes and draws in one `run`: a full or compute pass
-runs it whole (a compute pass then draws its figures too, because its dependents need what it computes), and a render
-pass reports it `unavailable` ("not converted to compute/render yet") and gives no product.
+`rgb` is being converted. Until then it still computes and draws in one `run`: a full or compute pass runs it
+whole (a compute pass then draws its figures too, because its dependents need what it computes), and a render pass
+reports it `unavailable` ("not converted to compute/render yet") and gives no product.
 
 The product of `images` is read from the store, so `mass`, `truth` and `rgb` get the same tables in every pass mode:
 
@@ -213,10 +213,40 @@ The product of `images` is read from the store, so `mass`, `truth` and `rgb` get
 
 The tables come back as they were written, with their column order and dtypes, and with a fresh `RangeIndex`.
 
-`mass` and `rgb` also run after `fit` without needing its product, because they read tables it writes:
-`member_diagnostics` (aperture and zeta masses) and `covariance_errors_both_planes` (covariance cutouts). The steps of
-`rgb` are named per variant, for example `fold_cutouts:jwst`. `kappaccino outputs --list` prints the modules with
-these relations and their compute and render steps.
+`mass` and `rgb` also run after `fit` without needing its product (it has none), because they read tables its
+compute writes: `member_diagnostics` (aperture and zeta masses) and `covariance_errors_both_planes` (covariance
+cutouts). The steps of `rgb` are named per variant, for example `fold_cutouts:jwst`. `kappaccino outputs --list`
+prints the modules with these relations and their compute and render steps.
+
+### The `fit` module
+
+The compute of `fit` writes every table and record of the sampled parameters; its render draws every figure from
+those entries and the posterior. Its compute steps and what they save:
+
+- `tables`: `posterior_summary` and `member_classification`;
+- `chain_traces`: `chain_convergence` (split R-hat and ESS of every parameter) and the record `chain_traces`; nothing
+  when the posterior has no recorded chains;
+- `audit`: the record `audit`, when the fit has one;
+- `scaling_table`: `member_scaling_relation`;
+- `covariance`: the table and record `covariance_errors_both_planes`, over the reporting draws: per image and
+  direction, the median singular value, the median width of each component and the 16th, 50th and 84th percentiles
+  of each component and of the total;
+- `fields` (GP runs only): the arrays and record `gp_diagnostics` and, with a shared knee-spectrum GRF, the arrays and
+  record `conditional_field_maps`. The record `gp_diagnostics` says whether the kernel is the knee kernel (`knee`) and
+  whether this compute wrote the field maps (`field_maps`); its arrays hold what the GP figures took from the
+  evaluator: for the knee kernel the separation grid `r` and, with a sampled knee wavelength, the `longitudinal` and
+  `transverse` correlations of the mass field at the median knee wavelength and slope; otherwise the family `slots`
+  and `mask`;
+- `members` (runs with population members): the tables `member_diagnostics`, `diagnostic_image_index` and
+  `image_field_diagnostics`, the arrays `member_diagnostic_draws` (the fields of each reporting draw and the deviation
+  draws `deviations` and `prior_deviations`) and the record `member_diagnostic_provenance`.
+
+The render steps `chain_traces`, `potfiles`, `block_corner`, `cosmology_corner` and `globals_corner` and the covariance
+corner read only the posterior (`chain_traces` recomputes its diagnostics from the posterior chains, as the compute
+did). The covariance errors are drawn from their table, the GP figures from `gp_diagnostics` and the posterior, the
+field figures from `conditional_field_maps` (only when `gp_diagnostics` says this compute wrote them), the member
+figures from the member entries above and the scaling relation from `member_scaling_relation` and the posterior. A
+render pass of `fit` on Hera takes 46 s, 21 s of them for the global corner; the full pass that computed it took 1 min 41 s.
 
 ### Pass modes
 
@@ -402,7 +432,7 @@ run summary is written before it.
 
 ### Converting a module to compute and render
 
-This is how `mass`, `truth` and `images` were converted, for the modules still on `run` (`fit`, `rgb`).
+This is how `mass`, `truth`, `images` and `fit` were converted, for the module still on `run` (`rgb`).
 
 1. **List every product.** For each step of `run`, write down what it writes (tables, records, arrays, FITS, figures)
    and what each figure function reads. Most writers already save part of what their figure needs (a table, a

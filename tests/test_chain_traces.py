@@ -75,10 +75,12 @@ def test_normal_output_hook(tmp_path, monkeypatch):
     paths = SimpleNamespace(tables=tmp_path/'tables', figures=tmp_path/'figures', root=tmp_path)
     monkeypatch.setattr(module, 'posterior_summary_table', lambda *a: __import__('pandas').DataFrame())
     monkeypatch.setattr(module, 'classification_table', lambda *a: __import__('pandas').DataFrame())
-    class StopAfterTrace(Exception):
-        pass
-    monkeypatch.setattr(plots, 'member_scaling_table', lambda *a: (_ for _ in ()).throw(StopAfterTrace()))
-    with pytest.raises(StopAfterTrace):
-        outputs.write_outputs(config, state, SimpleNamespace(physical=lambda x: x), p, {}, paths, log=lambda _: None,
-                              only=('fit',), skip=(), fail_fast=True)
+    monkeypatch.setattr(plots, 'member_scaling_table', lambda *a: __import__('pandas').DataFrame())
+    from kappaccino.reporting import results_tex
+    monkeypatch.setattr(results_tex, 'write_run_results', lambda *a, **k: None)
+    summary = outputs.write_outputs(config, state, SimpleNamespace(physical=lambda x: x), p, {}, paths, log=lambda _: None,
+                                    only=('fit',), skip=(), fail_fast=False)
+    record = summary['modules']['fit']
+    assert record['steps']['chain_traces']['wrote'] and record['render_steps']['chain_traces']['status'] == 'done'
+    assert store.has_table(paths.tables, 'chain_convergence')
     assert (paths.figures/'test_chain_traces.pdf').is_file()
