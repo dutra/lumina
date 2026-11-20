@@ -29,6 +29,12 @@ from ..io import store
 GRF_COLOR = CRITICAL_COLOR
 NEWTON_ITERATIONS = 15   # damped Newton steps per caustic root; the seeds are tracked critical points
 CRITICAL_TRACK_STEPS = 16  # Newton steps along the normal that move the reference seeds onto each draw's critical curve
+PARTIAL_BAND_REACH_ARCSEC = .5  # farthest a draw's critical crossing may sit from the median curve of a partial system
+PARTIAL_CRITICAL_BAND = ('Partial systems (no fold anchor): centre line the zero contour of the per-pixel median det A, '
+    'resampled at one grid pixel; band the 16th-84th percentiles over draws of the signed distance along the median '
+    "curve's normal to the draw's own det A = 0 crossing nearest the point, within 0.5 arcsec and, on each side, half "
+    "the distance along that normal to the next crossing of the median curve (another branch, or the far side of a "
+    "loop); points with fewer than 80% valid draws show the centre line only")
 
 
 def shared_draws(draws):
@@ -409,7 +415,7 @@ def _contours(ax, points, color, transform=None, bounds=None, linewidths=None, o
 
 
 def save_fold_data(data, tables):
-    metadata = {k: v for k, v in data.items() if k not in {'pairs', 'systems'}}
+    metadata = {k: v for k, v in data.items() if k not in {'pairs', 'systems', 'partial_systems'}}
     metadata['pairs'] = []; arrays = {}
     for i, pair in enumerate(data['pairs']):
         meta = {}
@@ -435,6 +441,12 @@ def save_fold_data(data, tables):
             meta['source_draws_valid_by_knot'] = np.isfinite(system.get('source_aligned_grf', system.get('source_cartesian_grf', system['relative']))).all(2).sum(0).tolist()
             meta['image_draws_valid'] = np.isfinite(system['positions']).all(2).sum(0).tolist()
             metadata['systems'].append(meta)
+    if 'partial_systems' in data:
+        metadata['partial_systems'] = []
+        for i, system in enumerate(data['partial_systems']):
+            arrays.update({f'partial_{i}_{k}': v for k, v in system.items() if isinstance(v, np.ndarray)})
+            metadata['partial_systems'].append({k: v for k, v in system.items() if not isinstance(v, np.ndarray)}
+                                               | dict(image_draws_valid=np.isfinite(system['positions']).all(2).sum(0).tolist()))
     with store.batch(tables):                  # arrays and record in one commit
         store.write_arrays(tables, 'fold_pairs_source_caustics', arrays)
         store.write_record(tables, 'fold_pairs_source_caustics', metadata)
@@ -444,7 +456,7 @@ def load_fold_data(tables):
     """Read the numerical fold products, including optional system-level panels."""
     data = store.read_record(tables, 'fold_pairs_source_caustics')
     arrays = store.read_arrays(tables, 'fold_pairs_source_caustics')
-    for kind, prefix in (('pairs', 'pair'), ('systems', 'system')):
+    for kind, prefix in (('pairs', 'pair'), ('systems', 'system'), ('partial_systems', 'partial')):
         for i, record in enumerate(data.get(kind, [])):
             start = f'{prefix}_{i}_'
             record.update({key[len(start):]: arrays[key].copy() for key in arrays.keys() if key.startswith(start)})
@@ -506,14 +518,13 @@ def add_system_knots(config, state, draws, data, image_positions, *, log=print):
     from ..io.image_catalog import load_image_catalog
     if not data['pairs']:
         data['systems'] = []
-        return data
+        return add_partial_systems(config, state, data, image_positions, log=log)
     evaluator, samples = shared_draws(draws)
     catalog = load_image_catalog(config.model.image_constraints.catalog_path).set_index('image_label')
     labels = list(map(str, state.images.image_labels))
     if not set(labels).issubset(catalog.index):
         raise ValueError('Saved fold labels do not match the system/knot catalog')
     family_ids = list(map(str, state.images.family_ids))
-    index = {label: i for i, label in enumerate(labels)}
     groups = {}
     for pair in data['pairs']:
         rows = catalog.loc[pair['labels']]
@@ -527,20 +538,9 @@ def add_system_knots(config, state, draws, data, image_positions, *, log=print):
     systems = []
     for (system, image_ids), pairs in groups.items():
         anchor = min(pairs, key=lambda pair: (pair['separation'], pair['family_id']))
-        rows = catalog.loc[labels]
-        system_rows = rows[rows.system_id.astype(str) == system]
-        fids = [fid for fid in family_ids if fid in set(system_rows.family_id.astype(str))]
-        knot_ids = [str(system_rows[system_rows.family_id.astype(str) == fid].knot_id.iloc[0]) for fid in fids]
         z = float(anchor['z_source'])
-        if not np.allclose(system_rows.catalog_z.to_numpy(float), z):
-            raise ValueError('Knots in a source system must share its redshift')
-        target = system_rows[system_rows.image_id.astype(str).isin(image_ids)]
-        image_labels = target.index.astype(str).tolist()
-        ids = [index[label] for label in image_labels]
-        observed = np.column_stack((np.asarray(state.images.x_obs)[ids], np.asarray(state.images.y_obs)[ids]))
-        # Include every observed knot in the selected two images, rather than a crop per knot.
-        mid = (observed.min(0) + observed.max(0)) / 2
-        fov = max(anchor['fov'], 1.6 * float(np.ptp(observed, axis=0).max()) + 1.)
+        frame = _system_frame(catalog, state, image_positions, system, image_ids, z, anchor['fov'])
+        fids, fov = frame['family_ids'], frame['fov']
         normal, origin = np.asarray(anchor['normal']), np.asarray(anchor['origin'])
         tangent = np.array([normal[1], -normal[0]])
         if z not in packed_by_z:
@@ -554,21 +554,148 @@ def add_system_knots(config, state, draws, data, image_positions, *, log=print):
             codes = np.where((codes == 0) & (np.linalg.norm(rel, axis=1) > 10*fov), 5, codes)
             relative[:, k] = np.where((codes == 0)[:, None], rel, np.nan)
             failures.extend(dict(family_id=fid, draw=int(i), reason=FAILURE_REASONS[int(codes[i])]) for i in np.flatnonzero(codes))
-        systems.append(dict(system_id=system, image_ids=list(image_ids), family_ids=fids, knot_ids=knot_ids,
-            labels=image_labels, image_family_index=np.array([fids.index(str(catalog.loc[label, 'family_id'])) for label in image_labels]),
-            observed=observed, positions=image_positions[:, ids], relative=relative, center=mid, fov=fov, z_source=z,
-            anchor_family_id=anchor['family_id'], anchor_labels=anchor['labels'], critical=anchor['critical'],
+        frame.pop('ids')
+        systems.append(dict(frame, relative=relative, anchor_family_id=anchor['family_id'], anchor_labels=anchor['labels'], critical=anchor['critical'],
             normal=normal, origin=origin, seeds=anchor['seeds'], failures=failures))
-        log(f'[outputs] fold system {system}, images {image_ids}: {len(fids)} knots, {len(image_labels)} matched catalog positions')
+        log(f'[outputs] fold system {system}, images {image_ids}: {len(fids)} knots, {len(frame["labels"])} matched catalog positions')
     data['systems'] = systems
     data['system_source_frame'] = 'Common caustic anchor/tangent per system and image pair; vertical coordinate is each knot\'s signed nearest distance to its own caustic. Not Cartesian source coordinates.'
+    return add_partial_systems(config, state, data, image_positions, log=log)
+
+
+def _system_frame(catalog, state, image_positions, system, image_ids, z, pair_fov):
+    """Catalog knots, observed and recovered positions and the framing of a system's two images ``image_ids``."""
+    labels = list(map(str, state.images.image_labels))
+    rows = catalog.loc[labels]
+    system_rows = rows[rows.system_id.astype(str) == system]
+    fids = [fid for fid in map(str, state.images.family_ids) if fid in set(system_rows.family_id.astype(str))]
+    knot_ids = [str(system_rows[system_rows.family_id.astype(str) == fid].knot_id.iloc[0]) for fid in fids]
+    if not np.allclose(system_rows.catalog_z.to_numpy(float), z):
+        raise ValueError('Knots in a source system must share its redshift')
+    image_labels = system_rows[system_rows.image_id.astype(str).isin(image_ids)].index.astype(str).tolist()
+    ids = [labels.index(label) for label in image_labels]
+    observed = np.column_stack((np.asarray(state.images.x_obs)[ids], np.asarray(state.images.y_obs)[ids]))
+    # Include every observed knot in the selected two images, rather than a crop per knot.
+    fov = max(pair_fov, 1.6 * float(np.ptp(observed, axis=0).max()) + 1.)
+    return dict(system_id=system, image_ids=list(image_ids), family_ids=fids, knot_ids=knot_ids, labels=image_labels,
+                image_family_index=np.array([fids.index(str(catalog.loc[label, 'family_id'])) for label in image_labels]),
+                observed=observed, positions=image_positions[:, ids], center=(observed.min(0) + observed.max(0)) / 2,
+                fov=fov, z_source=z, ids=ids)
+
+
+def add_partial_systems(config, state, data, image_positions, *, log=print):
+    """``data['partial_systems']``: each system none of whose fold pairs was kept, framed on the two images of its
+    closest skipped pair as a kept pair would frame it.  It holds only what needs no fold anchor (catalog knots, observed
+    and recovered positions, later :func:`median_critical_band`), plus ``partial_reason``, the skip reason of that pair."""
+    skipped = [record for record in data.get('skipped', []) if 'labels' in record]
+    data['partial_systems'] = []
+    if not skipped:
+        return data
+    from ..io.image_catalog import load_image_catalog
+    catalog = load_image_catalog(config.model.image_constraints.catalog_path).set_index('image_label')
+    if not set(map(str, state.images.image_labels)).issubset(catalog.index):
+        raise ValueError('Saved fold labels do not match the system/knot catalog')
+    kept = {system['system_id'] for system in data['systems']}
+    xy = dict(zip(map(str, state.images.image_labels), np.column_stack([state.images.x_obs, state.images.y_obs])))
+    families = {str(f.family_id): float(f.z_source) for f in getattr(state, 'family_data', ())}
+    closest = {}
+    for record in skipped:
+        rows = catalog.loc[record['labels']]
+        system, separation = str(rows.system_id.iloc[0]), float(np.linalg.norm(xy[record['labels'][1]]-xy[record['labels'][0]]))
+        if system not in kept and (system not in closest or separation < closest[system][0]):
+            closest[system] = (separation, record, rows)
+    for system, (separation, record, rows) in closest.items():
+        z = families.get(str(rows.family_id.iloc[0]), float(rows.catalog_z.iloc[0]))
+        frame = _system_frame(catalog, state, image_positions, system, tuple(sorted(rows.image_id.astype(str))), z,
+                              max(4., 1.8*separation))
+        frame.pop('ids')
+        data['partial_systems'].append(dict(frame, skipped_labels=list(record['labels']), partial_reason=record['reason']))
+        log(f'[outputs] fold system {system}, images {frame["image_ids"]}: no kept fold pair, saved without its anchor '
+            f'({record["reason"]})')
     return data
+
+
+def median_critical_band(x, y, maps, *, reach=PARTIAL_BAND_REACH_ARCSEC):
+    """Critical line and its position band from per-draw det A ``maps`` (draw, y, x) on the axes ``x``, ``y``.
+
+    The line is the zero contour of the per-pixel median, resampled at one grid pixel (``critical_points``, with the
+    contour index ``critical_segments``).  ``critical_limits`` holds each point's largest accepted offset below and
+    above the line.  At each point the unit normal is the median's gradient; each draw's offset
+    is the signed distance along it to the draw's own det A = 0 crossing nearest the point, kept within ``reach`` and,
+    on each side, within half the distance along the same normal to the next zero of the median (another branch, or the
+    far side of a loop), else missing.  The band is the 16th and 84th percentiles of the offsets, NaN where fewer than
+    80% of the draws have one."""
+    from scipy.interpolate import RegularGridInterpolator
+    maps = np.asarray(maps, float)
+    median = np.median(maps, axis=0)
+    step = float(min(np.diff(x).mean(), np.diff(y).mean()))
+    points, segments = [], []
+    for k, line in enumerate(contourpy.contour_generator(x=x, y=y, z=median).lines(0.)):
+        s = np.concatenate(([0.], np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))))
+        if s[-1] < step:
+            continue
+        t = np.linspace(0., s[-1], int(np.ceil(s[-1]/step))+1)
+        points.append(np.column_stack([np.interp(t, s, line[:, i]) for i in range(2)]))
+        segments.append(np.full(len(t), k))
+    n = len(maps)
+    if not points:
+        return dict(critical_points=np.empty((0, 2)), critical_normals=np.empty((0, 2)), critical_segments=np.empty(0, int),
+                    critical_band=np.empty((0, 2)), critical_limits=np.empty((0, 2)), critical_valid_draws=np.empty(0, int),
+                    critical_draws=n)
+    points, segments = np.vstack(points), np.concatenate(segments)
+    gy, gx = np.gradient(median, y, x)
+    inside = np.clip(points[:, ::-1], [y[0], x[0]], [y[-1], x[-1]])  # contour vertices on the grid edge, to round-off
+    gradient = np.column_stack([RegularGridInterpolator((y, x), g)(inside) for g in (gx, gy)])
+    norm = np.linalg.norm(gradient, axis=1)
+    normals = gradient/np.where(norm > 0, norm, np.nan)[:, None]
+    offsets = np.arange(-reach, reach+step/4, step/2)
+    probe = (points[:, None]+offsets[None, :, None]*normals[:, None])[..., ::-1].reshape(-1, 2)
+    rows = np.arange(len(points))
+
+    def zeros(field):  # (point, interval) offsets of the sign changes of ``field`` along each normal, else NaN
+        v = RegularGridInterpolator((y, x), field, bounds_error=False, fill_value=np.nan)(probe).reshape(len(points), -1)
+        a, b = v[:, :-1], v[:, 1:]
+        with np.errstate(invalid='ignore', divide='ignore'):
+            root = offsets[:-1]+(offsets[1]-offsets[0])*a/(a-b)
+            return np.where(np.isfinite(a) & np.isfinite(b) & (a*b <= 0) & np.isfinite(root), root, np.nan)
+
+    def nearest(root):
+        return np.argmin(np.where(np.isfinite(root), np.abs(root), np.inf), axis=1)
+    # The median's other zeros on each side of the point's own one bound how far a draw's crossing may lie on that side.
+    others = zeros(median)
+    others[rows, nearest(others)] = np.nan
+    with np.errstate(invalid='ignore'):
+        above = np.minimum(reach, .5*np.nanmin(np.where(others > 0, others, np.inf), axis=1))
+        below = np.minimum(reach, .5*np.nanmin(np.where(others < 0, -others, np.inf), axis=1))
+    shifts = np.full((n, len(points)), np.nan)
+    for d in range(n):
+        root = zeros(maps[d])
+        root = np.where(((root >= 0) & (root <= above[:, None])) | ((root < 0) & (-root <= below[:, None])), root, np.nan)
+        shifts[d] = root[rows, nearest(root)]
+    valid = np.isfinite(shifts).sum(0)
+    band = np.full((len(points), 2), np.nan)
+    keep = valid >= np.ceil(.8*n)
+    if keep.any():
+        band[keep] = np.nanpercentile(shifts[:, keep], [16, 84], axis=0).T
+    return dict(critical_points=points, critical_normals=normals, critical_segments=segments, critical_band=band,
+                critical_limits=np.column_stack((below, above)), critical_valid_draws=valid, critical_draws=n)
 
 
 def add_median_critical_curves(state, draws, data, *, log=print, critical_only=False):
     """Zero contours of the per-pixel median det A over the reporting draws on each system's sky grid, parametric and
     parametric + GRF; then the per-draw GRF band, the Cartesian and caustic-aligned source frames.  The GRF is the
-    shared field (the all-block twin for a system-block run)."""
+    shared field (the all-block twin for a system-block run).  A partial system (:func:`add_partial_systems`) gets
+    only :func:`median_critical_band` on its grid, with the GRF when the draws have one."""
+    quantity = 'detA' if draws.has_field else 'detA_parametric'
+    for system in data.get('partial_systems', []):
+        center, size = np.asarray(system['center']), float(system['fov'])
+        x, y = (np.linspace(c-.55*size, c+.55*size, 256) for c in center)
+        xx, yy = np.meshgrid(x, y)
+        maps = draws.grid_maps(f"fold system {system['system_id']} {'/'.join(system['image_ids'])}", xx, yy,
+                               float(system['z_source']), quantities=(quantity,), from_reference=True, log=log)[quantity]
+        system.update(median_critical_band(x, y, maps))
+    if data.get('partial_systems'):
+        data['partial_critical_band'] = PARTIAL_CRITICAL_BAND
     if not draws.has_field:
         return data
     for system in data.get('systems', []):

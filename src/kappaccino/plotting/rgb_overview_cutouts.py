@@ -39,7 +39,7 @@ def overview_cutout_data(tables, prefix, *, image_labels=(), system_ids=(), draw
     folds=load_fold_data(tables)
     systems=[]
     for identity in system_ids:
-        matches=[s for s in folds['systems'] if s['system_id']==identity]
+        matches=[s for s in folds['systems']+folds.get('partial_systems',[]) if s['system_id']==identity]
         if len(matches)!=1:
             log(f'[outputs] RGB inset panels unavailable: expected one fold system {identity}, found {len(matches)}')
             return None
@@ -152,11 +152,24 @@ def render_overview_cutouts(fig, data, imaging, frame, *, image_rects=None, syst
     for i,s in enumerate(data['systems']):
         rect = system_rects[i] if system_rects is not None else [.80,.61-i*.18,.18,.18]
         ax,pixels=panel(rect,s['center'],s['fov'],s.get('panel_label',f"System {s['system_id']}"),s['z_source'])
-        curves=s.get('critical_grf_local_draws',s.get('critical_grf_draws',s['critical']))
-        for low,median,high in critical_curve_quantiles(curves,s['seeds'],s['origin'],s['normal']):
-            vertices=np.vstack((low,high[::-1]))
-            ax.add_patch(Polygon(np.column_stack(pixels(*vertices.T)),facecolor=CRITICAL_COLOR,alpha=.18,edgecolor='none'))
-            ax.plot(*pixels(*median.T),color=CRITICAL_COLOR,lw=.65)
+        if 'partial_reason' in s and 'critical_points' not in s:
+            pass  # a fold record saved before the position band: no critical line (write_paper_cutouts logs it)
+        elif 'partial_reason' in s:  # no fold anchor: median det A = 0 line, band along its normal (median_critical_band)
+            points,normals,band=(np.asarray(s[k]) for k in ('critical_points','critical_normals','critical_band'))
+            for segment in np.unique(s['critical_segments']):
+                index=np.flatnonzero(np.asarray(s['critical_segments'])==segment)
+                ax.plot(*pixels(*points[index].T),color=CRITICAL_COLOR,lw=.65)
+                shown=index[np.isfinite(band[index]).all(1)]
+                for run in np.split(shown,np.flatnonzero(np.diff(shown)>1)+1):
+                    if len(run)>1:
+                        vertices=np.vstack((points[run]+band[run,:1]*normals[run],(points[run]+band[run,1:]*normals[run])[::-1]))
+                        ax.add_patch(Polygon(np.column_stack(pixels(*vertices.T)),facecolor=CRITICAL_COLOR,alpha=.18,edgecolor='none'))
+        else:
+            curves=s.get('critical_grf_local_draws',s.get('critical_grf_draws',s['critical']))
+            for low,median,high in critical_curve_quantiles(curves,s['seeds'],s['origin'],s['normal']):
+                vertices=np.vstack((low,high[::-1]))
+                ax.add_patch(Polygon(np.column_stack(pixels(*vertices.T)),facecolor=CRITICAL_COLOR,alpha=.18,edgecolor='none'))
+                ax.plot(*pixels(*median.T),color=CRITICAL_COLOR,lw=.65)
         label_points=[]
         for j,label in enumerate(s['labels']):
             color=palette[s['image_family_index'][j]%len(palette)]

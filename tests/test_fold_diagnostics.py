@@ -185,9 +185,15 @@ systems:
               observed=np.array([[0.,-.5],[0.,.5]]), positions=np.zeros((2,2,2)), relative=np.zeros((2,2)),
               normal=np.array([0.,1.]), origin=np.zeros(2), seeds=curve, critical=np.tile(curve,(2,1,1)), failures=[],
               reference_tangent=np.array([1.,0.]))
-    data=dict(pairs=[pair], draw_indices=[1,3])
+    data=dict(pairs=[pair], draw_indices=[1,3], skipped=[dict(reason='No reporting draws'),
+              dict(labels=['S2.a','S2.b'],reason='changes branch'),dict(labels=['S1B.a','S1B.b'],reason='not between')])
     result=fd.add_system_knots(config,state,FakeDraws(Evaluator(),[[1.],[3.]]),data,roots,log=lambda _:None)
     assert len(result['systems'])==1
+    # S1 kept a pair, so only S2 (all of its pairs skipped) gets a reduced entry, with no anchor products.
+    [part]=result['partial_systems']
+    assert part['system_id']=='S2' and part['labels']==['S2.a','S2.b'] and part['partial_reason']=='changes branch'
+    np.testing.assert_allclose(part['center'],[1.,0.]); assert part['fov']==4.
+    assert not {'origin','normal','seeds','critical','relative'} & set(part)
     system=result['systems'][0]
     assert system['system_id']=='S1' and system['knot_ids']==['A','B']
     assert system['labels']==labels[:4]
@@ -199,6 +205,80 @@ systems:
     np.testing.assert_allclose(loaded['systems'][0]['relative'],system['relative'])
     assert loaded['systems'][0]['source_draws_valid_by_knot']==[2,2]
     assert loaded['systems'][0]['image_draws_valid']==[2,2,2,0]
+    assert loaded['partial_systems'][0]['labels']==['S2.a','S2.b'] and loaded['partial_systems'][0]['image_draws_valid']==[2,2]
+    np.testing.assert_allclose(loaded['partial_systems'][0]['positions'],part['positions'])
+
+
+def test_partial_systems_get_median_critical_line_and_band_only():
+    part=dict(system_id='S2',image_ids=['a','b'],center=np.array([1.,0.]),fov=4.,z_source=2.)
+    data=dict(systems=[],partial_systems=[part])
+    draws=FakeDraws(None,[[0.],[.1],[.2]],maps=lambda s,x,y,z:{'detA_parametric':np.stack([x-1-k for k in s[:,0]])})
+    fd.add_median_critical_curves(None,draws,data,log=lambda _:None)
+    assert data['partial_critical_band']==fd.PARTIAL_CRITICAL_BAND and part['critical_draws']==3
+    np.testing.assert_allclose(part['critical_points'][:,0],1.1,atol=1e-9)              # median det A = 0 at x = 1.1
+    np.testing.assert_allclose(part['critical_band'],np.tile(np.percentile([-.1,0.,.1],[16,84]),(len(part['critical_band']),1)),atol=1e-9)
+    assert not {'critical_lower','critical_upper','critical_median'} & set(part)
+
+
+@pytest.mark.parametrize('axis',[0,1])
+def test_median_critical_band_matches_known_shifts_on_a_non_square_sky_grid(axis):
+    """det A = (x or y) - c_d per draw: a straight line at the median shift, normal along that axis, band edges at the
+    16th/84th percentiles of c_d about it.  The grid is non-square and off-centre so swapped axes cannot pass."""
+    x,y=np.linspace(-.3,2.7,151),np.linspace(-1.,.8,61)
+    shifts=np.array([.4,.45,.5,.52,.55,.6,.62,.7,.75,.48])
+    centre=(1.2,-.1)[axis]; c=centre+shifts-np.median(shifts)
+    xx,yy=np.meshgrid(x,y)
+    maps=np.stack([(xx,yy)[axis]-k for k in c]+[(xx,yy)[axis]-centre-.9])    # one draw beyond the 0.5" reach
+    result=fd.median_critical_band(x,y,maps)
+    points,normals,band=result['critical_points'],result['critical_normals'],result['critical_band']
+    np.testing.assert_allclose(points[:,axis],np.median(np.append(c,centre+.9)),atol=1e-9)
+    np.testing.assert_allclose(normals,np.tile(np.eye(2)[axis],(len(points),1)),atol=1e-9)
+    assert (result['critical_valid_draws']==len(c)).all() and result['critical_draws']==len(c)+1
+    expected=np.percentile(c-np.median(np.append(c,centre+.9)),[16,84])
+    np.testing.assert_allclose(band,np.tile(expected,(len(points),1)),atol=1e-9)
+    span=(x,y)[1-axis]; assert points[:,1-axis].min()==pytest.approx(span[0]) and points[:,1-axis].max()==pytest.approx(span[-1])
+
+
+def test_median_critical_band_is_limited_near_another_branch():
+    x=y=np.linspace(-2,2,201);xx,yy=np.meshgrid(x,y)
+    maps=np.stack([(xx-k)*(xx+.3) for k in (-.1,0.,.1)])        # two parallel branches 0.3" apart: reach 0.15"
+    result=fd.median_critical_band(x,y,maps)
+    near=np.abs(result['critical_points'][:,0])<1e-6
+    np.testing.assert_allclose(result['critical_band'][near],np.tile(np.percentile([-.1,0.,.1],[16,84]),(near.sum(),1)),atol=1e-6)
+    np.testing.assert_allclose(result['critical_limits'][near],np.tile([.15,.5],(near.sum(),1)),atol=1e-2)  # other branch below
+    maps=np.stack([(xx-k)*(xx+.3) for k in (-.2,0.,.2,.2)])     # -0.2 is past half the distance to the branch below
+    result=fd.median_critical_band(x,y,maps)
+    near=np.abs(result['critical_points'][:,0])<1e-6
+    assert (result['critical_valid_draws'][near]==3).all() and np.isnan(result['critical_band'][near]).all()   # 3 < 80% of 4
+
+
+@pytest.mark.parametrize('radius',[.08,.2,.8])
+def test_median_critical_band_on_a_closed_loop(radius):
+    """det A = r - R_d: a circle per draw.  A loop smaller than the reach bounds inward offsets by its radius (half the
+    distance to the far side), so a draw whose circle is displaced past the centre is missing on the far side; a loop
+    larger than the reach gives the straight-line answer."""
+    x,y=np.linspace(-1.2,1.35,321),np.linspace(-1.05,1.1,271);xx,yy=np.meshgrid(x,y)
+    c=np.array([.07,.03]);r=np.hypot(xx-c[0],yy-c[1])
+    radii=radius+np.array([-.06,-.03,-.01,0.,.02,.04,.07,.09,.1,-.05])*min(1.,radius/.2)
+    maps=[r-k for k in radii]
+    displaced=radius<.5
+    if displaced:                                                # a draw's circle moved 1.5 R along +x
+        maps.append(np.hypot(xx-c[0]-1.5*radius,yy-c[1])-radius)
+    result=fd.median_critical_band(x,y,np.stack(maps))
+    points,band,limits,valid=(result[k] for k in ('critical_points','critical_band','critical_limits','critical_valid_draws'))
+    median=np.median(np.append(radii,-np.inf) if displaced else radii)   # far side: the displaced draw has the largest det A
+    angle=np.arctan2(*(points-c).T[::-1])
+    # The displaced draw changes the per-pixel median where its circle lies (cos > 0); check the far side only.
+    rows=np.cos(angle)<-.5 if displaced else np.ones(len(points),bool)
+    assert rows.sum()>20
+    np.testing.assert_allclose(np.hypot(*(points[rows]-c).T),median,atol=2e-3)
+    np.testing.assert_allclose(result['critical_normals'][rows],(points[rows]-c)/median,atol=2e-2)   # outward normal
+    np.testing.assert_allclose(limits[rows,1],.5,atol=1e-9)                       # outward: nothing but the reach
+    # Inward: half the chord to the far side of the median curve (whose radius there is within the spread of R_d).
+    np.testing.assert_allclose(limits[rows,0],min(.5,median),atol=.015 if displaced else 1e-9)
+    # The displaced draw's nearest crossing is 1.5 R inward there: within the 0.5" reach, but past the far side.
+    assert (valid[rows]==len(radii)).all()
+    np.testing.assert_allclose(band[rows],np.tile(np.percentile(radii-median,[16,84]),(rows.sum(),1)),atol=3e-3)
 
 
 def test_smoothed_contours_preserve_probability_mass_and_resolve_thin_cloud():
@@ -438,3 +518,17 @@ def test_critical_curve_quantiles_use_same_draws_and_do_not_bridge_gaps():
         np.testing.assert_allclose(offsets,np.broadcast_to(expected[:,None],offsets.shape),atol=1e-14)
         assert np.all(offsets[0]<=offsets[1]) and np.all(offsets[1]<=offsets[2])
     assert fd.critical_curve_quantiles(np.empty((0,7,2)),seeds,origin,normal)==[]
+
+
+def test_median_critical_band_tolerates_contour_vertices_past_the_grid_edge():
+    """contourpy puts edge vertices a round-off outside the axes; M0416 K6 raised there in the gradient lookup."""
+    import contourpy
+    rng=np.random.default_rng(0);overshoot=0
+    for _ in range(40):
+        x=np.linspace(-1.3+rng.random(),2.1,97)*rng.uniform(.3,3);y=np.linspace(-.7,1.9+rng.random(),83)*rng.uniform(.3,3)
+        xx,yy=np.meshgrid(x-x.mean(),y-y.mean());a=rng.normal(size=3)
+        maps=np.stack([a[0]*xx+a[1]*yy+a[2]*xx*yy+.05*k for k in range(5)])
+        points=np.vstack(contourpy.contour_generator(x=x,y=y,z=np.median(maps,0)).lines(0.) or [np.zeros((0,2))])
+        overshoot+=int((points[:,0]<x[0]).any() or (points[:,0]>x[-1]).any() or (points[:,1]<y[0]).any() or (points[:,1]>y[-1]).any())
+        assert np.isfinite(fd.median_critical_band(x,y,maps)['critical_normals']).all()
+    assert overshoot

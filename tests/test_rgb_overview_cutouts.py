@@ -39,6 +39,62 @@ def test_panel_order_and_only_two_sigma(monkeypatch):
     plt.close(fig)
 
 
+def test_partial_system_draws_median_critical_field_without_anchor(monkeypatch):
+    import pytest
+    monkeypatch.setattr(rc,'rgb_reference_band',lambda b:b[0])
+    monkeypatch.setattr(rc,'arcsec_to_skycoord',lambda *a:None)
+    monkeypatch.setattr(rc,'arcsec_to_radec',lambda x,y,*a:(x,y))
+    monkeypatch.setattr(rc,'cutout_window',lambda *a:NS(x0=0,y0=0))
+    monkeypatch.setattr(rc,'rgb_cutout',lambda *a:np.zeros((100,100,3)))
+    monkeypatch.setattr(rc,'critical_curve_quantiles',lambda *a:pytest.fail('a partial system has no tracked curves'))
+    axis=np.linspace(-1,1,40);x,y=np.meshgrid(axis,axis)
+    grid=dict(x=x,y=y,density=np.exp(-x*x-y*y),levels=[.3,.7])
+    monkeypatch.setattr(rc,'_credible_density_grid',lambda *a:grid)
+    t=np.linspace(-1.,1.,11)
+    points=np.vstack([np.column_stack([t,.5*t]),np.column_stack([t,1+0*t])])     # two segments, slanted and flat
+    band=np.tile([-.1,.2],(22,1));band[16:]=np.nan                              # second segment: band only on 5 points
+    system=dict(system_id='K6',center=[0,0],fov=3,z_source=2,partial_reason='changes branch',labels=['a','b'],
+                image_family_index=[0,0],positions=np.zeros((20,2,2)),observed=[[-.5,0],[.5,0]],
+                critical_points=points,critical_normals=np.tile([0.,1.],(22,1)),critical_segments=np.repeat([0,3],11),
+                critical_band=band)
+    ref=NS(pixel_scale_arcsec=.03,wcs=NS(world_to_pixel_values=lambda x,y:(x*40+50,y*20+50)))   # x and y scaled differently
+    fig=plt.figure()
+    info=rc.render_overview_cutouts(fig,dict(images=[],systems=[system]),({'f':ref},('f',),None,'m0416'),(3,0,0))
+    assert info['right']==['K6'] and len(fig.axes)==1
+    ax=fig.axes[0]
+    assert ax.texts[0].get_text().split('\n')[0]=='System K6'
+    lines=[line for line in ax.lines if line.get_marker() in ('None','',None) and len(line.get_xdata())==11]
+    assert len(lines)==2 and all(line.get_linewidth()==.65 for line in lines)
+    np.testing.assert_allclose(lines[0].get_ydata(),.5*t*20+50)                 # sky y maps to pixel y, x to x
+    np.testing.assert_allclose(lines[0].get_xdata(),t*40+50)
+    patches=ax.patches
+    assert len(patches)==2 and all(patch.get_alpha()==.18 for patch in patches)
+    vertices=patches[0].get_xy()
+    assert vertices[:,1].min()==pytest.approx((-.5-.1)*20+50) and vertices[:,1].max()==pytest.approx((.5+.2)*20+50)
+    assert len(patches[1].get_xy()) in (10,11)                                   # 5 points x 2 edges (+ closing vertex)
+    assert [list(c.levels) for c in ax.collections if hasattr(c,'levels')]==[[.3],[.3]]   # position contours only, no det A field
+    plt.close(fig)
+
+
+def test_partial_system_saved_before_the_position_band_draws_without_critical_line(monkeypatch):
+    monkeypatch.setattr(rc,'rgb_reference_band',lambda b:b[0])
+    monkeypatch.setattr(rc,'arcsec_to_skycoord',lambda *a:None)
+    monkeypatch.setattr(rc,'arcsec_to_radec',lambda x,y,*a:(x,y))
+    monkeypatch.setattr(rc,'cutout_window',lambda *a:NS(x0=0,y0=0))
+    monkeypatch.setattr(rc,'rgb_cutout',lambda *a:np.zeros((100,100,3)))
+    monkeypatch.setattr(rc,'_credible_density_grid',lambda *a:None)
+    old=np.zeros((8,8))      # the intermediate record: pixel-wise det A percentiles, no critical_points
+    system=dict(system_id='K6',center=[0,0],fov=3,z_source=2,partial_reason='changes branch',labels=['a'],
+                image_family_index=[0],positions=np.zeros((20,1,2)),observed=[[0,0]],
+                critical_x=np.arange(8.),critical_y=np.arange(8.),critical_median=old,critical_lower=old,critical_upper=old)
+    ref=NS(pixel_scale_arcsec=.03,wcs=NS(world_to_pixel_values=lambda x,y:(x*40+50,y*40+50)))
+    fig=plt.figure()
+    rc.render_overview_cutouts(fig,dict(images=[],systems=[system]),({'f':ref},('f',),None,'m0416'),(3,0,0))
+    ax=fig.axes[0]
+    assert not ax.patches and not ax.collections and [len(line.get_xdata()) for line in ax.lines]==[2,1]   # scale bar and marker only
+    plt.close(fig)
+
+
 def test_configured_panel_order_roundtrip_and_limit(tmp_path):
     from dataclasses import asdict
     from kappaccino.config import ImageCatalogCutoutConfig
