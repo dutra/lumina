@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .base import ModuleUnavailable, OutputContext, OutputModule
+from .base import OutputContext, OutputModule
 
 
 def overview_variant(image_config, overview_configs):
@@ -31,10 +31,6 @@ def image_tables(ctx: OutputContext):
     """``(image_df, extra)``: the tables ``image_fit_quality`` and ``image_recovery_extra_images`` of the images
     product."""
     images = ctx.products["images"]
-    if images is None:
-        # TRANSITIONAL: an unconverted images module gives no product in a render pass; deleted once it is converted.
-        raise ModuleUnavailable("the images module gave no product (not converted to compute/render yet), so the "
-                                "imaging products cannot be drawn in a render pass")
     return images["image_df"], images["recovery"]["image_recovery_extra_images"]
 
 
