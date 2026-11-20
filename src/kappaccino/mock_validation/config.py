@@ -222,7 +222,8 @@ class MockConfig:
         Default ``(3.0, 5.0)``.
     field_scales_arcsec : tuple of float, optional
         (min, max) wavelength in arcsec of the mass field's modes (the band of the solver's field), i.e. wavenumbers
-        between :math:`2 \\pi / \\max` and :math:`2 \\pi / \\min`.  Default ``(0.2, 100.0)``.
+        between :math:`2 \\pi / \\max` and :math:`2 \\pi / \\min`.  The same band as the mock likelihood
+        (``cli.likelihood``).  Default ``(0.2, 1000.0)``.
     field_n_modes : int, optional
         Number of plane waves in the mass field; at least 100.  Default ``4000``.
     field_reference_redshift : float, optional
@@ -335,7 +336,7 @@ class MockConfig:
     field_sigma_grf_range_arcsec: tuple[float, float] | None = None
     field_knee_range_arcsec: tuple[float, float] = (3.0, 12.0)
     field_gamma_range: tuple[float, float] = (3.0, 5.0)
-    field_scales_arcsec: tuple[float, float] = (0.2, 100.0)
+    field_scales_arcsec: tuple[float, float] = (0.2, 1000.0)
     field_n_modes: int = 4000
     field_reference_redshift: float = 2.0
     image_plane_sigma_range_arcsec: tuple[float, float] | None = None

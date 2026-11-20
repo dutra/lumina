@@ -50,13 +50,13 @@ def test_stage_a_holds_the_error_scales_and_the_search_uses_system_blocks(synthe
 
 def test_grf_gp_hyperparameter_priors_have_physical_upper_bounds():
     likelihood = LikelihoodConfig()
-    bounds = {"sigma_grf_prior": 0.3, "lambda_b_prior": 20.0, "gp_knee_sigma_gp_prior": 0.3, "gp_knee_ell_gp_prior": 5.0}
+    bounds = {"sigma_grf_prior": 2.0, "lambda_b_prior": 200.0, "gp_knee_sigma_gp_prior": 0.3, "gp_knee_ell_gp_prior": 5.0}
     for name, upper in bounds.items():
         assert np.isclose(priors.physical_bounds(getattr(likelihood, name))[1], upper), name
     assert priors.physical_bounds(likelihood.lambda_b_prior)[1] <= likelihood.gp_knee_lambda_grid[1]
 
 
 def test_knee_prior_upper_must_lie_inside_the_tables(synthetic_config):
-    for prior in (dist.LogNormal(np.log(6.0), 0.5), priors.truncated_lognormal(6.0, 0.5, high=100.0)):
+    for prior in (dist.LogNormal(np.log(6.0), 0.5), priors.truncated_lognormal(6.0, 0.5, high=300.0)):
         with pytest.raises(ValueError, match="lambda_b_prior"):
             knee_config(synthetic_config, "all", lambda_b_prior=prior)

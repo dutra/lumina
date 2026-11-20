@@ -1170,9 +1170,10 @@ class LikelihoodConfig:
         Spacing of the tabulated slopes (cubic spline between), dimensionless; must divide the prior's range into at
         least 2 intervals.  Default ``0.25``.
     gp_knee_scales_arcsec : tuple of float, optional
-        Knee kernel: (shortest, longest) wavelength of the mass field, in arcsec: from the smallest image separation
-        resolved to the scale of the cluster halos.  ``0 < min < max``; the upper bound of ``lambda_b_prior`` must not
-        exceed the longest.  Default ``(0.2, 30.0)``.
+        Knee kernel: (shortest, longest) wavelength of the mass field, in arcsec.  The longitudinal deflection
+        correlation turns negative at 0.29 of the longest wavelength, so the longest must put that separation outside
+        the image region.  ``0 < min < max``; the upper bound of ``lambda_b_prior`` must not exceed the longest.
+        Default ``(0.2, 1000.0)``.
     gp_knee_project_modes : tuple of str, optional
         Knee kernel: low-order modes removed from the mass field over the images, any of ``"translation"``,
         ``"convergence"`` and ``"shear"`` (``gp_knee.project_low_order``).  Under a flat shear prior it leaves the
@@ -1182,22 +1183,23 @@ class LikelihoodConfig:
     gp_knee_lambda_grid : tuple of (float, float, int), optional
         Knee kernel: tabulated knee wavelengths (min, max in arcsec, count), log-spaced; the sampled
         :math:`\\ln\\lambda_b` is clamped to the grid.  ``0 < min < max`` and count at least 8.  Default
-        ``(0.5, 80.0, 64)``.
+        ``(0.5, 200.0, 64)``.
     gp_knee_r_step_arcsec : float, optional
         Knee kernel: separation step of the kernel tables, in arcsec.  Positive.  Default ``0.02``.
     sigma_grf_prior : numpyro distribution or None, optional
-        Knee kernel: prior of the mass field's rms deflection error per component at :math:`z_{ref}`, in arcsec.  The
-        upper truncation keeps the error model from replacing the lens: a deflection error above 0.3 arcsec is a
-        missing cluster component, not substructure.  None drops the mass field (only the image-plane GP remains).
-        Default: median 0.08 arcsec, ln-width 0.7, truncated at 0.3 arcsec.
+        Knee kernel: prior of the mass field's rms deflection error per component at :math:`z_{ref}`, in arcsec.  It
+        is the rms before ``gp_knee_project_modes``: with a knee of tens of arcsec most of it is field-wide and the
+        projection removes it, so the bound leaves room for it (0.9 arcsec on the Hera mock cluster).  None drops the
+        mass field (only the image-plane GP remains).  Default: median 0.08 arcsec, ln-width 0.5, truncated at
+        2 arcsec.
     sigma_grf_start_arcsec : float, optional
         Start of the rms deflection error, in arcsec.  Positive.  Default ``0.08``.
     lambda_b_prior : numpyro distribution, optional
         Knee kernel: prior of the break scale :math:`\\lambda_b = 2\\pi/k_t`, in arcsec.  Its upper bound must not
-        exceed ``gp_knee_scales_arcsec[1]`` (a knee above it is the scale of the cluster halos and the external shear)
-        nor the largest tabulated wavelength.  Default: median 6 arcsec, ln-width 0.5, truncated at 20 arcsec.
+        exceed ``gp_knee_scales_arcsec[1]`` nor the largest tabulated wavelength.  Default: median 50 arcsec,
+        ln-width 1, truncated at 200 arcsec.
     lambda_b_start_arcsec : float, optional
-        Start of the knee wavelength, in arcsec, strictly inside the bounds of ``lambda_b_prior``.  Default ``6.0``.
+        Start of the knee wavelength, in arcsec, strictly inside the bounds of ``lambda_b_prior``.  Default ``50.0``.
     gp_knee_sigma_gp_prior : numpyro distribution, optional
         Knee kernel: prior of the image-plane GP amplitude :math:`\\sigma_{shared}`, in arcsec; an image-plane
         displacement above 0.3 arcsec is lensing, not astrometry or feature selection.  Default: median 0.10 arcsec,
@@ -1307,17 +1309,17 @@ class LikelihoodConfig:
     # The cluster run.yaml files fix the slope at 4; sampled, normal(4, 0.5) in [2, 6] is the slope of an NFW-like cusp.
     gp_knee_gamma_prior: Any | None = field(default_factory=lambda: dist.Uniform(2.0, 6.0))
     gp_knee_gamma_step: float = 0.25
-    # With the long end at 100" and the halos free (all-image blocks), the field took the halo-scale misfit: sigma_grf
-    # and the knee at their caps (0.28", 25"), the external shear down to 0.02 (lens-free test, 2026-11-02).  Truncated at
-    # 30" the halos and the shear carry those scales and the field is left with the structure below them.
-    gp_knee_scales_arcsec: tuple[float, float] = (0.2, 30.0)
+    # The long end at 1000" and the knee free up to 200" (2026-11-20).  With the long end at 100" the longitudinal
+    # deflection correlation turns negative at 29", inside the image region, and a long knee lost mass beyond the images
+    # on Hera; at 1000" the knee settles at 45-48" there and the enclosed mass is within 1% out to 111" (fast runs).
+    gp_knee_scales_arcsec: tuple[float, float] = (0.2, 1000.0)
     gp_knee_project_modes: tuple[str, ...] = ()
-    gp_knee_lambda_grid: tuple[float, float, int] = (0.5, 80.0, 64)
+    gp_knee_lambda_grid: tuple[float, float, int] = (0.5, 200.0, 64)
     gp_knee_r_step_arcsec: float = 0.02
-    sigma_grf_prior: Any | None = field(default_factory=lambda: _error_scale_prior(0.08, 0.7, 0.3))
+    sigma_grf_prior: Any | None = field(default_factory=lambda: _error_scale_prior(0.08, 0.5, 2.0))
     sigma_grf_start_arcsec: float = 0.08
-    lambda_b_prior: Any = field(default_factory=lambda: _error_scale_prior(6.0, 0.5, 20.0))
-    lambda_b_start_arcsec: float = 6.0
+    lambda_b_prior: Any = field(default_factory=lambda: _error_scale_prior(50.0, 1.0, 200.0))
+    lambda_b_start_arcsec: float = 50.0
     gp_knee_sigma_gp_prior: Any = field(default_factory=lambda: _error_scale_prior(0.10, 0.7, 0.3))
     gp_knee_sigma_gp_start_arcsec: float = 0.10
     gp_knee_ell_gp_prior: Any = field(default_factory=lambda: _error_scale_prior(2.0, 0.5, 5.0))
