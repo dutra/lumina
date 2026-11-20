@@ -26,9 +26,8 @@ class MassModule(OutputModule):
         from ..plotting import plots
         from ..plotting.aperture_mass_histogram import write_aperture_mass_histogram
         from ..plotting.zeta_masses import save_zeta_masses
-        from .images import stored_image_table
         config, state, log = ctx.config, ctx.state, ctx.log
-        image_df = stored_image_table(ctx)          # TRANSITIONAL: ctx.products["images"] once images is converted
+        image_df = ctx.products["images"]["image_df"]
         z_crit = float(config.truth.caustic_source_redshift)
 
         def critical_curves():

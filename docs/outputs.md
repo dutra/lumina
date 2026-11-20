@@ -191,15 +191,27 @@ of a full pass and of a later render-only pass come from the same code and the s
 | module | compute steps | render steps | requires | runs when |
 |---|---|---|---|---|
 | `fit` | not converted yet: `tables` (`posterior_summary`, `member_classification`), `chain_traces`, `audit` (the record), `scaling_table` (`member_scaling_relation`), `potfiles`, `block_corner` (`corner_combined.pdf`), `cosmology_corner`, `covariance` (covariance corner and `covariance_errors_both_planes`), `fields` (GP and GRF plots), `members` (`member_diagnostics` and the member plots), `scaling_plot`, `globals_corner` | | | always |
-| `images` | not converted yet: `recovery` (the image-recovery tables, `position_coverage`, `fit` in `run_summary`), `true_lens` (with `truth.deflection_true_fits`), `residual_histogram`, `recovery_figure` | | | always |
+| `images` | `recovery` (the image-recovery tables, record `image_recovery_fingerprint`, `position_coverage`, `fit` in `run_summary`), `true_lens` (with `truth.deflection_true_fits` and observed images: `true_lens_residuals`, record `true_lens_rms`) | `residual_histogram`, `recovery_figure` (both with observed images) | | always |
 | `mass` | `critical_curves` (arrays `critical_curves`), `aperture_masses` (`member_aperture_masses`, record `aperture_mass_histogram`), `zeta_masses` (`member_zeta_masses`, record `zeta_masses`, arrays `subhalo_mass_concentration`) | `critical_curves`, `zeta_masses` (the figure and the table `zeta_mass_function`) | `images` | always; the masses with a truth convergence map |
 | `truth` | `truth_maps` (FITS, profile tables, record `truth_recovery`, arrays `truth_recovery_residuals`, the published ratios), `magnification_recovery`, `cumulative_source_area`, `magnification_scatter` | `magnification_recovery`, `cumulative_source_area`, `truth_residuals`, `mass_profile`, `kappa_mass_residuals` | `images` | with `truth.kappa_true_fits` |
 | `rgb` | not converted yet: per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and, computed once, `fold_data`, then `fold_cutouts`; for the JWST overview also `position_contours` and `small_lambda` (before the mass figure) and `apj_fold_cutouts` and `paper_cutouts` (after the folds) | | `images` | with `image_catalog.image_dir` and observed images |
 
-`fit`, `images` and `rgb` are being converted. Until then each still computes and draws in one `run`: a full or
-compute pass runs it whole (a compute pass then draws its figures too, because its dependents need what it computes),
-and a render pass reports it `unavailable` ("not converted to compute/render yet") and gives no product, so `mass`
-and `truth` read the image table `image_fit_quality` from the store in every phase.
+`fit` and `rgb` are being converted. Until then each still computes and draws in one `run`: a full or compute pass
+runs it whole (a compute pass then draws its figures too, because its dependents need what it computes), and a render
+pass reports it `unavailable` ("not converted to compute/render yet") and gives no product.
+
+The product of `images` is read from the store, so `mass`, `truth` and `rgb` get the same tables in every pass mode:
+
+- `image_df`: the table `image_fit_quality` (empty when no image was observed; `rgb` is then inactive and `images`
+  draws no figure);
+- `recovery`: every table that the record `image_recovery_fingerprint` lists (`image_fit_quality`,
+  `image_count_recovery`, `model_magnification`, `image_recovery_extra_images`, `posterior_extra_images`,
+  `posterior_image_rms`, `posterior_image_residual_draws`, and with a mass field the two `_lens_only` tables), plus
+  `position_coverage`, by table name;
+- `true_lens`: the record `true_lens_rms` when the last compute's `true_lens` step wrote it, else None. A record left
+  by an older compute is never returned.
+
+The tables come back as they were written, with their column order and dtypes, and with a fresh `RangeIndex`.
 
 `mass` and `rgb` also run after `fit` without needing its product, because they read tables it writes:
 `member_diagnostics` (aperture and zeta masses) and `covariance_errors_both_planes` (covariance cutouts). The steps of
@@ -390,7 +402,7 @@ run summary is written before it.
 
 ### Converting a module to compute and render
 
-This is how `mass` and `truth` were converted, for the modules still on `run` (`fit`, `images`, `rgb`).
+This is how `mass`, `truth` and `images` were converted, for the modules still on `run` (`fit`, `rgb`).
 
 1. **List every product.** For each step of `run`, write down what it writes (tables, records, arrays, FITS, figures)
    and what each figure function reads. Most writers already save part of what their figure needs (a table, a
@@ -425,10 +437,10 @@ This is how `mass` and `truth` were converted, for the modules still on `run` (`
 6. **Write `product`** as a store read of exactly what the dependents use, for example the image table for `images`:
    `return {"image_df": store.read_table(ctx.stage, "image_fit_quality"), ...}`. Never return an object built in
    compute. A `store.MissingEntry` in product makes the module unavailable with the hint to run its compute, which is
-   what a render pass needs. When `images` is converted, replace every call of `images.stored_image_table` (marked
-   TRANSITIONAL in `mass` and `truth`) by `ctx.products["images"]` and delete that helper; when all five modules are
-   converted, delete the transitional path (`run`, `steps`, `converted`, `NOT_CONVERTED` in `outputs/base.py`, the
-   unconverted branch of `--list`, and the transitional test).
+   what a render pass needs. A module that requires another reads that module's product (`mass` and `truth` take
+   `ctx.products["images"]["image_df"]`), not the store. When all five modules are converted, delete the
+   transitional path (`run`, `steps`, `converted`, `NOT_CONVERTED` in `outputs/base.py`, the unconverted branch of
+   `--list`, and the transitional test).
 7. **Test.** In `tests/test_output_modules.py` the fake `Phased` module shows the pattern: run a full pass, delete the
    figure, run a render pass (`OutputContext(..., mode="render")`) and check that the figure comes back without
    compute; any use of `ctx.draws` or `ctx.evaluator` there raises `ComputeOnly` and fails the step, which is the
