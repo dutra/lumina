@@ -3,7 +3,8 @@ import argparse
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from _covariance_plot_cli import load_run
+import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
+from kappaccino.outputs.saved_run import load_run
 
 
 def main():
@@ -12,7 +13,7 @@ def main():
     parser.add_argument('--imaging', choices=('saved', 'jwst'), default='saved')
     parser.add_argument('--recompute', action='store_true', help='Recompute fold geometry instead of reusing saved diagnostics')
     parser.add_argument('--draws', type=int, default=None, help='reporting draws (default: the run config)')
-    from _covariance_plot_cli import add_catalogs_argument
+    from _covariance_plot_cli import add_catalogs_argument, redirect
     add_catalogs_argument(parser)
     args = parser.parse_args()
     from kappaccino.imaging.cutouts import imaging_variants, load_cluster_imaging
@@ -34,7 +35,7 @@ def main():
         state = SimpleNamespace(reference=(reference.reference, reference.ra0_deg, reference.dec0_deg))
         log(f'[outputs] rendering saved fold cache: {len(data["draw_indices"])} draws; gp_blocks={config.likelihood.gp_blocks}')
     else:
-        config, state, evaluator, posterior, paths = load_run(args.run_directory, catalogs=args.catalogs, ffsims_dir=args.ffsims_dir)
+        config, state, evaluator, posterior, paths = load_run(args.run_directory, transform=redirect(args.catalogs, args.ffsims_dir))
         from kappaccino.reporting.draws import reporting_draws
         if args.draws is not None:
             config = replace(config, reporting=replace(config.reporting, draws=args.draws))

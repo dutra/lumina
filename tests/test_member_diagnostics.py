@@ -130,25 +130,17 @@ def test_hierarchical_prior_width_against_independent_quadrature(synthetic_confi
 
 
 def test_normal_output_hook(synthetic_config, tmp_path, monkeypatch):
-    from kappaccino.reporting import outputs
-    import pandas as pd
+    from kappaccino.plotting import members
+    from kappaccino.reporting import outputs, results_tex
     state = build_state(synthetic_config)
     evaluator = Evaluator(state)
     posterior = posterior_for(state, evaluator)
     calls = []
-    monkeypatch.setattr(outputs, 'posterior_summary_table', lambda *a: pd.DataFrame())
-    monkeypatch.setattr(outputs, 'classification_table', lambda *a: pd.DataFrame())
-    monkeypatch.setattr(outputs.plots, 'member_scaling_table', lambda *a: pd.DataFrame())
-    monkeypatch.setattr(outputs, 'write_potfile_plots', lambda *a, **k: [])
-    monkeypatch.setattr(outputs, 'write_member_diagnostic_plots', lambda *a, **k: calls.append(a))
-    class StopAfterHook(Exception):
-        pass
-    def stop(*a, **k):
-        raise StopAfterHook
-    monkeypatch.setattr(outputs, 'image_recovery_tables', stop)
-    paths = SimpleNamespace(figures=tmp_path/'figures', tables=tmp_path/'tables')
-    with pytest.raises(StopAfterHook):
-        outputs.write_outputs(synthetic_config, state, evaluator, posterior, {}, paths)
+    monkeypatch.setattr(members, 'write_member_diagnostic_plots', lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(results_tex, 'write_run_results', lambda *a, **k: None)
+    paths = SimpleNamespace(figures=tmp_path/'figures', tables=tmp_path/'tables', root=tmp_path)
+    summary = outputs.write_outputs(synthetic_config, state, evaluator, posterior, {}, paths, only=('fit',), log=lambda _: None)
+    assert list(summary['modules']) == ['fit'] and summary['modules']['fit']['steps']['members']['status'] == 'done'
     assert len(calls) == 1
     assert calls[0][0] is synthetic_config and calls[0][1] is state
 

@@ -295,6 +295,9 @@ The products are identical for any value; each thread holds the working arrays o
 memory. It is a performance setting: it is not part of the run hash and a resume ignores it, so
 `--set runtime.output_workers=8` reuses the existing run folder.
 
+`OutputsConfig` (the `outputs` section) chooses the output modules: `only` (these and the modules they require;
+None for all), `skip` and `fail_fast`. Like `output_workers`, it is not part of the run hash. See {doc}`outputs`.
+
 ## Run paths
 
 ```python
@@ -341,6 +344,7 @@ Common changes on an existing configuration:
 | drop a large-scale component | rebuild `LensModelConfig.large_halos` without it |
 | start from a previous run | `SearchConfig(warm_start="results/demo/v1")` |
 | skip figures and tables | `RuntimeConfig(skip_plots=True)` |
+| skip the imaging figures | `OutputsConfig(skip=("rgb",))` |
 
 (lenstool-par)=
 ## From a Lenstool `.par` file

@@ -12,6 +12,9 @@ Outputs go to ``results/<name>/<description>-<hash>``: :func:`describe` of the r
 configuration has its own folder and running the same command again, on any day, resumes it.  ``--run-label`` names
 the folder by hand instead, and ``--results`` moves the tree.  The files the run read and the command are copied to
 the run's ``inputs/`` folder the first time.
+
+``kappaccino outputs RUN_DIR`` reruns the outputs stage of a finished run without fitting (:mod:`kappaccino.outputs.command`);
+a cluster folder literally named ``outputs`` is given as ``./outputs``.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -107,7 +111,10 @@ def _folder(text: str) -> str:
 def parser() -> argparse.ArgumentParser:
     """The command-line options."""
     p = argparse.ArgumentParser(prog="kappaccino", description=__doc__.split("\n\n")[0],
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+                                formatter_class=argparse.RawDescriptionHelpFormatter,
+                                epilog="kappaccino outputs RUN_DIR [--only A,B | --skip C,D | --all] [--remap OLD=NEW] [--set ...] [--draws N] "
+                                       "reruns the outputs stage of a finished run without fitting; see kappaccino outputs --help.  "
+                                       "A cluster folder named outputs is given as ./outputs.")
     p.add_argument("cluster", type=_folder, help="the cluster folder, e.g. catalogs/hera")
     p.add_argument("--profile", action="append", default=[], metavar="NAME",
                    help="apply a profile of run.yaml (fast; jwst or hst for the figures' imaging), in order; repeatable")
@@ -191,7 +198,12 @@ def _fast_warning(config) -> None:
 
 
 def main(argv=None) -> int:
-    """Run (or dry-run) one cluster folder; returns the exit code."""
+    """Run (or dry-run) one cluster folder, or with ``outputs`` first rerun the outputs stage of a finished run
+    (:func:`kappaccino.outputs.command.main`); returns the exit code."""
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] == "outputs":
+        from .outputs.command import main as outputs_main
+        return outputs_main(argv[1:])
     args = parser().parse_args(argv)
     args.overrides = [*_option_overrides(args), *args.overrides]
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-kappaccino")

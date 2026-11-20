@@ -15,12 +15,18 @@ member catalog:
 kappaccino catalogs/hera --dry-run
 kappaccino catalogs/m0416/canucs2025 --profile fast --profile jwst
 kappaccino catalogs/as1063/bergamini2019 --set sampling.warmup=1000 --set runtime.skip_plots=true
+kappaccino catalogs/hera --set 'outputs.skip=[rgb]'
+kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --only truth
 ```
+
+`kappaccino outputs RUN_DIR` reruns the outputs stage of a finished run without fitting; see {doc}`outputs`. A cluster
+folder that is literally named `outputs` must be given as `./outputs`.
 
 Each run goes to `results/<name>/<description>-<hash>`, for example `results/hera/w500s250t7_allblocks-3f9a1c`. The
 description gives the NUTS warmup, samples and tree depth, the GP blocks (or the likelihood when it is not the GRF),
 the image catalog when `--images` replaces it, `uncertain` with uncertain images, and the profiles. The hash is six
-characters of a hash of the whole configuration except its paths and WBIC settings, the part the pipeline checks
+characters of a hash of the whole configuration except its paths, WBIC settings, performance settings
+(`runtime.output_workers`), `truth.deflection_true_fits` and `outputs` section, the part the pipeline checks
 when it resumes. The same command therefore resumes its run on any day, and any change, a prior set with `--set`
 included, starts a new folder. `--run-label NAME` names the folder by hand, and `--results DIR` moves the tree
 (`DIR/<name>/...`). The files the run read and the command are copied to the run's `inputs/` folder.

@@ -33,11 +33,13 @@ See {doc}`catalogs` for the converters (`convert_lenstool_catalog.py`, `convert_
 
 ## Regenerating figures from a saved run
 
-These scripts read a run directory and redraw one product without rerunning inference.
+These scripts read a run directory and redraw one product without rerunning inference. They load the run with
+`kappaccino.outputs.saved_run.load_run`; `kappaccino outputs RUN --only MODULE` reruns whole output modules (see
+{doc}`outputs`).
 
 | script | regenerates |
 |---|---|
-| `regenerate_outputs.py RUN [--draws N]` | every output of the final stage, over the reporting draws (one pass) |
+| `regenerate_outputs.py RUN [RUN ...] [--draws N] [--only A,B] [--skip C,D]` | every output of the final stage, over the reporting draws (one pass); `kappaccino outputs` for each run, plus `--catalogs` and `--ffsims-dir` |
 | `chain_traces.py RUN` | `<prefix>_chain_traces.pdf` and `chain_convergence.csv` |
 | `make_gp_illustrations.py RUN` | the GP diagnostics and shared-field maps |
 | `regenerate_cluster_mass_figure.py RUN --imaging jwst` | the cluster mass overview (JWST or HST) |

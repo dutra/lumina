@@ -49,21 +49,18 @@ def test_covariance_outputs_with_one_draw(synthetic_config, tmp_path, selection)
 
 
 def test_normal_output_calls_covariance_suite(monkeypatch, synthetic_config, tmp_path):
+    from kappaccino.plotting import covariance
     from kappaccino.reporting import outputs
     class ReachedCovariance(Exception):
         pass
     def reached(*args, **kwargs):
         raise ReachedCovariance
-    monkeypatch.setattr(outputs, 'write_covariance_plots', reached)
-    monkeypatch.setattr(outputs, 'posterior_summary_table', lambda *a: pd.DataFrame())
-    monkeypatch.setattr(outputs, 'classification_table', lambda *a: pd.DataFrame())
-    monkeypatch.setattr(outputs, 'write_chain_traces', lambda *a, **k: None)
-    monkeypatch.setattr(outputs, 'write_potfile_plots', lambda *a, **k: None)
-    monkeypatch.setattr(outputs, 'write_posterior_block_corner', lambda *a, **k: None)
-    monkeypatch.setattr(outputs.plots, 'member_scaling_table', lambda *a: pd.DataFrame())
+    monkeypatch.setattr(covariance, 'write_covariance_plots', reached)
     state = SimpleNamespace(parameter_specs=[])
     posterior = SimpleNamespace(samples=np.zeros((1, 1)), physical=np.ones((1, 1)), log_prob=np.zeros(1))
     evaluator = SimpleNamespace(physical=lambda p: p)
-    paths = SimpleNamespace(tables=tmp_path/'tables', figures=tmp_path/'figures')
-    with pytest.raises(ReachedCovariance):
-        outputs.write_outputs(synthetic_config, state, evaluator, posterior, {}, paths)
+    paths = SimpleNamespace(tables=tmp_path/'tables', figures=tmp_path/'figures', root=tmp_path)
+    from kappaccino.reporting import results_tex
+    monkeypatch.setattr(results_tex, 'write_run_results', lambda *a, **k: None)
+    summary = outputs.write_outputs(synthetic_config, state, evaluator, posterior, {}, paths, only=('fit',), log=lambda _: None)
+    assert summary['modules']['fit']['steps']['covariance']['error'].startswith('ReachedCovariance')

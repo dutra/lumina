@@ -66,16 +66,19 @@ def test_pdf_provenance_and_style_isolation(tmp_path):
 
 
 def test_normal_output_hook(tmp_path, monkeypatch):
+    from kappaccino.outputs import fit as module
+    from kappaccino.plotting import plots
     from kappaccino.reporting import outputs
     p, specs = fixture()
     state = SimpleNamespace(parameter_specs=specs)
     config = SimpleNamespace(paths=SimpleNamespace(figure_prefix='test'), reporting=SimpleNamespace(draws=2), runtime=SimpleNamespace(seed=0))
-    paths = SimpleNamespace(tables=tmp_path/'tables', figures=tmp_path/'figures')
-    monkeypatch.setattr(outputs, 'posterior_summary_table', lambda *a: __import__('pandas').DataFrame())
-    monkeypatch.setattr(outputs, 'classification_table', lambda *a: __import__('pandas').DataFrame())
+    paths = SimpleNamespace(tables=tmp_path/'tables', figures=tmp_path/'figures', root=tmp_path)
+    monkeypatch.setattr(module, 'posterior_summary_table', lambda *a: __import__('pandas').DataFrame())
+    monkeypatch.setattr(module, 'classification_table', lambda *a: __import__('pandas').DataFrame())
     class StopAfterTrace(Exception):
         pass
-    monkeypatch.setattr(outputs.plots, 'member_scaling_table', lambda *a: (_ for _ in ()).throw(StopAfterTrace()))
+    monkeypatch.setattr(plots, 'member_scaling_table', lambda *a: (_ for _ in ()).throw(StopAfterTrace()))
     with pytest.raises(StopAfterTrace):
-        outputs.write_outputs(config, state, SimpleNamespace(physical=lambda x: x), p, {}, paths, log=lambda _: None)
+        outputs.write_outputs(config, state, SimpleNamespace(physical=lambda x: x), p, {}, paths, log=lambda _: None,
+                              only=('fit',), skip=(), fail_fast=True)
     assert (paths.figures/'test_chain_traces.pdf').is_file()

@@ -73,35 +73,29 @@ def test_small_catalog_pdf_and_style(synthetic_config, tmp_path, monkeypatch):
 @pytest.mark.parametrize("cluster,missing_hst,expected", [("toy",False,1),("m0416",False,2),("as1063",True,1),("hera",False,1),("ares",False,1)])
 def test_output_reuses_loaded_imaging(monkeypatch, synthetic_config, tmp_path, cluster, missing_hst, expected):
     from dataclasses import replace
-    from kappaccino.reporting import outputs
+    from kappaccino.reporting import outputs, results_tex
     from kappaccino.imaging import cutouts
-    from kappaccino.plotting import mass_figure, chain_traces
+    from kappaccino.diagnostics import image_recovery
+    from kappaccino.plotting import mass_figure, plots, covariance_cutouts, fold_pairs
     config=replace(synthetic_config,paths=replace(synthetic_config.paths,run_name=cluster),image_catalog=replace(synthetic_config.image_catalog,image_dir='already-loaded'))
     state=SimpleNamespace(parameter_specs=[],reference=(3,0,0),z_lens=.3,z_source_values=[2.])
     posterior=SimpleNamespace(samples=np.zeros((1,1)),physical=np.zeros((1,1)),log_prob=np.zeros(1))
     evaluator=SimpleNamespace(physical=lambda p:p,source_positions=lambda p:np.zeros((1,2)))
     paths=SimpleNamespace(tables=tmp_path/'tables',figures=tmp_path/'figures',fits=tmp_path/'fits',root=tmp_path)
-    for name in ['write_chain_traces','write_potfile_plots','write_covariance_plots','write_member_diagnostic_plots','write_run_results','write_posterior_block_corner','write_gp_plots','write_aperture_mass_histogram']:
-        monkeypatch.setattr(outputs,name,lambda *a,**k:None)
-    for name in ['posterior_summary_table','classification_table']:
-        monkeypatch.setattr(outputs,name,lambda *a:pd.DataFrame())
-    monkeypatch.setattr(outputs.plots,'member_scaling_table',lambda *a:pd.DataFrame())
-    for name in ['plot_image_residual_histogram','plot_image_recovery','plot_corner','plot_critical_curves']:
-        monkeypatch.setattr(outputs.plots,name,lambda *a,**k:None)
-    monkeypatch.setattr(chain_traces,'trace_data',lambda *a:None)
-    monkeypatch.setattr(outputs,'compute_truth_recovery',lambda *a,**k:None)
-    monkeypatch.setattr(outputs,'image_recovery_tables',lambda *a,**k:{'image_fit_quality':pd.DataFrame({'image':['a']}),'image_count_recovery':pd.DataFrame(),'image_recovery_extra_images':pd.DataFrame(),
+    monkeypatch.setattr(results_tex,'write_run_results',lambda *a,**k:None)
+    for name in ['plot_image_residual_histogram','plot_image_recovery']:
+        monkeypatch.setattr(plots,name,lambda *a,**k:None)
+    monkeypatch.setattr(image_recovery,'image_recovery_tables',lambda *a,**k:{'image_fit_quality':pd.DataFrame({'image':['a']}),'image_count_recovery':pd.DataFrame(),'image_recovery_extra_images':pd.DataFrame(),
         'posterior_image_residual_draws':pd.DataFrame(columns=['family_id','image_label','recovered','x_obs_arcsec','y_obs_arcsec','x_predicted_arcsec','y_predicted_arcsec'])})
-    monkeypatch.setattr(outputs,'fit_summary',lambda *a,**k:{'observed_image_count':1})
+    monkeypatch.setattr(image_recovery,'fit_summary',lambda *a,**k:{'observed_image_count':1})
     imaging=cluster if cluster in {"hera","ares"} else "test-imaging"
     def load(image_config, *args):
         if missing_hst and not image_config.figure_suffix:
             raise FileNotFoundError('HST unavailable')
         bands = ['F115W','F150W','F200W'] if image_config.figure_suffix == '_jwst' else ['F435W','F606W','F814W']
         return (None,bands,None,imaging)
-    monkeypatch.setattr(cutouts,'load_cluster_imaging',load)
     monkeypatch.setattr(mass_figure,'render_cluster_mass_figure',lambda *a,**k:None)
-    calls=[];monkeypatch.setattr(outputs,'write_covariance_cutouts',lambda *a,**k:calls.append(a[4]))
+    calls=[];monkeypatch.setattr(covariance_cutouts,'write_covariance_cutouts',lambda *a,**k:calls.append(a[4]))
     from kappaccino.diagnostics import position_contours
     monkeypatch.setattr(position_contours,"load_or_compute_contours",lambda *a,**k:None)
     from kappaccino.plotting import small_lambda_jwst
@@ -111,10 +105,14 @@ def test_output_reuses_loaded_imaging(monkeypatch, synthetic_config, tmp_path, c
     rgb_calls=[]
     monkeypatch.setattr(jwst_rgb,'render_rgb_critical',lambda *a,**k:rgb_calls.append(a))
     fold_calls=[]; fold_renders=[]
-    monkeypatch.setattr(outputs,"compute_fold_diagnostics",lambda *a,**k: fold_calls.append(1) or {"pairs":[],"systems":[]})
-    monkeypatch.setattr(outputs,"save_fold_data",lambda *a:None)
-    monkeypatch.setattr(outputs,"render_fold_diagnostics",lambda *a,**k:fold_renders.append(a[4]))
-    outputs.write_outputs(config,state,evaluator,posterior,{},paths,log=lambda _:None)
+    monkeypatch.setattr(fold_pairs,"compute_fold_diagnostics",lambda *a,**k: fold_calls.append(1) or {"pairs":[],"systems":[]})
+    monkeypatch.setattr(fold_pairs,"save_fold_data",lambda *a:None)
+    monkeypatch.setattr(fold_pairs,"render_fold_diagnostics",lambda *a,**k:fold_renders.append(a[4]))
+    loads=[];monkeypatch.setattr(cutouts,'load_cluster_imaging',lambda *a:loads.append(a[0].figure_suffix) or load(*a))
+    summary=outputs.write_outputs(config,state,evaluator,posterior,{},paths,log=lambda _:None,only=('rgb',),fail_fast=True)
+    assert list(summary['modules'])==['images','rgb'] and summary['modules']['rgb']['status']=='done'
+    # Each variant's imaging is loaded once in the pass.
+    assert len(loads)==len(set(loads))
     # One RGB critical overview per loaded imaging variant, named by its instrument.
     assert len(rgb_calls)==expected
     assert sorted(call[6].name for call in rgb_calls)==sorted(

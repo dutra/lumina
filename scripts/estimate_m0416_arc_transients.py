@@ -15,7 +15,8 @@ OUT=Path('output/pdf/m0416_arc_transients')
 SCALE=5.340068651570361
 
 def maps(run, system, step, out):
-    from _covariance_plot_cli import load_run
+    import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
+    from kappaccino.outputs.saved_run import load_run
     config,state,evaluator,posterior,paths=load_run(run)
     from kappaccino.plotting.fold_pairs import load_fold_data
     from kappaccino.io.hdf5 import load_arrays, save_arrays

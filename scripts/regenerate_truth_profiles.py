@@ -10,18 +10,18 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('runs', nargs='+', type=Path)
-    from _covariance_plot_cli import add_catalogs_argument
+    from _covariance_plot_cli import add_catalogs_argument, redirect
     add_catalogs_argument(parser)
     args = parser.parse_args()
     import matplotlib
     matplotlib.use('Agg')
     import numpy as np
     import pandas as pd
-    from _covariance_plot_cli import load_run
+    from kappaccino.outputs.saved_run import load_run
     from kappaccino.diagnostics.truth_recovery import compute_truth_recovery
     from kappaccino.plotting import plots
     for run in args.runs:
-        config, state, evaluator, posterior, paths = load_run(run, catalogs=args.catalogs, ffsims_dir=args.ffsims_dir)
+        config, state, evaluator, posterior, paths = load_run(run, transform=redirect(args.catalogs, args.ffsims_dir))
         images = pd.read_csv(paths.tables/'image_fit_quality.csv', dtype={'family_id': str, 'image_label': str})
         from kappaccino.reporting.draws import reporting_draws
         truth = compute_truth_recovery(state, reporting_draws(config, evaluator, posterior), config.truth, run/'final/fits', paths.tables,

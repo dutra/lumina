@@ -1,6 +1,7 @@
 """Regenerate covariance errors from a saved run; no inference."""
 import argparse
-from _covariance_plot_cli import load_run
+import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
+from kappaccino.outputs.saved_run import load_run
 
 
 def main():

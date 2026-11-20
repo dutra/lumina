@@ -54,6 +54,7 @@ Diagnostics and figures
 .. autoclass:: kappaccino.config.TruthRecoveryConfig
 .. autoclass:: kappaccino.config.ImageCatalogCutoutConfig
 .. autoclass:: kappaccino.config.RGBDisplayConfig
+.. autoclass:: kappaccino.config.OutputsConfig
 ```
 
 Priors are `numpyro.distributions` objects; see {doc}`priors`. A configuration can also be read from a Lenstool parameter

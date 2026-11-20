@@ -14,7 +14,8 @@ import time
 
 os.environ.setdefault('NUMBA_CACHE_DIR', '/tmp/numba-kappaccino')
 os.environ.setdefault('MPLCONFIGDIR', '/tmp/matplotlib-kappaccino')
-from _covariance_plot_cli import load_run, ROOT
+from _covariance_plot_cli import ROOT
+from kappaccino.outputs.saved_run import load_run
 import numpy as np
 import jax
 jax.config.update('jax_enable_x64', True)
