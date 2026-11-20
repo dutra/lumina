@@ -1,7 +1,6 @@
 """RGB overviews with matched posterior z=9 critical curves and bands."""
 from pathlib import Path
 from .style import CRITICAL_COLOR
-STRETCH_COLOR = 'white'
 NOT_RECOVERED_COLOR = '#FF3030'     # an observed image found in fewer than half the draws
 EXTRA_IMAGE_COLOR = '#C77DFF'       # a predicted image with no catalog entry, found in at least half the draws
 import json
@@ -103,11 +102,11 @@ def recovered_contour_segments(contours):
 def render_rgb_critical(config, state, draws, catalog, extra, imaging, output, tables, *, log=print):
     """Render the z = 9 critical curve (zero contour of the per-pixel median det A over the reporting draws) and its
     16-84% band on the RGB overview.  Computes and saves what the picture needs in the stage's results (the arrays
-    ``<stem>``, the record ``<stem>_band``, the position contours and the table ``<stem>_stretch_directions``; ``tables``
+    ``<stem>``, the record ``<stem>_band`` and the position contours; ``tables``
     is the stage folder or its ``tables``) and draws it with :func:`draw_rgb_critical`; :func:`redraw_rgb_critical`
     draws it again from those entries."""
     output,tables=Path(output),Path(tables)
-    from .mass_figure import overview_geometry, arc_direction_table
+    from .mass_figure import overview_geometry
     from ..imaging import cutouts
 
     images,bands,display,cluster=imaging
@@ -130,12 +129,8 @@ def render_rgb_critical(config, state, draws, catalog, extra, imaging, output, t
                             central_statistic='pointwise posterior median determinant')
     from ..diagnostics.position_contours import load_or_compute_contours
     recovered_contours = load_or_compute_contours(config, state, draws, extra, tables, log=log)
-    # The stretch direction at each observed image and its own redshift: the eigenvector of the smallest |eigenvalue|
-    # of the median A over the draws (A is symmetric, so this is its minimum singular vector).
-    arc_directions = arc_direction_table(draws, catalog)
-    store.write_table(tables, f'{stem}_stretch_directions', arc_directions)
     draw_rgb_critical(config, state.reference, catalog, extra, imaging, output, tables, determinant=det, lower=lower,
-                      upper=upper, contours=recovered_contours, stretch_directions=arc_directions, fingerprint=fingerprint,
+                      upper=upper, contours=recovered_contours, fingerprint=fingerprint,
                       reporting_draws=len(draws), shared_grf=shared_field_evaluator(draws.evaluator) is not None,
                       grf_field=shared_grf_label(draws.evaluator), log=log)
     return output
@@ -143,16 +138,15 @@ def render_rgb_critical(config, state, draws, catalog, extra, imaging, output, t
 
 @plt.rc_context()
 def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables, *, determinant, lower, upper, contours,
-                      stretch_directions, fingerprint, reporting_draws, shared_grf, grf_field, redrawn=False, log=print):
+                      fingerprint, reporting_draws, shared_grf, grf_field, redrawn=False, log=print):
     """Draw the RGB critical overview (and, for M0416, its ``_candidates`` variant) from computed inputs: the
     median ``determinant`` of det A with its 16th/84th percentiles ``lower``/``upper``, the position ``contours``
-    (:func:`~kappaccino.diagnostics.position_contours.load_or_compute_contours`), the ``stretch_directions`` at the
-    observed images (``image_label``, ``e_arc_x``, ``e_arc_y``; None draws no sticks), the draws' ``fingerprint`` and
+    (:func:`~kappaccino.diagnostics.position_contours.load_or_compute_contours`), the draws' ``fingerprint`` and
     count, whether the run has a ``shared_grf`` (a knee mass field shared by every image) and the ``grf_field``
     provenance label (:func:`~kappaccino.likelihood.grf_fields.shared_grf_label`).  Writes the PDFs, their figure
     records and the marker tables (in the results of the stage of ``tables``); returns the PDF paths."""
     output,tables=Path(output),Path(tables)
-    from .mass_figure import overview_geometry, aligned_rgb, grid_pixels, ARC_STICK_LENGTH_ARCSEC
+    from .mass_figure import overview_geometry, aligned_rgb, grid_pixels
     from ..imaging import cutouts
 
     images,bands,display,cluster=imaging
@@ -169,15 +163,6 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
     rgb=aligned_rgb(rgb,reference_image,geometry)
     plt.style.use(str(Path(__file__).with_name('style.mplstyle')))
     position_segments = recovered_contour_segments(contours)
-    if stretch_directions is not None:
-        if stretch_directions['image_label'].astype(str).duplicated().any() or catalog['image_label'].astype(str).duplicated().any():
-            raise ValueError('Arc-direction overlay requires unique image labels')
-        stretch_directions = (stretch_directions.assign(image_label=stretch_directions['image_label'].astype(str))
-                              .set_index('image_label').reindex(catalog['image_label'].astype(str)))
-        directions = stretch_directions[['e_arc_x', 'e_arc_y']].to_numpy(float)
-    else:
-        directions = np.full((len(catalog), 2), np.nan)
-    sticks = int(np.isfinite(directions).all(1).sum())
     contoured = len({str(identity) for identity, _ in position_segments})
     written = []
     main_output = output
@@ -230,13 +215,6 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
                 line, = ax.plot(sx, sy, color='cyan', linewidth=.45,
                                 antialiased=True, solid_joinstyle='round', zorder=20)
                 line.get_path().should_simplify = False
-        observed_xy = catalog[['x_obs_arcsec', 'y_obs_arcsec']].to_numpy(float)
-        for center, direction in zip(observed_xy, directions):
-            if not np.isfinite(direction).all():
-                continue
-            ends = center + np.array([[-.5], [.5]]) * ARC_STICK_LENGTH_ARCSEC * direction
-            ax.plot(*grid_pixels(geometry, ends[:, 0], ends[:, 1]), color=STRETCH_COLOR, linewidth=.7,
-                    solid_capstyle='round', zorder=22)
         marker_table['system']=systems.to_numpy()
         marker_table['color']=colors
         overlay_rows=[]
@@ -277,13 +255,10 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
                    markeredgecolor='#FF9500', markeredgewidth=.8, markersize=5),
             Line2D([], [], marker='o', linestyle='none', markerfacecolor='none',
                    markeredgecolor='cyan', markeredgewidth=.45, markersize=5),
-            Line2D([], [], color=STRETCH_COLOR, linewidth=.7),
             (Patch(facecolor=CRITICAL_COLOR, alpha=.25, edgecolor='none'),
              Line2D([], [], color=CRITICAL_COLOR, linewidth=.65)),
         ]
-        labels = ['Observed images', RECOVERED_CONTOUR_LABEL, 'Stretch direction', 'Critical curve']
-        if not sticks:
-            del handles[2], labels[2]
+        labels = ['Observed images', RECOVERED_CONTOUR_LABEL, 'Critical curve']
         for present, color, label in ((bool(missed.any()), NOT_RECOVERED_COLOR, 'Not recovered'), (has_extra, EXTRA_IMAGE_COLOR, 'Extra images')):
             if present:
                 handles.insert(1, Line2D([], [], marker='s', linestyle='none', markerfacecolor='none',
@@ -329,9 +304,7 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
         else:
             fig.savefig(output,dpi=300,bbox_inches='tight',pad_inches=.06)
         plt.close(fig)
-        stretch_text=(f'eigenvector of the smallest |eigenvalue| of the median A over the draws at each observed image and its own redshift; {ARC_STICK_LENGTH_ARCSEC:g} arcsec sticks'
-                      if sticks else 'not drawn: no saved stretch directions')
-        store.write_figure_record(output, dict(run=config.paths.run_name,image_position_marker='square',recovered_position_probability=RECOVERED_CONTOUR_PROBABILITY,recovered_position_contour_scale=RECOVERED_CONTOUR_SCALE,recovered_position_contour_centre='mean of the finite per-draw positions of the image',recovered_position_contours=contoured,not_recovered_images=int(missed.sum()),extra_images=int(len(extra)) if has_extra else 0,stretch_direction=stretch_text,stretch_sticks=sticks,redrawn_from_tables=bool(redrawn),insets=inset_info,candidate_marker='diamond' if show_candidates else None,central_statistic='zero contour of pointwise posterior median determinant; same draws as band',z_source=9.,reporting_draws=int(reporting_draws),model='parametric + conditional GRF realization of each draw; no GP displacement' if shared_grf else 'parametric only; no shared GRF available',grf_field=grf_field,grf_derivatives=PLOT_FIELD_VERSION,bands=list(bands),catalog_images=len(catalog),resolution=n,determinant_resolution=int(det.shape[0]),critical_definition='median over draws of det(I - Hessian_draw) = 0',cache_fingerprint=str(fingerprint),marker_photometry=str(photpath) if photpath else None,magnitude_band=sorted(set(marker_table.loc[valid, 'magnitude_band'])),marker_photometry_catalog=str(getattr(getattr(getattr(config, 'model', None), 'image_constraints', None), 'catalog_path', '')),matched_magnitudes=int(valid.sum()),missing_magnitude_policy='minimum marker area 9 pt^2',marker_area='clip(16*10**(-0.2*(m-26)),9,64) pt^2',crop_padding_arcsec=3.,crop_pixel_limits=limits,candidate_catalog=str(candidate_path) if candidate_path else None,candidate_overlays=[r['id'] for r in overlay_rows]))
+        store.write_figure_record(output, dict(run=config.paths.run_name,image_position_marker='square',recovered_position_probability=RECOVERED_CONTOUR_PROBABILITY,recovered_position_contour_scale=RECOVERED_CONTOUR_SCALE,recovered_position_contour_centre='mean of the finite per-draw positions of the image',recovered_position_contours=contoured,not_recovered_images=int(missed.sum()),extra_images=int(len(extra)) if has_extra else 0,redrawn_from_tables=bool(redrawn),insets=inset_info,candidate_marker='diamond' if show_candidates else None,central_statistic='zero contour of pointwise posterior median determinant; same draws as band',z_source=9.,reporting_draws=int(reporting_draws),model='parametric + conditional GRF realization of each draw; no GP displacement' if shared_grf else 'parametric only; no shared GRF available',grf_field=grf_field,grf_derivatives=PLOT_FIELD_VERSION,bands=list(bands),catalog_images=len(catalog),resolution=n,determinant_resolution=int(det.shape[0]),critical_definition='median over draws of det(I - Hessian_draw) = 0',cache_fingerprint=str(fingerprint),marker_photometry=str(photpath) if photpath else None,magnitude_band=sorted(set(marker_table.loc[valid, 'magnitude_band'])),marker_photometry_catalog=str(getattr(getattr(getattr(config, 'model', None), 'image_constraints', None), 'catalog_path', '')),matched_magnitudes=int(valid.sum()),missing_magnitude_policy='minimum marker area 9 pt^2',marker_area='clip(16*10**(-0.2*(m-26)),9,64) pt^2',crop_padding_arcsec=3.,crop_pixel_limits=limits,candidate_catalog=str(candidate_path) if candidate_path else None,candidate_overlays=[r['id'] for r in overlay_rows]))
         log(f"[outputs] RGB critical overview written: {output}")
         written.append(output)
     return written
@@ -368,19 +341,6 @@ def read_saved_extra_images(tables):
         return read_saved_table(tables, 'image_recovery_extra_images', ('family_id',))
     except (FileNotFoundError, pd.errors.EmptyDataError):
         return common_extra_images(pd.DataFrame(), 1)
-
-
-def read_saved_stretch_directions(tables, stem, *, log=print):
-    """The stretch directions the overview drew (table ``<stem>_stretch_directions``), else the mass figure's
-    ``image_catalog_arc_directions*`` (the same table at the observed images), else None."""
-    saved = store.entries(tables)[store.TABLES]
-    candidates = [f'{stem}_stretch_directions'] + sorted(name for name in saved if name.startswith('image_catalog_arc_directions'))
-    for name in candidates:
-        if name in saved:
-            log(f'[redraw] stretch directions from {name}')
-            return read_saved_table(tables, name, ('image_label',))
-    log('[redraw] no saved stretch directions: the figure is drawn without sticks')
-    return None
 
 
 def saved_section(saved, name, path):
@@ -474,7 +434,7 @@ def check_saved_draws(indices, tables, stem):
 def redraw_rgb_critical(run_dir, *, log=print):
     """Draw the RGB critical overviews of a finished run again from its saved results (``final/results.h5``, or the
     loose tables of an old run): the band of the arrays ``<stem>``, the catalog ``image_fit_quality``, the extra
-    images, the stretch directions and the position contours of the saved image recovery.  Run from the repository root (the run's catalog and imaging paths are
+    images and the position contours of the saved image recovery.  Run from the repository root (the run's catalog and imaging paths are
     relative to it).  The model description of the records comes from the run's ``final/artifacts/config.json``.
     Refuses, before writing anything, a run without a completed image recovery and a band whose draws the image
     recovery does not hold.  Does not rewrite the arrays ``<stem>`` or the record ``<stem>_band``; rewrites the
@@ -532,7 +492,7 @@ def redraw_rgb_critical(run_dir, *, log=print):
         paths = draw_rgb_critical(view, state.reference, catalog, extra, imaging,
                                   plots.figure_path(figures, stem + '.pdf', config.paths.figure_prefix), tables,
                                   determinant=saved['determinant'], lower=saved['lower'], upper=saved['upper'],
-                                  contours=contours, stretch_directions=read_saved_stretch_directions(tables, stem, log=log),
+                                  contours=contours,
                                   fingerprint=draws.key, reporting_draws=len(draws), shared_grf=shared_grf,
                                   grf_field=grf_field, redrawn=True, log=log)
         contoured = store.read_figure_record(paths[0])['recovered_position_contours']
