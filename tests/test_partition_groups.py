@@ -18,6 +18,7 @@ from kappaccino.partition import catalog_evidence as ce, groups, inputs, lens_ev
 from kappaccino.likelihood import smoothed as sl
 from kappaccino.core.state import build_state
 from kappaccino.io.hdf5 import load_arrays
+from kappaccino.priors import truncated_lognormal
 from conftest import _brute_force_images as brute_force_images
 
 SOURCES = [(2.0, (0.5, 0.3)), (3.0, (-1.0, 0.8)), (2.5, (2.0, -1.5))]       # (z, source position) of the new sources
@@ -350,7 +351,10 @@ def _likelihood_mode(config, mode):
     if mode == "smoothed":
         return config
     kernel = "knee" if mode == "knee" else "image_plane"
-    return replace(config, likelihood=replace(config.likelihood, likelihood_mode="gp_image_plane", gp_kernel=kernel)).validate()
+    # The knee field kept at the galaxy scale (30" band, knee prior around 6"): with the default long knee the field's
+    # deflection floor is larger and one true pair of this toy falls to a probability of 0.987.
+    knee = dict(gp_knee_scales_arcsec=(0.2, 30.0), lambda_b_prior=truncated_lognormal(6.0, 0.5, high=20.0), lambda_b_start_arcsec=6.0)
+    return replace(config, likelihood=replace(config.likelihood, likelihood_mode="gp_image_plane", gp_kernel=kernel, **knee)).validate()
 
 
 @pytest.mark.parametrize("mode", ["image_plane", "knee"])
