@@ -669,8 +669,10 @@ initial search always uses system blocks, while the chain-start step and NUTS us
 The sampled hyperparameters are $\sigma_{\mathrm{GRF}}$, $\lambda_{\mathrm{b}}$, $\ell$, $\sigma_{\mathrm{GP}}$ and
 $\sigma_{\mathrm{meas}}$. The slope $\gamma$ is fixed at 4 unless `gp_knee_gamma_prior` frees the slope, with a
 `dist.Uniform` or a two-sided `dist.TruncatedNormal` whose bounds also set the range of the tables. A slope of 2
-corresponds to truncated isothermal lumps, 4 to NFW-like cusps and 6 to cored lumps. The prior on the knee keeps the
-field at the galaxy scale. Left free, the knee moved to 14–25″ and absorbed the halo-scale misfit. The option
+corresponds to truncated isothermal lumps, 4 to NFW-like cusps and 6 to cored lumps. The cluster run files
+leave the knee free up to 200″, with wavelengths up to 1000″ in the spectrum. On the Hera mock cluster the knee then
+settles near 45″ and the enclosed mass stays within 1% out to 111″. A largest wavelength of 100″ is too short for such
+a knee, because the longitudinal deflection correlation turns negative at 0.29 of that wavelength. The option
 `lambda_b_fixed_arcsec` holds the knee at one value instead. The production fits use the following settings.
 
 ```python
@@ -685,10 +687,11 @@ grf_likelihood = LikelihoodConfig(
     sigma_sel_prior=None,
     gp_knee_gamma=4.0,
     gp_knee_gamma_prior=None,                                   # dist.TruncatedNormal(4.0, 0.5, low=2.0, high=6.0) samples it
-    gp_knee_scales_arcsec=(0.2, 100.0),
-    lambda_b_prior=truncated_lognormal(6.0, 0.6, low=2.5, high=8.0),
-    lambda_b_start_arcsec=6.0,
-    sigma_grf_prior=truncated_lognormal(0.08, 0.5, low=1e-4, high=0.5),
+    gp_knee_scales_arcsec=(0.2, 1000.0),
+    gp_knee_lambda_grid=(0.5, 200.0, 64),
+    lambda_b_prior=truncated_lognormal(50.0, 1.0, low=0.5, high=200.0),
+    lambda_b_start_arcsec=50.0,
+    sigma_grf_prior=truncated_lognormal(0.08, 0.5, low=1e-4, high=2.0),
     sigma_grf_start_arcsec=0.08,
     gp_knee_ell_gp_prior=truncated_lognormal(1.0, 0.4, low=0.4, high=3.0),
     gp_knee_ell_gp_start_arcsec=1.0,
