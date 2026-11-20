@@ -75,12 +75,8 @@ def parser() -> argparse.ArgumentParser:
 
 
 def step_line(module) -> str:
-    """The indented line of ``--list`` with the steps of ``module``: its compute and its render steps (TRANSITIONAL: or
-    the steps of a module not yet converted, which computes and draws in one)."""
-    if module.converted:
-        return (f"    compute: {', '.join(module.compute_steps) or '-'}; "
-                f"render: {', '.join(module.render_steps) or '-'}")
-    return f"    steps: {', '.join(module.steps)} (compute and render in one: not converted yet)"
+    """The indented line of ``--list`` with the compute and the render steps of ``module``."""
+    return f"    compute: {', '.join(module.compute_steps) or '-'}; render: {', '.join(module.render_steps) or '-'}"
 
 
 def module_table(config=None) -> str:

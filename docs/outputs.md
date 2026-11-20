@@ -122,7 +122,7 @@ constrain `sigma_meas` (no images closer than `ell_gp`) that spread is the prior
   `image_count_recovery`, `model_magnification`, `posterior_image_residual_draws`, `posterior_image_rms`,
   `posterior_extra_images`, `image_recovery_extra_images`, `position_coverage`, `chain_convergence` and those of the
   figures below; records `run_summary`, `runtime`, `audit`, the provenance records of the figures and the
-  completeness record `output_module_<name>` of each converted output module (see [Output modules](#output-modules));
+  completeness record `output_module_<name>` of each output module (see [Output modules](#output-modules));
   arrays such as `conditional_field_maps` and `member_diagnostic_draws`, and the arrays a figure is drawn from, named
   by the figure without its prefix (`critical_curves`, `subhalo_mass_concentration`, `magnification_recovery`,
   `truth_recovery_residuals`); for simulated clusters the tables `truth_recovery_m2d_aperture_profile` and the like
@@ -195,8 +195,6 @@ of a full pass and of a later render-only pass come from the same code and the s
 | `mass` | `critical_curves` (arrays `critical_curves`), `aperture_masses` (`member_aperture_masses`, record `aperture_mass_histogram`), `zeta_masses` (`member_zeta_masses`, record `zeta_masses`, arrays `subhalo_mass_concentration`) | `critical_curves`, `zeta_masses` (the figure and the table `zeta_mass_function`) | `images` | always; the masses with a truth convergence map |
 | `truth` | `truth_maps` (FITS, profile tables, record `truth_recovery`, arrays `truth_recovery_residuals`, the published ratios), `magnification_recovery`, `cumulative_source_area`, `magnification_scatter` | `magnification_recovery`, `cumulative_source_area`, `truth_residuals`, `mass_profile`, `kappa_mass_residuals` | `images` | with `truth.kappa_true_fits` |
 | `rgb` | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and, once, `fold_data`; for the JWST overview also `position_contours` and `small_lambda` (before the mass figure) and `paper_cutouts` (see [The rgb module](#the-rgb-module)) | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and `fold_cutouts`; for the JWST overview also `small_lambda`, `apj_fold_cutouts` and `paper_cutouts` | `images` | with `image_catalog.image_dir` and observed images |
-
-All five modules are split into compute and render.
 
 The product of `images` is read from the store, so `mass`, `truth` and `rgb` get the same tables in every pass mode:
 
@@ -287,7 +285,7 @@ the figure (same centres, fields and redshifts), and fails the step otherwise.
   machine without the imaging.
 
 `render`
-: product and render only (`kappaccino outputs RUN --render`): every figure of a converted module drawn again from
+: product and render only (`kappaccino outputs RUN --render`): every figure drawn again from
   what the last compute saved. The run is loaded without its evaluator (`saved_run.load_saved_run`: configuration,
   state and posterior; on Hera 3 s, of which 0.8 s go to about 40 one-operation JAX kernels the state's arrays need,
   and no model function is compiled), the reporting draws are never built, and the files the computes read (truth
@@ -301,7 +299,7 @@ instead of being computed again in secret.
 
 ### The completeness record
 
-When a converted module's compute starts, its record `output_module_<name>` in `results.h5` is set to
+When a module's compute starts, its record `output_module_<name>` in `results.h5` is set to
 `{"complete": false, "started_at": ...}`; when the compute ends it holds `complete` (true only when every compute step
 ran without failing), `computed_at`, the compute steps (`status`, `seconds`, `wrote`, and `error` or `reason`), and
 when the compute used the reporting draws `reporting_draws`, `image_draws`, `draws_seed` and `draws_key`. A compute
@@ -325,7 +323,7 @@ whose compute steps succeeded. A module that cannot give its dependents what the
 (`images` without its recovery, `truth` without its maps) and is failed with no product. A module that requires
 another runs only when that module gave its product, whatever it is: `mass`, `truth` and `rgb` therefore need a
 successful image recovery. The log ends with the list of failed modules. `run_summary` records each module under
-`modules`, in run order: `status` (`done`, `inactive`, `skipped`, `unavailable` or `failed`), `mode` (the pass mode),
+`modules`, in run order: `status` (`done`, `inactive`, `skipped` or `failed`), `mode` (the pass mode),
 `seconds`, `steps` (each compute step's `status`, `seconds`, `wrote` and `error` or `reason`; in a render pass those of
 the completeness record), `render_steps` when the module rendered, `reporting_draws` and `image_draws` when its
 compute used the draws, and the module's `reason` or `error`.
@@ -386,7 +384,7 @@ change would no longer describe the saved fit. `--draws N` sets `reporting.draws
 the run command's `--draws` does; both are in the run hash, and this is the one change of that kind a rerun allows.
 `--list` prints the modules with their `requires`, `after` and compute and render steps; given a run, it also says
 whether each applies to it, judged from the configuration alone. At the end the command prints the fit numbers of the
-saved `run_summary`. The exit code is 1 when a module failed (an unavailable unconverted module does not count) or
+saved `run_summary`. The exit code is 1 when a module failed or
 `--fail-fast` stopped the pass (one line names the error; the step logged its traceback), and 2 for a usage error, a
 missing file or a refused `--set`.
 
@@ -406,7 +404,7 @@ difference per figure). `--ignore-entry`, `--ignore-key` (record keys, table col
 `--ignore-file` take shell patterns; the timing keys `seconds`, `*_seconds`, `started_at` and `computed_at` are
 ignored unless `--no-default-ignores`. It exits with 1 on any other difference.
 
-### Adding a module
+### Writing a new module with compute, product and render
 
 A module is a subclass of {class}`~kappaccino.outputs.base.OutputModule` with a `name`, the modules whose products it
 reads (`requires`) or that it should follow (`after`), an optional `active` that returns the reason it does not apply,
@@ -449,31 +447,23 @@ class GGSLModule(OutputModule):
 ```
 
 Put it in a file of `src/kappaccino/outputs/` and add an instance to `MODULES` in `outputs/registry.py`, where its
-position sets its place among modules with no ordering between them. A step is one product or a closely tied set of
-products; `ctx.ok(step)` tells whether a step of the current phase ran without an error (a step may return None on
-success), and `ctx.computed(step)` whether a compute step ran and wrote something. The context (`ctx`) holds
-`config`, `state`, `posterior`, `audit`, `paths`, `stage`, `tables`, `figures`, `prefix`, `log`, `summary`,
-`products`, `mode`, `completion` (product and render: the completeness record), `imaging(image_config)`, which loads
-each imaging variant once per pass, and for compute steps only `evaluator` and the reporting draws `draws`. `active`
-should decide from `ctx.config` and the products of the modules it requires: `--list` calls it with only the saved
-configuration (no state, no products). Keep the imports of JAX and the plotting code inside the methods: the
-configuration imports the registry to check module names. Set `checkpoint = True` on a slow imaging module so that the
-run summary is written before it.
+position sets its place among modules with no ordering between them. The context (`ctx`) holds `config`, `state`,
+`posterior`, `audit`, `paths`, `stage`, `tables`, `figures`, `prefix`, `log`, `summary`, `products`, `mode`,
+`completion` (product and render: the completeness record), `imaging(image_config)`, which loads each imaging variant
+once per pass, and for compute steps only `evaluator` and the reporting draws `draws`. `active` should decide from
+`ctx.config` and the products of the modules it requires: `--list` calls it with only the saved configuration (no
+state, no products). Keep the imports of JAX and the plotting code inside the methods: the configuration imports the
+registry to check module names. Set `checkpoint = True` on a slow imaging module so that the run summary is written
+before it.
 
-### Converting a module to compute and render
-
-This is how the five modules were converted from a single `run`.
-
-1. **List every product.** For each step of `run`, write down what it writes (tables, records, arrays, FITS, figures)
-   and what each figure function reads. Most writers already save part of what their figure needs (a table, a
-   provenance record); the gap is usually an in-memory array or a number passed straight from the computation to the
-   plot.
-2. **Split each writer in two.** Keep the computation in a function that writes to the store and returns something
-   that is not None when it wrote (`save_magnification_recovery`, `save_zeta_masses`, `critical_curve_maps` plus one
-   `store.write_arrays`), and the drawing in one that takes the stage and the figure path and reads the store
-   (`render_magnification_recovery`, `render_zeta_masses`, `render_critical_curves`). Leave the drawing code itself as
-   it is (move it, do not reformat it), so the figure does not change. Where scripts or tests call the old
-   `write_<name>`, keep it as the two in a row; it is not a shim, it is the same function.
+1. **Steps.** A step is one product or a closely tied set of products, and every step name (its part before any `:`,
+   for steps named per variant) is declared in `compute_steps` or `render_steps`. `ctx.ok(step)` tells whether a step
+   of the current phase ran without an error (a step may return None on success), and `ctx.computed(step)` whether a
+   compute step ran and wrote something.
+2. **Split the computation from the drawing.** Keep the computation in a function that writes to the store and
+   returns something that is not None when it wrote (`save_magnification_recovery`, `save_zeta_masses`,
+   `critical_curve_maps` plus one `store.write_arrays`), and the drawing in one that takes the stage and the figure
+   path and reads the store (`render_magnification_recovery`, `render_zeta_masses`, `render_critical_curves`).
 3. **Decide what to save.** Save what the figure draws, not what was convenient to compute: the per-pixel percentiles
    of the critical-curve eigenvalues, not the per-draw maps; the masked pixel values of the magnification figure, not
    the whole maps; the members actually shown in the subhalo figure, with the selection made in compute. Selections,
@@ -487,20 +477,17 @@ This is how the five modules were converted from a single `run`.
    `subhalo_mass_concentration`, `magnification_recovery`, `truth_recovery_residuals`), or after the existing table or
    record family (`truth_recovery`, `truth_literature_m2d_ratios`). Reuse an existing entry whenever it already holds
    the data, and write the entries of one product in one `store.batch`. Document each new entry here.
-5. **Write the module.** `compute_steps` keep the old step names; render steps reuse the name of the compute step they
-   draw, so `render_step(name, ...)` finds its compute step by default, and get `needs="other_step"` when they draw
-   another (`truth_residuals` needs `truth_maps`). Numbers for `run_summary` (`summary_keys`) are set in compute. A
-   compute may still pass in-memory results between its own steps (`truth` passes the truth maps to the
-   magnification steps); only product and render must read the store. If a figure was drawn only under a condition
-   on the data (`truth` draws the profiles only with a profile centre), save that condition (here `center` in the
-   record `truth_recovery`) and test it in render.
+5. **Compute.** Render steps reuse the name of the compute step they draw, so `render_step(name, ...)` finds its
+   compute step by default, and get `needs="other_step"` when they draw another (`truth_residuals` needs
+   `truth_maps`). Numbers for `run_summary` (`summary_keys`) are set in compute. A compute may pass in-memory results
+   between its own steps (`truth` passes the truth maps to the magnification steps); only product and render must
+   read the store. If a figure is drawn only under a condition on the data (`truth` draws the profiles only with a
+   profile centre), save that condition (here `center` in the record `truth_recovery`) and test it in render.
 6. **Write `product`** as a store read of exactly what the dependents use, for example the image table for `images`:
    `return {"image_df": store.read_table(ctx.stage, "image_fit_quality"), ...}`. Never return an object built in
-   compute. A `store.MissingEntry` in product makes the module unavailable with the hint to run its compute, which is
-   what a render pass needs. A module that requires another reads that module's product (`mass` and `truth` take
-   `ctx.products["images"]["image_df"]`), not the store. When all five modules are converted, delete the
-   transitional path (`run`, `steps`, `converted`, `NOT_CONVERTED` in `outputs/base.py`, the unconverted branch of
-   `--list`, and the transitional test).
+   compute. A `store.MissingEntry` in product fails the module with `ModuleUnavailable` and the hint to run its
+   compute, which is what a render pass needs. A module that requires another reads that module's product (`mass`
+   and `truth` take `ctx.products["images"]["image_df"]`), not the store.
 7. **Test.** In `tests/test_output_modules.py` the fake `Phased` module shows the pattern: run a full pass, delete the
    figure, run a render pass (`OutputContext(..., mode="render")`) and check that the figure comes back without
    compute; any use of `ctx.draws` or `ctx.evaluator` there raises `ComputeOnly` and fails the step, which is the
@@ -508,11 +495,11 @@ This is how the five modules were converted from a single `run`.
    `--remap /home/dutra/sdev/burkelenscluster=$PWD`), run the code before the change on one copy and after it on
    another, then `scripts/compare_outputs.py` the two: every old entry, every FITS and text file and every figure must
    be identical, with only new entries and the module records of `run_summary` added. Then copy the new run, delete
-   the module's figures, run `--render` on the copy and compare again: the figures must come back pixel-identical.
-   Do the render pass with `Evaluator.__init__`, `reporting.draws.reporting_draws` and `saved_run.load_run` patched
-   to raise, to prove it evaluates nothing.
+   its figures, run `--render` on the copy and compare again: the figures must come back pixel-identical. Do the
+   render pass with `Evaluator.__init__`, `reporting.draws.reporting_draws` and `saved_run.load_run` patched to
+   raise, to prove it evaluates nothing.
 
-Pitfalls met in `mass` and `truth`:
+Pitfalls:
 
 - A figure that redraws "the same thing" from a recomputed quantity is not the same figure. Render recomputes only
   what is deterministic and cheap from saved arrays (the zero contours of a saved median map, through the same

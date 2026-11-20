@@ -23,17 +23,19 @@ class Fake(OutputModule):
     def active(self, ctx):
         return self.inactive
 
-    def run(self, ctx):
+    def compute(self, ctx):
         self.calls.append(self.name)
         if self.draws:
             ctx.draws
         if self.error is not None:
             raise self.error
+
+    def product(self, ctx):
         return f"product of {self.name}"
 
 
-def context(tmp_path=None, log=None, mode="full"):
-    paths = None if tmp_path is None else SimpleNamespace(tables=tmp_path / "tables", figures=tmp_path / "figures", root=tmp_path)
+def context(tmp_path, log=None, mode="full"):
+    paths = SimpleNamespace(tables=tmp_path / "tables", figures=tmp_path / "figures", root=tmp_path)
     return OutputContext(None, None, None, None, {}, paths, log=log if log is not None else (lambda _: None), mode=mode)
 
 
@@ -72,23 +74,23 @@ def test_cycles_and_unknown_names_are_errors():
         plan_modules([Fake("a")], skip=["b"])
 
 
-def test_only_pulls_in_what_is_required():
+def test_only_pulls_in_what_is_required(tmp_path):
     lines = []
     calls = []
     modules = [Fake("a", calls=calls), Fake("b", requires=["a"], calls=calls), Fake("c", requires=["b"], calls=calls),
                Fake("d", calls=calls)]
-    ctx = context(log=lines.append)
+    ctx = context(tmp_path, log=lines.append)
     records = run_modules(ctx, modules, only=["c"])
     assert calls == ["a", "b", "c"] and list(records) == ["a", "b", "c"]
     assert ctx.products == {"a": "product of a", "b": "product of b", "c": "product of c"}
     assert any("added because a selected module requires them: b (by c), a (by b)" in line for line in lines)
 
 
-def test_skip_cascades_to_dependents():
+def test_skip_cascades_to_dependents(tmp_path):
     calls = []
     modules = [Fake("a", calls=calls), Fake("b", requires=["a"], calls=calls), Fake("c", requires=["b"], calls=calls),
                Fake("d", after=["a"], calls=calls)]
-    ctx = context()
+    ctx = context(tmp_path)
     records = run_modules(ctx, modules, skip=["a"])
     assert calls == ["d"]
     assert records["a"] == {"status": "skipped", "seconds": 0.0, "reason": "in outputs.skip"}
@@ -96,10 +98,10 @@ def test_skip_cascades_to_dependents():
     assert records["c"]["reason"] == "requires b, which was skipped" and records["d"]["status"] == "done"
 
 
-def test_inactive_module_gives_its_reason():
+def test_inactive_module_gives_its_reason(tmp_path):
     lines, calls = [], []
     modules = [Fake("truth", inactive="no truth maps configured", calls=calls), Fake("plots", requires=["truth"], calls=calls)]
-    ctx = context(log=lines.append)
+    ctx = context(tmp_path, log=lines.append)
     records = run_modules(ctx, modules)
     assert calls == []
     assert records["truth"] == {"status": "inactive", "seconds": 0.0, "reason": "no truth maps configured"}
@@ -107,11 +109,11 @@ def test_inactive_module_gives_its_reason():
     assert "[outputs] truth: inactive (no truth maps configured)" in lines
 
 
-def test_a_failing_module_is_isolated_and_recorded():
+def test_a_failing_module_is_isolated_and_recorded(tmp_path):
     lines, calls = [], []
     modules = [Fake("a", error=RuntimeError("broken map"), calls=calls), Fake("b", requires=["a"], calls=calls),
                Fake("c", calls=calls)]
-    ctx = context(log=lines.append)
+    ctx = context(tmp_path, log=lines.append)
     records = run_modules(ctx, modules)
     assert calls == ["a", "c"]
     assert records["a"]["status"] == "failed" and records["a"]["error"] == "RuntimeError: broken map"
@@ -124,26 +126,26 @@ def test_a_failing_module_is_isolated_and_recorded():
     assert lines[-1].startswith("[outputs] failed modules: a")
 
 
-def test_fail_fast_reraises():
+def test_fail_fast_reraises(tmp_path):
     calls = []
     modules = [Fake("a", error=RuntimeError("broken"), calls=calls), Fake("c", calls=calls)]
-    ctx = context()
+    ctx = context(tmp_path)
     with pytest.raises(RuntimeError, match="broken"):
         run_modules(ctx, modules, fail_fast=True)
     assert calls == ["a"] and ctx.summary["modules"]["a"]["status"] == "failed"
     # KeyboardInterrupt is never caught.
     with pytest.raises(KeyboardInterrupt):
-        run_modules(context(), [Fake("a", error=KeyboardInterrupt())])
+        run_modules(context(tmp_path), [Fake("a", error=KeyboardInterrupt())])
 
 
-def test_checkpoint_runs_once_before_the_first_imaging_module():
+def test_checkpoint_runs_once_before_the_first_imaging_module(tmp_path):
     events = []
     modules = [Fake("a", calls=events), Fake("rgb", checkpoint=True, calls=events), Fake("folds", checkpoint=True, calls=events)]
     # (two checkpoint modules: the checkpoint still runs once)
-    run_modules(context(), modules, checkpoint=lambda: events.append("checkpoint"))
+    run_modules(context(tmp_path), modules, checkpoint=lambda: events.append("checkpoint"))
     assert events == ["a", "checkpoint", "rgb", "folds"]
     events.clear()
-    run_modules(context(), modules, skip=["rgb", "folds"], checkpoint=lambda: events.append("checkpoint"))
+    run_modules(context(tmp_path), modules, skip=["rgb", "folds"], checkpoint=lambda: events.append("checkpoint"))
     assert events == ["a"]
 
 
@@ -157,7 +159,7 @@ def test_draws_are_built_lazily(monkeypatch, tmp_path):
     monkeypatch.setattr(draws_module, "reporting_draws", lambda *a: built.append(1) or FakeDraws([0, 1]))
     ctx = context(tmp_path)
     records = run_modules(ctx, [Fake("a"), Fake("b")])
-    assert built == [] and not ctx.draws_built and "reporting_draws" not in ctx.summary
+    assert built == [] and "reporting_draws" not in ctx.summary
     assert "reporting_draws" not in records["a"]
     records = run_modules(ctx, [Fake("a", draws=True), Fake("b")])
     assert built == [1] and ctx.summary["reporting_draws"] == 2 and ctx.draws.cache_stage == tmp_path
@@ -165,7 +167,7 @@ def test_draws_are_built_lazily(monkeypatch, tmp_path):
     assert records["a"]["reporting_draws"] == 2 and records["a"]["image_draws"] == 3 and "reporting_draws" not in records["b"]
 
 
-def test_a_failed_draws_build_is_not_repeated(monkeypatch):
+def test_a_failed_draws_build_is_not_repeated(monkeypatch, tmp_path):
     from kappaccino.reporting import draws as draws_module
     built = []
 
@@ -174,7 +176,7 @@ def test_a_failed_draws_build_is_not_repeated(monkeypatch):
         raise RuntimeError("no room for the draws")
 
     monkeypatch.setattr(draws_module, "reporting_draws", broken)
-    ctx = context()
+    ctx = context(tmp_path)
     records = run_modules(ctx, [Fake("a", draws=True), Fake("b", draws=True)])
     assert built == [1]
     assert records["a"]["error"] == records["b"]["error"] == "RuntimeError: no room for the draws"
@@ -215,10 +217,10 @@ def test_outputs_stage_builds_draws_only_in_the_step_that_needs_them(monkeypatch
 class Stepped(OutputModule):
     """A module of three steps: ``table`` (whose result ``figure`` needs) and ``other``."""
 
-    def __init__(self, name="stepped", fail=(), product=True):
-        self.name, self.fail, self.product, self.calls = name, set(fail), product, []
+    compute_steps = ("table", "figure", "other")
 
-    requires_table = True
+    def __init__(self, name="stepped", fail=(), product=True):
+        self.name, self.fail, self.gives, self.calls = name, set(fail), product, []
 
     def _work(self, step):
         self.calls.append(step)
@@ -226,8 +228,8 @@ class Stepped(OutputModule):
             raise ValueError(f"{step} broke")
         return step
 
-    def run(self, ctx):
-        table = ctx.step("table", self._work, "table")
+    def compute(self, ctx):
+        ctx.step("table", self._work, "table")
         if ctx.ok("table"):
             ctx.step("figure", self._work, "figure")
         else:
@@ -235,13 +237,15 @@ class Stepped(OutputModule):
         ctx.step("other", self._work, "other")
         if not ctx.ok("table"):
             raise ModuleUnavailable("no table (the table step failed)")
-        return table if self.product else None
+
+    def product(self, ctx):
+        return "table" if self.gives else None
 
 
-def test_a_failing_step_does_not_stop_the_module():
+def test_a_failing_step_does_not_stop_the_module(tmp_path):
     lines = []
     module = Stepped(fail={"table"})
-    ctx = context(log=lines.append)
+    ctx = context(tmp_path, log=lines.append)
     records = run_modules(ctx, [module, Fake("after", requires=["stepped"])])
     assert module.calls == ["table", "other"]
     steps = records["stepped"]["steps"]
@@ -255,26 +259,26 @@ def test_a_failing_step_does_not_stop_the_module():
     assert sum("Traceback" in line for line in lines) == 1          # the step's; the module's own line has none
     assert "[outputs] stepped.figure: skipped (table failed)" in lines
     # A failed step that leaves the product: the module is failed and the module that requires it still runs.
-    records = run_modules(context(), [Stepped(fail={"other"}), Fake("after", requires=["stepped"])])
+    records = run_modules(context(tmp_path), [Stepped(fail={"other"}), Fake("after", requires=["stepped"])])
     assert records["stepped"]["status"] == "failed" and records["stepped"]["error"] == "failed steps: other"
     assert records["after"]["status"] == "done"
     # A module that returned None satisfies its dependents.
-    records = run_modules(context(), [Stepped(product=False), Fake("after", requires=["stepped"])])
+    records = run_modules(context(tmp_path), [Stepped(product=False), Fake("after", requires=["stepped"])])
     assert records["stepped"]["status"] == records["after"]["status"] == "done"
 
 
-def test_a_failing_step_with_fail_fast_reraises():
+def test_a_failing_step_with_fail_fast_reraises(tmp_path):
     lines = []
     module = Stepped(fail={"table"})
-    ctx = context(log=lines.append)
+    ctx = context(tmp_path, log=lines.append)
     with pytest.raises(ValueError, match="table broke"):
         run_modules(ctx, [module], fail_fast=True)
     assert module.calls == ["table"]
     assert sum("Traceback" in line for line in lines) == 1          # logged once, by the step
     record = ctx.summary["modules"]["stepped"]
     assert record["status"] == "failed" and record["steps"]["table"]["status"] == "failed"
-    with pytest.raises(RuntimeError, match="outside a module.s compute, render or run"):
-        context().step("x", print)
+    with pytest.raises(RuntimeError, match="outside a module.s compute or render"):
+        context(tmp_path).step("x", print)
 
 
 def test_imaging_is_loaded_once_per_variant(monkeypatch, synthetic_config):
@@ -375,11 +379,13 @@ class SummaryModule(OutputModule):
     def __init__(self, name, key, requires=(), fail=False):
         self.name, self.summary_keys, self.requires, self.fail = name, (key,), tuple(requires), fail
 
-    def run(self, ctx):
+    def compute(self, ctx):
         draws = ctx.draws
         if self.fail:
             raise RuntimeError(f"{self.name} broke")
         ctx.summary[self.summary_keys[0]] = {"value": f"{self.name} over {len(draws)} draws"}
+
+    def product(self, ctx):
         return {}
 
 
@@ -674,25 +680,6 @@ def test_an_undeclared_step_is_an_error(tmp_path):
 
     records = run_modules(context(tmp_path), [Wrong("a")])
     assert "compute step 'other' is not in its compute_steps ['table', 'nothing']" in records["a"]["error"]
-
-
-def test_the_transitional_path_of_an_unconverted_module(tmp_path):
-    # TRANSITIONAL: delete with the run() path once every module is converted.
-    calls, events = [], []
-    modules = [Fake("old", calls=calls), Phased("new", requires=["old"], events=events)]
-    assert not modules[0].converted and modules[1].converted
-    records = run_modules(context(tmp_path), modules)
-    assert calls == ["old"] and records["old"]["status"] == "done" and events[0] == "new.compute"
-    run_modules(context(tmp_path, mode="compute"), modules)
-    assert calls == ["old", "old"]
-    # A render pass cannot run it; the converted module that requires it still renders (reading the store).
-    events.clear()
-    ctx = context(tmp_path, mode="render")
-    records = run_modules(ctx, modules)
-    assert calls == ["old", "old"] and events == ["new.product", "new.render"]
-    assert records["old"] == {"status": "unavailable", "mode": "render", "seconds": records["old"]["seconds"],
-                              "reason": "not converted to compute/render yet"}
-    assert ctx.products["old"] is None and records["new"]["status"] == "done"
 
 
 def test_a_render_pass_keeps_the_numbers_of_the_last_compute(monkeypatch, tmp_path):

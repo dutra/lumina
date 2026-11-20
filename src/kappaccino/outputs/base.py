@@ -46,9 +46,6 @@ REBUILT_FIELD_WARNING = (
 
 MODES = ("full", "compute", "render")
 COMPLETION_PREFIX = "output_module_"
-# TRANSITIONAL: the reason a module that still defines only ``run`` gives in a render pass.  Deleted with the
-# transitional path once fit, images and rgb are converted (see OutputModule.converted).
-NOT_CONVERTED = "not converted to compute/render yet"
 
 
 def completion_name(module: str) -> str:
@@ -95,7 +92,7 @@ class OutputContext:
         self._module: OutputModule | None = None      # the module running, its phase and step, its step records
         self._phase: str | None = None
         self._step: str | None = None
-        self._steps: dict[str, dict] = {}             # the compute (or transitional run) steps
+        self._steps: dict[str, dict] = {}             # the compute steps
         self._render_steps: dict[str, dict] = {}
         self._completion: dict[str, Any] | None = None  # the completeness record render and product read
         self._fail_fast = False
@@ -123,9 +120,9 @@ class OutputContext:
         return self._draws is not None
 
     def _compute_only(self, what: str) -> None:
-        """Raise :class:`ComputeOnly` unless the lens may be evaluated here: in a module's compute (or transitional run),
-        or outside the modules, in a pass that is not a render pass."""
-        if self.mode != "render" and (self._phase in ("compute", "run") or self._module is None):
+        """Raise :class:`ComputeOnly` unless the lens may be evaluated here: in a module's compute, or outside the
+        modules, in a pass that is not a render pass."""
+        if self.mode != "render" and (self._phase == "compute" or self._module is None):
             return
         where = "outside any module" if self._module is None else (
             f"{self._module.name}.{self._step}" if self._step else f"{self._module.name} ({self._phase})")
@@ -201,16 +198,13 @@ class OutputContext:
         Raises
         ------
         RuntimeError
-            Outside a module's compute, render or (transitional) run, or for a step a converted module does not
-            declare in ``compute_steps`` or ``render_steps`` (its part before any ``:``).
+            Outside a module's compute or render, or for a step the module does not declare in ``compute_steps`` or
+            ``render_steps`` (its part before any ``:``).
         """
         module = self._module
-        if module is None or self._phase not in ("compute", "render", "run"):
-            raise RuntimeError("OutputContext.step called outside a module's compute, render or run")
-        declared = {"compute": module.compute_steps, "render": module.render_steps}.get(self._phase)
-        if declared is not None and name.split(":")[0] not in declared:
-            raise RuntimeError(f"output module {module.name!r}: {self._phase} step {name!r} is not in its "
-                               f"{self._phase}_steps {list(declared)}")
+        if module is None or self._phase not in ("compute", "render"):
+            raise RuntimeError("OutputContext.step called outside a module's compute or render")
+        self._check_declared(name, self._phase)
         label, records = self._label(name), self._records()
         started = time.perf_counter()
         self._step = name
@@ -233,6 +227,15 @@ class OutputContext:
             records[name]["wrote"] = result is not None
         self.log(f"[outputs] {label}: done in {seconds:.1f}s")
         return result
+
+    def _check_declared(self, name: str, phase: str) -> None:
+        """Raise RuntimeError unless ``name`` (its part before any ``:``) is a declared step of ``phase`` of the
+        current module."""
+        module = self._module
+        declared = module.compute_steps if phase == "compute" else module.render_steps
+        if name.split(":")[0] not in declared:
+            raise RuntimeError(f"output module {module.name!r}: {phase} step {name!r} is not in its "
+                               f"{phase}_steps {list(declared)}")
 
     def ok(self, name: str) -> bool:
         """Whether the step ``name`` of the current module's phase ran without an error."""
@@ -295,8 +298,6 @@ class OutputModule:
     description: str = ""
     compute_steps: tuple[str, ...] = ()
     render_steps: tuple[str, ...] = ()
-    # TRANSITIONAL: the steps of a module that still defines only ``run``; deleted with the transitional path.
-    steps: tuple[str, ...] = ()
     summary_keys: tuple[str, ...] = ()
     path_fields: tuple[str, ...] = ()
 
@@ -319,17 +320,6 @@ class OutputModule:
         """Draw the figures (and write any purely presentational table) as render steps, reading only the store, the
         configuration, ``ctx.state`` (the catalogs), ``ctx.posterior`` and :attr:`OutputContext.completion`; never
         ``ctx.evaluator`` nor ``ctx.draws``."""
-
-    # TRANSITIONAL: a module not yet split into compute and render defines ``run(ctx)`` instead of the three methods,
-    # which writes its products and figures and returns its product.  This path (``run``, ``converted``, ``steps``,
-    # NOT_CONVERTED and the branches of run_modules and the --list table that use them) is scaffolding for the parallel
-    # conversion of fit, images and rgb, and is deleted once all five modules are converted; it is not a
-    # compatibility layer.
-
-    @property
-    def converted(self) -> bool:
-        """Whether the module is split into compute, product and render (TRANSITIONAL, see ``run``)."""
-        return type(self).compute is not OutputModule.compute
 
     def __repr__(self) -> str:
         return f"<output module {self.name}>"
@@ -405,9 +395,9 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
     skipped too.  A failing step is recorded and the module goes on (:meth:`OutputContext.step`); an error outside the
     steps fails the module, and the other modules still run.  ``fail_fast`` re-raises the first error instead.
     ``checkpoint`` is called once, before the first module with ``checkpoint`` set that runs.  Every module of the
-    plan gets a record in ``ctx.summary["modules"]``: ``status`` ("done", "inactive", "skipped", "unavailable" or
-    "failed"), ``mode``, ``seconds``, ``steps`` (each compute step's ``status``, ``seconds``, ``wrote`` and ``error``
-    or ``reason``; in a render pass those of the saved completeness record), ``render_steps`` when it rendered,
+    plan gets a record in ``ctx.summary["modules"]``: ``status`` ("done", "inactive", "skipped" or "failed"),
+    ``mode``, ``seconds``, ``steps`` (each compute step's ``status``, ``seconds``, ``wrote`` and ``error`` or
+    ``reason``; in a render pass those of the saved completeness record), ``render_steps`` when it rendered,
     ``reporting_draws`` and ``image_draws`` when its compute used the draws, and ``reason`` or ``error``.  Returns
     those records."""
     if modules is None:
@@ -437,7 +427,7 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
         started = time.perf_counter()
         ctx._module, ctx._phase, ctx._steps, ctx._render_steps = module, None, {}, {}
         ctx._completion, ctx._fail_fast, ctx._used_draws = None, fail_fast, False
-        error_text = unavailable = None
+        error_text = None
         try:
             reason = module.active(ctx)
             if reason is None:
@@ -445,7 +435,7 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
                     checkpointed = True
                     _checkpoint(checkpoint, ctx, fail_fast)
                     started = time.perf_counter()
-                unavailable = _run_phases(ctx, module, product_only=ctx.mode == "render" and name in added)
+                _run_phases(ctx, module, product_only=ctx.mode == "render" and name in added)
         except Exception as error:
             reason, error_text = None, f"{type(error).__name__}: {error}"
             seconds = time.perf_counter() - started
@@ -467,10 +457,6 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
             log(f"[outputs] {name}: inactive ({reason})")
             continue
         seconds = time.perf_counter() - started
-        if unavailable is not None:         # TRANSITIONAL: an unconverted module in a render pass
-            records[name] = {"status": "unavailable", "mode": ctx.mode, "seconds": seconds, "reason": unavailable}
-            log(f"[outputs] {name}: unavailable ({unavailable})")
-            continue
         failed_steps = [step for step, record in step_records.get("steps", {}).items() if record["status"] == "failed"]
         failed_steps += [f"{step} (render)" for step, record in step_records.get("render_steps", {}).items()
                          if record["status"] == "failed"]
@@ -487,20 +473,9 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
     return records
 
 
-def _run_phases(ctx: OutputContext, module: OutputModule, *, product_only: bool) -> str | None:
-    """Run the phases of ``module`` that ``ctx.mode`` asks for and set its product; returns the reason a module is
-    unavailable without failing (TRANSITIONAL: an unconverted module in a render pass), else None."""
+def _run_phases(ctx: OutputContext, module: OutputModule, *, product_only: bool) -> None:
+    """Run the phases of ``module`` that ``ctx.mode`` asks for and set its product."""
     name = module.name
-    if not module.converted:
-        # TRANSITIONAL: run() is compute and render in one.  A compute pass runs it too (its figures included), because
-        # its dependents need what it computes; a render pass cannot.  Its product is then None, so that converted
-        # modules that require it still render, reading what they need from the store.
-        if ctx.mode == "render":
-            ctx.products[name] = None
-            return NOT_CONVERTED
-        ctx._phase = "run"
-        ctx.products[name] = module.run(ctx)
-        return None
     if ctx.mode == "render":
         ctx._completion = load_completion(ctx.stage, name)
     else:
@@ -525,7 +500,6 @@ def _run_phases(ctx: OutputContext, module: OutputModule, *, product_only: bool)
     if ctx.mode != "compute" and not product_only:
         ctx._phase = "render"
         module.render(ctx)
-    return None
 
 
 def _compute_hint(name: str) -> str:
