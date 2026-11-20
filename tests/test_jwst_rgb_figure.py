@@ -122,9 +122,6 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
         position_calls.append(True)
         return {'curves': []}
     monkeypatch.setattr(image_position_contours, 'load_or_compute_contours', positions)
-    # One defined and one undefined stretch direction: a stick is drawn for the first only.
-    monkeypatch.setattr(mass_figure,'arc_direction_table',lambda draws,catalog:pd.DataFrame(dict(
-        image_label=catalog.image_label,e_arc_x=[1.,np.nan],e_arc_y=[0.,np.nan])))
     catalog=_overview_catalog()
     extra=pd.DataFrame(dict(family_id=['1'],x_model_arcsec=[.1],y_model_arcsec=[-.2]))
     config=NS(paths=NS(run_name=cluster),image_catalog=NS(candidate_catalog_path='must-not-read.json'))
@@ -145,8 +142,9 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
     assert not output.with_suffix('.json').exists()
     assert output.exists() and info['candidate_overlays']==[]
     assert len(position_calls) == 1
-    assert 'own redshift' in info['stretch_direction'] and info['not_recovered_images'] == 1 and info['extra_images'] == 1
-    assert info['stretch_sticks'] == 1 and info['redrawn_from_tables'] is False
+    assert info['not_recovered_images'] == 1 and info['extra_images'] == 1
+    # The overview draws no stretch sticks and saves no stretch directions.
+    assert 'stretch_sticks' not in info and 'stretch_direction' not in info and info['redrawn_from_tables'] is False
     assert info['recovered_position_probability'] == .682689492 and info['recovered_position_contour_scale'] == 4.0
     assert info['candidate_catalog'] is None
     assert (info['marker_photometry'] is None) == (cluster != 'm0416')
@@ -155,9 +153,7 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
     assert store.has_arrays(tmp_path,'hst_rgb_critical_z9') and store.has_record(tmp_path,'hst_rgb_critical_z9_band')
     assert not store.has_arrays(tmp_path,'jwst_rgb_critical_z9')
     assert sorted(p.name for p in tmp_path.iterdir() if p.suffix in ('.csv','.json','.h5') and p.name!='candidates.json')==[store.RESULTS_FILE]
-    # The stretch directions are saved for a later redraw.
-    saved=store.read_table(tmp_path,'hst_rgb_critical_z9_stretch_directions')
-    assert saved.image_label.tolist()==['1.a','2.b'] and saved.e_arc_x.iloc[0]==1.
+    assert not store.has_table(tmp_path,'hst_rgb_critical_z9_stretch_directions')
     markers=store.read_table(tmp_path,'hst_rgb_markers')
     assert len(markers)==2 and (markers.marker_area_pt2==9).all()
     assert list(markers.color) == ['#FF9500', '#FF3030']        # the second image is not recovered
@@ -253,9 +249,9 @@ def _write_recovery(tables, catalog, indices=REDRAW_INDICES, layout='legacy'):
     _put(tables,'posterior_image_residual_draws',pd.DataFrame(rows),layout)
 
 
-def _saved_run(tmp_path, *, stretch=True, shape=32, likelihood=KNEE_LIKELIHOOD, layout='legacy'):
+def _saved_run(tmp_path, *, shape=32, likelihood=KNEE_LIKELIHOOD, layout='legacy'):
     """A finished run's saved results: the band, the catalog, the extra images, the per-draw positions of the image
-    recovery and the stretch directions; in ``final/results.h5`` (``layout='store'``) or as the loose files of a run
+    recovery; in ``final/results.h5`` (``layout='store'``) or as the loose files of a run
     made before it (``'legacy'``)."""
     import json
     run=tmp_path/'results'/'hera'/'run'
@@ -276,10 +272,6 @@ def _saved_run(tmp_path, *, stretch=True, shape=32, likelihood=KNEE_LIKELIHOOD, 
     else:
         save_arrays(tables/'hst_rgb_critical_z9.h5',**band)
         (tables/'hst_rgb_critical_z9_band.json').write_text(json.dumps(dict(resolution=shape))+'\n')
-    if stretch:
-        # Rows in the reverse of the catalog order: only an alignment by image label gives 1.a its direction.
-        _put(tables,'hst_rgb_critical_z9_stretch_directions',
-             pd.DataFrame(dict(image_label=['2.b','1.a'],e_arc_x=[np.nan,0.],e_arc_y=[np.nan,1.])),layout)
     return run
 
 
@@ -307,24 +299,6 @@ def _patch_redraw(monkeypatch, run, config=None):
     return config
 
 
-def _stick_directions(monkeypatch):
-    """Record the stretch sticks the overview draws: {image position (arcsec): unit direction}, read back through the
-    fake ``grid_pixels`` (16 + 10 x)."""
-    from matplotlib.axes import Axes
-    from kappaccino.plotting import jwst_rgb as rgb
-    from kappaccino.plotting.mass_figure import ARC_STICK_LENGTH_ARCSEC
-    sticks={}
-    plot=Axes.plot
-    def recording(self,*args,**kwargs):
-        # A stick: a white two-point line 0.7 pt wide (the scale bar is white too, but 2.5 pt).
-        if kwargs.get('color')==rgb.STRETCH_COLOR and kwargs.get('linewidth')==.7 and len(args)==2:
-            ends=(np.column_stack(args)-16.)/10.
-            sticks[tuple(np.round(ends.mean(0),6))]=(ends[1]-ends[0])/ARC_STICK_LENGTH_ARCSEC
-        return plot(self,*args,**kwargs)
-    monkeypatch.setattr(Axes,'plot',recording)
-    return sticks
-
-
 def _snapshot(run):
     return {path.relative_to(run):path.read_bytes() for path in sorted(run.rglob('*')) if path.is_file()}
 
@@ -334,7 +308,6 @@ def test_redraw_from_saved_tables(tmp_path, monkeypatch, layout):
     from kappaccino.plotting import jwst_rgb as rgb
     run=_saved_run(tmp_path, layout=layout)
     _patch_redraw(monkeypatch, run)
-    sticks=_stick_directions(monkeypatch)
     tables=run/'final'/'tables'
     def band():
         return store.read_arrays(tables,'hst_rgb_critical_z9'), store.read_record(tables,'hst_rgb_critical_z9_band')
@@ -350,12 +323,9 @@ def test_redraw_from_saved_tables(tmp_path, monkeypatch, layout):
     assert not output.with_suffix('.json').exists()
     assert info['redrawn_from_tables'] is True and info['cache_fingerprint']=='saved-key' and info['reporting_draws']==12
     assert info['recovered_position_probability']==.682689492 and info['recovered_position_contour_scale']==4.
-    assert info['stretch_sticks']==1 and info['not_recovered_images']==1 and info['extra_images']==1
+    assert 'stretch_sticks' not in info and info['not_recovered_images']==1 and info['extra_images']==1
     assert info['grf_field']=='shared field of the run' and info['determinant_resolution']==32
     assert info['model'].startswith('parametric + conditional GRF') and info['recovered_position_contours']==2
-    # The stick of 1.a has its own direction (0, 1); 2.b, whose direction is undefined, has none.
-    assert list(sticks)==[(-.3,-.3)]
-    np.testing.assert_allclose(sticks[(-.3,-.3)],[0.,1.],atol=1e-12)
     # The band is read, never rewritten; an old run's loose files are left as they were.
     after=band()
     assert after[1]==before[1] and set(after[0])==set(before[0])
@@ -425,7 +395,7 @@ def test_pipeline_and_redraw_draw_the_same_picture(tmp_path, monkeypatch, field)
     import json
     from types import SimpleNamespace as NS
     from kappaccino.plotting import jwst_rgb as rgb, mass_figure
-    run=_saved_run(tmp_path, likelihood=KNEE_LIKELIHOOD if field else NO_FIELD_LIKELIHOOD, layout='store', stretch=False)
+    run=_saved_run(tmp_path, likelihood=KNEE_LIKELIHOOD if field else NO_FIELD_LIKELIHOOD, layout='store')
     tables,figures=run/'final'/'tables',run/'final'/'figures'
     with h5py.File(tables.parent/store.RESULTS_FILE,'a') as file:     # the band is written by the pipeline below
         del file['arrays/hst_rgb_critical_z9'], file['records/hst_rgb_critical_z9_band']
@@ -502,23 +472,15 @@ def test_redraw_logs_a_figure_without_contours(tmp_path, monkeypatch):
 @pytest.mark.parametrize('layout',['legacy','store'])
 def test_redraw_falls_back_and_refuses(tmp_path, monkeypatch, layout):
     from kappaccino.plotting import jwst_rgb as rgb
-    run=_saved_run(tmp_path, stretch=False, layout=layout)
+    run=_saved_run(tmp_path, layout=layout)
     _patch_redraw(monkeypatch, run)
     tables=run/'final'/'tables'
     figure=run/'final'/'figures'/'hera_hst_rgb_critical_z9.pdf'
-    rgb.redraw_rgb_critical(run,log=lambda _:None)                    # no stretch directions: no sticks
-    info=store.read_figure_record(figure)
-    assert info['stretch_sticks']==0 and info['stretch_direction'].startswith('not drawn')
-    _put(tables,'image_catalog_arc_directions',pd.DataFrame(dict(image_label=['1.a','2.b'],e_arc_x=[1.,0.],e_arc_y=[0.,1.])),layout)
-    lines=[]
-    rgb.redraw_rgb_critical(run,log=lines.append)                     # the mass figure's table
-    assert '[redraw] stretch directions from image_catalog_arc_directions' in lines
-    info=store.read_figure_record(figure)
-    assert info['stretch_sticks']==2
-    # A duplicated image label in the stretch directions: the mass figure's message.
+    # The mass figure's stretch directions, when saved, are not read: the overview draws no sticks.
     _put(tables,'image_catalog_arc_directions',pd.DataFrame(dict(image_label=['1.a','1.a'],e_arc_x=[1.,0.],e_arc_y=[0.,1.])),layout)
-    with pytest.raises(ValueError, match='Arc-direction overlay requires unique image labels'):
-        rgb.redraw_rgb_critical(run,log=lambda _:None)
+    lines=[]
+    rgb.redraw_rgb_critical(run,log=lines.append)
+    assert not any('stretch' in line for line in lines) and 'stretch_sticks' not in store.read_figure_record(figure)
     if layout=='store':
         with h5py.File(tables.parent/store.RESULTS_FILE,'a') as file:
             del file['arrays/hst_rgb_critical_z9']

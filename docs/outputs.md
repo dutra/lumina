@@ -264,8 +264,8 @@ AS1063 the zero contours of det A moved by at most 6e-6 arcsec and no fold pair 
 `ReportingDraws.maps_from_reference = False` evaluates every component on every grid as before.
 
 The RGB critical overview (`<prefix>_hst_rgb_critical_z9.pdf` or `<prefix>_jwst_rgb_critical_z9.pdf`) shows the
-z=9 critical curve and its 16–84% band, the observed images (red when not recovered), the extra images, the stretch
-directions and the 68.3% contours of the predicted observed positions, each enlarged four times about the mean of its
+z=9 critical curve and its 16–84% band, the observed images (red when not recovered), the extra images
+and the 68.3% contours of the predicted observed positions, each enlarged four times about the mean of its
 image's positions. A finished run's overview can be drawn again from its saved results, without the posterior or the
 determinant maps, from the repository root:
 
@@ -273,8 +273,7 @@ determinant maps, from the repository root:
 python -m kappaccino.plotting.jwst_rgb results/<cluster>/<run> [results/<cluster>/<run> ...]
 ```
 
-It reads the band from the arrays `<stem>`, the catalog from the table `image_fit_quality`, the stretch directions from
-the table `<stem>_stretch_directions` (else `image_catalog_arc_directions*`, else none are drawn) and the contours from
+It reads the band from the arrays `<stem>`, the catalog from the table `image_fit_quality` and the contours from
 the saved image recovery (all in `final/results.h5`, or the loose files of an old run), and rebuilds the configuration
 from `inputs/command.json`. It refuses when the imaging settings, the image catalog or the reference of that
 configuration differ from `final/artifacts/config.json`, and, before writing anything, when the run has no completed
