@@ -18,14 +18,17 @@ likelihood:
   # The slope fixed at 4 (NFW-like cusps): sampled, it drifted to 5.3 without the data pinning it.
   gp_knee_gamma: 4.0
   gp_knee_gamma_prior: null
-  # Wavelengths from 0.2" to 100".
-  gp_knee_scales_arcsec: [0.2, 100.0]
-  # The knee kept below the scale of the cluster halos (2026-11-16): free up to 100" on Hera, the field took mass
-  # from the halos and the mass beyond the images came out 6% low at 100".
-  lambda_b_prior: lognormal(6.0, 0.5) in [0.5, 20.0]
-  lambda_b_start_arcsec: 6.0
-  # The rms deflection error of the substructure at z_ref: 0.08" median, 0.05-0.13" at 1 sigma.
-  sigma_grf_prior: lognormal(0.08, 0.5) in [1.0e-4, 1.0]
+  # Wavelengths from 0.2" to 1000" (2026-11-20).  With the cutoff at 100" the longitudinal deflection correlation of
+  # the field turns negative at 29" (0.29 of the cutoff), inside the image region.
+  gp_knee_scales_arcsec: [0.2, 1000.0]
+  gp_knee_lambda_grid: [0.5, 200.0, 64]
+  # The knee free up to 200".  On Hera (fast runs, 1000" cutoff) it settles at 45-48" and the enclosed mass stays
+  # within 1% out to 111"; the convergence map inside 50" is off by 6% rms, against 11-12% with the knee held below 20".
+  lambda_b_prior: lognormal(50.0, 1.0) in [0.5, 200.0]
+  lambda_b_start_arcsec: 50.0
+  # The rms deflection of the field at z_ref before the projection: 0.08" median.  The bound at 2": with the long knee
+  # the posterior reaches 0.9" on Hera, most of it removed by the projection.
+  sigma_grf_prior: lognormal(0.08, 0.5) in [1.0e-4, 2.0]
   sigma_grf_start_arcsec: 0.08
   # The image-plane GP's correlation length near the measurement scale: fitted free it went to 4.4" and did the mass
   # field's work.
