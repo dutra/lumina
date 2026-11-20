@@ -623,13 +623,13 @@ def resume_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """The part of a configuration dictionary (``to_json_dict``) that a resume compares and the run hash covers: all
     of it but the WBIC settings, which may change between a finished run and its resume, and the performance settings
     (``config.PERFORMANCE_FIELDS``), which do not change what a run computes, and the report-only settings
-    (``config.REPORT_ONLY_FIELDS``)."""
-    from .config import PERFORMANCE_FIELDS, REPORT_ONLY_FIELDS
+    (``config.REPORT_ONLY_FIELDS`` and the sections ``config.REPORT_ONLY_SECTIONS``)."""
+    from .config import PERFORMANCE_FIELDS, REPORT_ONLY_FIELDS, REPORT_ONLY_SECTIONS
     dropped: dict[str, tuple[str, ...]] = {"sampling": ("wbic", "wbic_warmup", "wbic_samples")}
     for fields in (PERFORMANCE_FIELDS, REPORT_ONLY_FIELDS):
         for section, names in fields.items():
             dropped[section] = dropped.get(section, ()) + tuple(names)
-    payload = dict(payload)
+    payload = {key: value for key, value in payload.items() if key not in REPORT_ONLY_SECTIONS}
     for section, fields in dropped.items():
         if isinstance(payload.get(section), dict):
             payload[section] = {k: v for k, v in payload[section].items() if k not in fields}

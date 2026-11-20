@@ -28,7 +28,8 @@ def main():
         if args.reuse and saved.is_file():
             tables[name] = pd.read_csv(saved)
             continue
-        from _covariance_plot_cli import load_run
+        import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
+        from kappaccino.outputs.saved_run import load_run
         from kappaccino.diagnostics.truth_recovery import truth_maps_on_grid
         from kappaccino.reporting.draws import reporting_draws
         config, state, evaluator, posterior, paths = load_run(run)

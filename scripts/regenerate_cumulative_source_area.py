@@ -9,7 +9,8 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('runs', nargs='+', type=Path)
-    from _covariance_plot_cli import add_catalogs_argument, load_run
+    from _covariance_plot_cli import add_catalogs_argument, redirect
+    from kappaccino.outputs.saved_run import load_run
     add_catalogs_argument(parser)
     parser.add_argument('--draws', type=int, default=None, help='posterior draws behind the bands (default: the run config)')
     args = parser.parse_args()
@@ -21,7 +22,7 @@ def main():
     from kappaccino.plotting.cumulative_source_area import write_cumulative_source_area
     from kappaccino.reporting.draws import reporting_draws
     for run in args.runs:
-        config, state, evaluator, posterior, paths = load_run(run, catalogs=args.catalogs, ffsims_dir=args.ffsims_dir)
+        config, state, evaluator, posterior, paths = load_run(run, transform=redirect(args.catalogs, args.ffsims_dir))
         if args.draws is not None:
             config = replace(config, reporting=replace(config.reporting, draws=args.draws))
         if not (config.truth.kappa_true_fits and config.truth.gammax_true_fits and config.truth.gammay_true_fits):

@@ -78,6 +78,17 @@ def test_single_stage_end_to_end(synthetic_config, monkeypatch):
     assert (result.paths.final.figures / "critical_curves.pdf").is_file()
     assert (result.paths.init.tables / "classification_report.txt").is_file()
     assert {p.suffix for p in result.paths.init.tables.iterdir()} <= {".txt"}
+    assert {name for name, record in store.read_record(final, "run_summary")["modules"].items()
+            if record["status"] == "done"} == {"fit", "images", "mass"}
+
+    # The outputs stage again on the saved run, fit module only (kappaccino outputs RUN --only fit): the
+    # saved fit numbers stay in run_summary.
+    from kappaccino.outputs.command import main as outputs_main
+    fit = store.read_record(final, "run_summary")["fit"]
+    assert outputs_main([str(result.paths.root), "--only", "fit", "--fail-fast"]) == 0
+    rerun = store.read_record(final, "run_summary")
+    assert json.dumps(rerun["fit"], sort_keys=True, default=float) == json.dumps(fit, sort_keys=True, default=float)
+    assert rerun["modules"]["fit"]["status"] == "done" and "images" in rerun["modules"]
 
     # Resuming reloads both stages without searching or sampling again (the outputs, written above, are not redrawn here).
     monkeypatch.setattr(pipeline, "write_outputs", lambda *args, **kwargs: {})

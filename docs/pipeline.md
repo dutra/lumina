@@ -82,7 +82,9 @@ still run. Parameters the old run lacks start at the configured model.
    stage's BIC and the WBIC go to `final/artifacts/model_comparison.json` (see {doc}`model-comparison`).
 3. **Posterior audit** of the far-field approximation, including whether reclassifying at the posterior median would
    change the exact set. The result is in `final/artifacts/audit.json`.
-4. **Outputs**: tables, figures and FITS maps under `final/` (see {doc}`outputs`).
+4. **Outputs**: tables, figures and FITS maps under `final/`, written by the output modules (see {doc}`outputs`).
+   The `outputs` section chooses the modules, and `kappaccino outputs RUN_DIR` reruns them on a finished run without
+   fitting.
 
 ## Resuming
 
@@ -90,7 +92,8 @@ still run. Parameters the old run lacks start at the configured model.
 
 - A completed init is reused by any later final run whose model, likelihood, member and search configuration match.
 - A completed final stage is reloaded when the whole configuration matches, apart from the WBIC settings and the
-  performance settings (`RuntimeConfig.output_workers`), which the run hash leaves out too. Turning on
+  performance settings (`RuntimeConfig.output_workers`) and the choice of output modules (the `outputs` section),
+  which the run hash leaves out too. Turning on
   `SamplingConfig.wbic` for a finished run adds the WBIC run without sampling the posterior again. A run with any other
   change under the same run name is refused rather than overwriting the saved posterior. The output pass of a reloaded
   stage reuses the image recovery, the grid maps and the aperture masses it saved before (see {doc}`outputs`).

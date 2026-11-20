@@ -170,6 +170,129 @@ Everything else (figures, fold diagnostics, the GRF critical band, contours) is 
 `init/logs/init.log`, `final/logs/final.log`
 : The stage logs.
 
+## Output modules
+
+The outputs stage after the fit is five modules ({mod}`kappaccino.outputs`), run in this order. Each module writes
+its products as named steps:
+
+| module | steps and what they write | requires | runs when |
+|---|---|---|---|
+| `fit` | `tables` (`posterior_summary`, `member_classification`), `chain_traces`, `audit` (the record), `scaling_table` (`member_scaling_relation`), `potfiles`, `block_corner` (`corner_combined.pdf`), `cosmology_corner`, `covariance` (covariance corner and `covariance_errors_both_planes`), `fields` (GP and GRF plots), `members` (`member_diagnostics` and the member plots), `scaling_plot`, `globals_corner` | | always |
+| `images` | `recovery` (the image-recovery tables, `position_coverage`, `fit` in `run_summary`), `true_lens` (with `truth.deflection_true_fits`), `residual_histogram`, `recovery_figure` | | always |
+| `mass` | `critical_curves`, `aperture_masses`, `zeta_masses` (the last two for Hera and Ares, with a truth convergence map) | `images` | always |
+| `truth` | `truth_maps` (maps, FITS and profiles), `magnification_recovery`, `cumulative_source_area`, `magnification_scatter`, `truth_residuals`, `mass_profile`, `kappa_mass_residuals` | `images` | with `truth.kappa_true_fits` |
+| `rgb` | per imaging variant: `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and, computed once, `fold_data`, then `fold_cutouts`; for the JWST overview also `position_contours` and `small_lambda` (before the mass figure) and `apj_fold_cutouts` and `paper_cutouts` (after the folds) | `images` | with `image_catalog.image_dir` and observed images |
+
+`mass` and `rgb` also run after `fit` without needing its product, because they read tables it writes:
+`member_diagnostics` (aperture and zeta masses) and `covariance_errors_both_planes` (covariance cutouts). The steps of
+`rgb` are named per variant, for example `fold_cutouts:jwst`. `kappaccino outputs --list` prints the modules with
+these relations and their steps.
+
+A step that raises is logged with its traceback and recorded, and the module goes on with its other steps; a step
+that needs the result of a failed one is skipped with the reason (no step of `images` runs after a failed `recovery`,
+no `truth` step after a failed `truth_maps`, no fold step after a failed `fold_data`). A module with a failed step ends
+as `failed` but keeps its product. A module that cannot give its dependents what they need raises after its steps
+(`images` without its recovery, `truth` without its maps) and is failed with no product. A module that requires
+another runs only when that module returned normally, whatever its product: `mass`, `truth` and `rgb` therefore need a
+successful image recovery. The log ends with the list of failed modules. `run_summary` records each module under
+`modules`, in run order: `status` (`done`, `inactive`, `skipped` or `failed`), `seconds`, `steps` (the `status`,
+`seconds` and `error` or `reason` of each step), `reporting_draws` and `image_draws` when the module used the draws,
+and the module's `reason` or `error`.
+
+The reporting draws are built the first time a step needs them (the `covariance` step of `fit`); if building them
+fails, every later step that needs them fails with the same error. The summary and the results macros are written
+before `rgb` and again at the end. A pass that runs only part of the modules, or in which a module failed or was
+skipped, merges its summary into the saved `run_summary`. Each module owns some top-level keys (`images` owns `fit`,
+`truth` owns `truth`): for every module that ran in this pass, done or failed, its keys and its record are this
+pass's, so a failed module leaves no old numbers (the macros then say "not available"). A module that did not run
+keeps its saved keys and its saved record. The top-level `reporting_draws` and `warnings` are those of the last pass
+that built the draws; the module records say which draws each module used, so a mixed record shows.
+
+### Choosing modules
+
+The `outputs` section of the configuration ({class}`~kappaccino.config.OutputsConfig`) selects them:
+
+```yaml
+outputs:
+  skip: [rgb]             # no imaging products
+  # only: [truth]         # these and what they require (here images); null for all
+  # fail_fast: true       # stop at the first step that raises
+```
+
+or `--set outputs.skip=[rgb]` on the command line. Steps cannot be selected. The section changes only what is
+reported, so it is not part of the run hash and a resume ignores it. `runtime.skip_plots` turns the whole stage off.
+
+### Rerunning the outputs of a finished run
+
+```bash
+kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c
+kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --only truth,mass
+kappaccino outputs results/m0416_canucs2025/<run> --skip rgb --fail-fast --draws 32
+kappaccino outputs RUN --remap /home/dutra/sdev/burkelenscluster=$PWD --only truth
+kappaccino outputs RUN --all --set truth.deflection_true_fits=data/imaging/hera/defl.fits
+kappaccino outputs --list results/hera/w500s250t7_allblocks-3f9a1c
+```
+
+The command loads the saved run ({mod}`kappaccino.outputs.saved_run`) and runs the stage into its `final/` folder,
+without fitting. The saved paths are as the run wrote them: relative to the folder the run was started from (run the
+command from the same folder, usually the repository root) or absolute, as in a run made on another machine.
+`--remap OLD=NEW` (repeatable) replaces the prefix `OLD` of every saved path, catalogs, imaging folders and truth and
+deflection maps included, and logs each field it changes. Before the pass, the command checks that the files the
+selected modules read exist; a missing one is named by its field, with the hint to use `--remap`.
+
+`--only` and `--skip` replace the run's saved `outputs.only` and `outputs.skip` together (the one not given is
+empty), `--all` runs every module whatever the saved selection, and with none of them the saved selection applies.
+`--set SECTION.FIELD=VALUE` (repeatable, the syntax of the run command) changes a report setting before the pass: only
+settings that the run hash leaves out are accepted (the `outputs` section, `truth.deflection_true_fits`,
+`runtime.output_workers`, the WBIC settings and the `paths` section), because any other change would no longer
+describe the saved fit. `--draws N` sets `reporting.draws` and `reporting.image_draws` to N, as the run command's
+`--draws` does; both are in the run hash, and this is the one change of that kind a rerun allows. `--list` prints the
+modules with their `requires`, `after` and steps; given a run, it also says whether each applies to it, judged from
+the configuration alone. At the end the command prints the fit numbers of the saved `run_summary`. The exit code is 1
+when a module failed or `--fail-fast` stopped the pass (one line names the error; the step logged its traceback),
+and 2 for a usage error, a missing file or a refused `--set`.
+
+### Adding a module
+
+A module is a subclass of {class}`~kappaccino.outputs.base.OutputModule` with a `name`, the modules whose products it
+reads (`requires`) or that it should follow (`after`), an optional `active` that returns the reason it does not apply,
+and a `run` that writes the products through `ctx.step(name, function, *args, **kwargs)` and returns what later
+modules may read from `ctx.products[name]` (None is a valid product; raise
+{class}`~kappaccino.outputs.base.ModuleUnavailable` when the dependents cannot run):
+
+```python
+from kappaccino.outputs.base import ModuleUnavailable, OutputModule
+
+
+class GGSLModule(OutputModule):
+    name = "ggsl"
+    requires = ("images",)
+    description = "galaxy-galaxy strong-lensing probability"
+    steps = ("probability", "figure")
+
+    def active(self, ctx):
+        return None if ctx.config.model.member_populations else "no member populations"
+
+    def run(self, ctx):
+        from ..plotting.ggsl import ggsl_probability, plot_ggsl        # heavy imports inside run
+        table = ctx.step("probability", lambda: ggsl_probability(ctx.state, ctx.draws, ctx.products["images"]["image_df"]))
+        if not ctx.ok("probability"):
+            ctx.skip_step("figure", "probability failed")
+            raise ModuleUnavailable("no GGSL probability (the probability step failed)")
+        ctx.step("figure", plot_ggsl, table, ctx.figures, ctx.prefix)
+        return table
+```
+
+Put it in a file of `src/kappaccino/outputs/` and add an instance to `MODULES` in `outputs/registry.py`, where its
+position sets its place among modules with no ordering between them. A step is one product or a closely tied set of
+products; `ctx.ok(step)` tells whether it ran without an error (a step may return None on success). The context
+(`ctx`) holds `config`, `state`, `evaluator`, `posterior`, `audit`, `paths`, `stage`, `tables`, `figures`, `prefix`,
+`log`, `summary`, `products`, the reporting draws `draws` and `imaging(image_config)`, which loads each imaging variant
+once per pass. `active` should decide from `ctx.config` and the products of the modules it requires: `--list` calls it
+with only the saved configuration (no state, no products). Keep the imports of JAX and the plotting code inside `run`:
+the configuration imports the registry to check module names. Set `checkpoint = True` on a slow imaging module so that
+the run summary is written before it.
+
 ## First checks
 
 `final/tables/run_summary.txt`

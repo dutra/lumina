@@ -107,7 +107,7 @@ def test_mock_campaign_histogram_is_unchanged(monkeypatch, tmp_path):
 
 def test_outputs_save_the_true_lens_table_and_record(tmp_path):
     from kappaccino.io import store
-    from kappaccino.reporting.outputs import write_true_lens_rms
+    from kappaccino.outputs.images import write_true_lens_rms
     theta_e = _sis_map(tmp_path / "defl.fits")
     record = write_true_lens_rms(tmp_path, _catalog(theta_e, families=30), tmp_path / "defl.fits", {"H0": 70.0, "Om0": 0.3}, log=lambda m: None)
     assert store.read_record(tmp_path, "true_lens_rms")["rms_arcsec"] == record["rms_arcsec"]
@@ -190,7 +190,7 @@ def test_true_lens_with_no_usable_image_raises(tmp_path):
 
 def test_outputs_skip_the_true_lens_rms_on_a_missing_map(monkeypatch, tmp_path):
     from kappaccino.io import store
-    from kappaccino.reporting.outputs import write_true_lens_rms
+    from kappaccino.outputs.images import write_true_lens_rms
     messages = []
     record = write_true_lens_rms(tmp_path, _catalog(10.0, families=5), tmp_path / "missing.fits", {"H0": 70.0, "Om0": 0.3}, log=messages.append)
     assert record is None and messages[0].startswith("[outputs] true-lens RMS skipped: ")

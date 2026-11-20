@@ -6,8 +6,8 @@ constraints) with the settings of each stage: output paths (:class:`RunPathsConf
 (:class:`RuntimeConfig`), the initial search (:class:`SearchConfig`), NUTS sampling (:class:`SamplingConfig`), member
 classification (:class:`MemberConfig`), the member scaling relation (:class:`ScalingModelConfig`), the likelihood and
 error model (:class:`LikelihoodConfig`) and the output diagnostics (:class:`ImageDiagnosticsConfig`,
-:class:`TruthRecoveryConfig`, :class:`ImageCatalogCutoutConfig`) and the posterior draws behind them
-(:class:`ReportingConfig`).  Every class is a frozen dataclass; change a field
+:class:`TruthRecoveryConfig`, :class:`ImageCatalogCutoutConfig`), the posterior draws behind them
+(:class:`ReportingConfig`) and the output modules to run (:class:`OutputsConfig`).  Every class is a frozen dataclass; change a field
 with :func:`dataclasses.replace` or :meth:`LensClusterSolverConfig.with_updates`, and check a finished configuration
 with :meth:`LensClusterSolverConfig.validate`.
 
@@ -675,6 +675,8 @@ class RuntimeConfig:
 PERFORMANCE_FIELDS: dict[str, tuple[str, ...]] = {"runtime": ("output_workers",)}
 # Settings that only add a report to the outputs, left out the same way so earlier runs stay resumable.
 REPORT_ONLY_FIELDS: dict[str, tuple[str, ...]] = {"truth": ("deflection_true_fits",)}
+# Whole sections that only choose what is reported (the output modules, ``OutputsConfig``), left out the same way.
+REPORT_ONLY_SECTIONS: tuple[str, ...] = ("outputs",)
 
 
 @dataclass(frozen=True)
@@ -1679,6 +1681,30 @@ class ReportingConfig:
 
 
 @dataclass(frozen=True)
+class OutputsConfig:
+    """The output modules the outputs stage runs (:mod:`kappaccino.outputs`; ``kappaccino outputs --list`` names them).
+
+    These settings change only what is reported: they are not part of the run hash and do not block a resume
+    (``REPORT_ONLY_SECTIONS``).  ``runtime.skip_plots`` turns the whole stage off.
+
+    Parameters
+    ----------
+    only : tuple of str or None, optional
+        Run only these modules (``fit``, ``images``, ``mass``, ``truth``, ``rgb``) and the modules they require.  None
+        runs every module.  Default None.
+    skip : tuple of str, optional
+        Do not run these modules, nor the modules that require them.  Default ``()``.
+    fail_fast : bool, optional
+        Stop the stage at the first step that raises.  By default the error is logged with its traceback, the step and
+        its module are recorded as failed in ``run_summary``, and the other steps and modules that do not depend on it
+        still run.  Default False.
+    """
+    only: tuple[str, ...] | None = None
+    skip: tuple[str, ...] = ()
+    fail_fast: bool = False
+
+
+@dataclass(frozen=True)
 class LensClusterSolverConfig:
     """Complete configuration of a kappaccino run.
 
@@ -1708,6 +1734,8 @@ class LensClusterSolverConfig:
         The posterior draws behind the reported products.  Default: ``ReportingConfig()``.
     image_catalog : ImageCatalogCutoutConfig, optional
         Imaging for the figures.  Default: ``ImageCatalogCutoutConfig()``.
+    outputs : OutputsConfig, optional
+        The output modules to run.  Default: ``OutputsConfig()``.
     partition : PartitionConfig or None, optional
         Uncertain images assigned to families jointly with the lens.  Default None (none).
     """
@@ -1723,6 +1751,7 @@ class LensClusterSolverConfig:
     truth: TruthRecoveryConfig = field(default_factory=TruthRecoveryConfig)
     reporting: ReportingConfig = field(default_factory=ReportingConfig)
     image_catalog: ImageCatalogCutoutConfig = field(default_factory=ImageCatalogCutoutConfig)
+    outputs: OutputsConfig = field(default_factory=OutputsConfig)
     partition: PartitionConfig | None = None
 
     def with_updates(self, **updates: Any) -> "LensClusterSolverConfig":
@@ -2143,10 +2172,22 @@ def validate_config(config: LensClusterSolverConfig) -> None:
     _positive("image_diagnostics.exact_image_seed_tolerance_pitches", diagnostics.exact_image_seed_tolerance_pitches)
     if int(config.truth.truth_grid_size) < 0:
         raise ValueError("truth.truth_grid_size must be nonnegative.")
+    _validate_outputs_config(config.outputs)
     if config.partition is not None:
         _validate_partition_config(config.partition, config)
         if any(prior is not None for prior in config.model.cosmology.priors.values()):
             raise ValueError("partition (uncertain images) is not supported with a sampled cosmology.")
+
+
+def _validate_outputs_config(outputs: OutputsConfig) -> None:
+    from .outputs.registry import check_module_names          # the registry imports no JAX or plotting code
+    if outputs.only is not None:
+        check_module_names("outputs.only", outputs.only)
+        if not outputs.only:
+            raise ValueError("outputs.only must name at least one output module, or be null for all of them.")
+    check_module_names("outputs.skip", outputs.skip)
+    if not isinstance(outputs.fail_fast, bool):
+        raise ValueError("outputs.fail_fast must be true or false.")
 
 
 def _validate_partition_config(partition: PartitionConfig, config: LensClusterSolverConfig) -> None:

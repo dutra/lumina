@@ -1,7 +1,8 @@
 """Regenerate standard GP diagnostics, including shared-field maps, from a saved run."""
 import argparse
 
-from _covariance_plot_cli import load_run
+import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
+from kappaccino.outputs.saved_run import load_run
 from kappaccino.plotting.gp import write_gp_plots
 
 

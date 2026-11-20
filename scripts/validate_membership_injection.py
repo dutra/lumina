@@ -25,7 +25,8 @@ from pathlib import Path
 
 import numpy as np
 
-from _covariance_plot_cli import load_run
+import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
+from kappaccino.outputs.saved_run import load_run
 
 DISTANCES = (1.0, 2.0, 4.0, 8.0)          # arcsec to the nearest image
 MAGNITUDES = (19.0, 20.5, 22.0)           # in the scaling-relation band
