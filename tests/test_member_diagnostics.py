@@ -136,7 +136,7 @@ def test_normal_output_hook(synthetic_config, tmp_path, monkeypatch):
     evaluator = Evaluator(state)
     posterior = posterior_for(state, evaluator)
     calls = []
-    monkeypatch.setattr(members, 'write_member_diagnostic_plots', lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(members, 'save_member_diagnostics', lambda *a, **k: calls.append(a))
     monkeypatch.setattr(results_tex, 'write_run_results', lambda *a, **k: None)
     paths = SimpleNamespace(figures=tmp_path/'figures', tables=tmp_path/'tables', root=tmp_path)
     summary = outputs.write_outputs(synthetic_config, state, evaluator, posterior, {}, paths, only=('fit',), log=lambda _: None)

@@ -7,6 +7,8 @@ from matplotlib.patches import Ellipse
 from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 
+from ..io import store
+
 GP_COLOR, WHITE_COLOR = '#25758a', '#c27645'
 INK = '#303943'
 
@@ -46,9 +48,9 @@ def save(fig, output):
     return output
 
 
-def plot_kernel_sky(state, evaluator, posterior, output):
+def plot_kernel_sky(state, gp, posterior, output):
     xy=np.column_stack([state.images.x_obs,state.images.y_obs])
-    slots,mask=(np.asarray(evaluator.gp[k]) for k in ('slots','mask'))
+    slots,mask=(np.asarray(gp[k]) for k in ('slots','mask'))
     names=[p.name for p in state.parameter_specs]
     shared=float(np.median(posterior.physical[:,names.index('images.sigma_gp')]))
     white=float(np.median(posterior.physical[:,names.index('images.sigma_meas')]))
@@ -92,10 +94,11 @@ def plot_kernel_sky(state, evaluator, posterior, output):
     return save(fig,output)
 
 
-def pick_family(state, evaluator, min_images=3, closest=1.5, widest=10.0):
-    """A family with at least ``min_images`` images, none closer than ``closest`` arcsec and none farther than ``widest``."""
+def pick_family(state, gp, min_images=3, closest=1.5, widest=10.0):
+    """A family with at least ``min_images`` images, none closer than ``closest`` arcsec and none farther than ``widest``
+    (``gp`` holds the evaluator's family ``slots`` and ``mask``)."""
     xy = np.column_stack([state.images.x_obs, state.images.y_obs])
-    slots, mask = np.asarray(evaluator.gp['slots']), np.asarray(evaluator.gp['mask'])
+    slots, mask = np.asarray(gp['slots']), np.asarray(gp['mask'])
     best = None
     for f in range(slots.shape[0]):
         rows = slots[f][mask[f]]
@@ -110,7 +113,7 @@ def pick_family(state, evaluator, min_images=3, closest=1.5, widest=10.0):
     return best
 
 
-def plot_shared_vs_white(state, evaluator, posterior, output):
+def plot_shared_vs_white(state, gp, posterior, output):
     names=[p.name for p in state.parameter_specs]
     shared=float(np.median(posterior.physical[:,names.index('images.sigma_gp')]))
     white=float(np.median(posterior.physical[:,names.index('images.sigma_meas')]))
@@ -120,7 +123,7 @@ def plot_shared_vs_white(state, evaluator, posterior, output):
     if '1.b' in labels and '1.c' in labels:
         i,j=labels.index('1.b'),labels.index('1.c')
     else:
-        _,rows=pick_family(state,evaluator)
+        _,rows=pick_family(state,gp)
         i,j=rows[:2]
     xy=np.column_stack([state.images.x_obs,state.images.y_obs])
     sep=np.linalg.norm(xy[i]-xy[j])
@@ -196,17 +199,34 @@ def plot_scale_posteriors(state, posterior, output, sites=DEFAULT_SCALE_SITES):
     return save(fig,output)
 
 
-def plot_knee_kernel(state, evaluator, posterior, output):
-    """Longitudinal and transverse correlations of the fitted mass field (median knee wavelength) and the image-plane GP
-    kernel, against separation, with the same-image-pair separations of the catalog marked."""
-    from ..likelihood.gp_knee import knee_curves
+def knee_medians(state, posterior):
+    """The posterior medians of the knee wavelength, the GP length and the knee slope (None when not sampled)."""
     names=[p.name for p in state.parameter_specs]
     med=lambda n: float(np.median(posterior.physical[:,names.index(n)])) if n in names else None
-    lam, ell, slope = med('images.lambda_b'), med('images.ell_gp'), med('images.gp_knee_gamma')
-    tables=evaluator.gp_tables; r=np.asarray(tables['r_grid'])
+    return med('images.lambda_b'), med('images.ell_gp'), med('images.gp_knee_gamma')
+
+
+def knee_kernel_curves(state, evaluator, posterior):
+    """What :func:`plot_knee_kernel` draws from the evaluator: the separation grid ``r`` of its knee tables and, with a
+    sampled knee wavelength, the longitudinal and transverse correlations at the median knee wavelength and slope."""
+    from ..likelihood.gp_knee import knee_curves
+    lam, _, slope = knee_medians(state, posterior)
+    tables=evaluator.gp_tables
+    kernel={'r': np.asarray(tables['r_grid'])}
+    if lam is not None:
+        kernel['longitudinal'],kernel['transverse']=(np.asarray(v) for v in knee_curves(tables, lam, slope))
+    return kernel
+
+
+def plot_knee_kernel(state, kernel, posterior, output):
+    """Longitudinal and transverse correlations of the fitted mass field (median knee wavelength) and the image-plane GP
+    kernel, against separation, with the same-image-pair separations of the catalog marked (``kernel`` from
+    :func:`knee_kernel_curves`)."""
+    lam, ell, slope = knee_medians(state, posterior)
+    r=kernel['r']
     fig,ax=plt.subplots(figsize=(7,7))
     if lam is not None:
-        cl,ct=(np.asarray(v) for v in knee_curves(tables, lam, slope))
+        cl,ct=kernel['longitudinal'],kernel['transverse']
         slope_label = '' if slope is None else f', $p={slope:.2g}$'
         ax.plot(r,ct,color=GP_COLOR,lw=2.4,label=rf'mass field, transverse ($\ell_{{\rm knee}}={lam:.2g}$"{slope_label})')
         ax.plot(r,cl,color=WHITE_COLOR,lw=2.4,label='mass field, longitudinal')
@@ -221,27 +241,55 @@ def plot_knee_kernel(state, evaluator, posterior, output):
     return save(fig,output)
 
 
-def write_gp_plots(config, state, evaluator, posterior, paths, *, log=print):
-    """Write the three self-contained diagnostics for GP runs only."""
+GP_DIAGNOSTICS = 'gp_diagnostics'      # the arrays and record the GP figures are drawn from
+
+
+def save_gp_diagnostics(config, state, evaluator, posterior, paths, *, log=print):
+    """What the GP figures need from the evaluator, for GP runs only: the arrays and record ``gp_diagnostics`` (with
+    the knee kernel the curves of :func:`knee_kernel_curves`, else the family ``slots`` and ``mask``; the record says
+    which, and whether the shared-field maps ``conditional_field_maps`` were written).  None for other runs."""
     if not getattr(evaluator, "gp_mode", False):
-        return []
+        return None
+    from .fields import save_field_maps
+    knee = bool(getattr(evaluator, "gp_knee", False))
+    field_maps = save_field_maps(config, state, evaluator, posterior, paths, log=log) is not None if knee else False
+    arrays = knee_kernel_curves(state, evaluator, posterior) if knee else {k: np.asarray(evaluator.gp[k]) for k in ('slots', 'mask')}
+    with store.batch(paths.tables):
+        store.write_arrays(paths.tables, GP_DIAGNOSTICS, arrays)
+        store.write_record(paths.tables, GP_DIAGNOSTICS, {"knee": knee, "field_maps": field_maps})
+    return GP_DIAGNOSTICS
+
+
+def render_gp_diagnostics(config, state, posterior, paths, *, log=print):
+    """The GP figures from what :func:`save_gp_diagnostics` saved and the posterior, then the shared-field maps when
+    they were computed."""
+    record = store.read_record(paths.tables, GP_DIAGNOSTICS)
+    arrays = store.read_arrays(paths.tables, GP_DIAGNOSTICS)
     paths.figures.mkdir(parents=True, exist_ok=True)
     prefix = f"{config.paths.figure_prefix}_" if config.paths.figure_prefix else ""
     with plt.rc_context():
         apply_style()
-        if getattr(evaluator, "gp_knee", False):
+        if record["knee"]:
             outputs = [
-                plot_knee_kernel(state, evaluator, posterior, paths.figures / f"{prefix}gp_kernel_curves.pdf"),
+                plot_knee_kernel(state, arrays, posterior, paths.figures / f"{prefix}gp_kernel_curves.pdf"),
                 plot_scale_posteriors(state, posterior, paths.figures / f"{prefix}gp_scale_posteriors.pdf", KNEE_SCALE_SITES),
             ]
         else:
             outputs = [
-                plot_kernel_sky(state, evaluator, posterior, paths.figures / f"{prefix}gp_kernel_sky.pdf"),
-                plot_shared_vs_white(state, evaluator, posterior, paths.figures / f"{prefix}gp_shared_vs_white.pdf"),
+                plot_kernel_sky(state, arrays, posterior, paths.figures / f"{prefix}gp_kernel_sky.pdf"),
+                plot_shared_vs_white(state, arrays, posterior, paths.figures / f"{prefix}gp_shared_vs_white.pdf"),
                 plot_scale_posteriors(state, posterior, paths.figures / f"{prefix}gp_scale_posteriors.pdf"),
             ]
-    from .fields import write_field_plots
-    outputs.extend(write_field_plots(config, state, evaluator, posterior, paths, log=log))
+    if record["field_maps"]:
+        from .fields import render_field_plots
+        outputs.extend(render_field_plots(config, paths))
     for output in outputs:
         log(f"[outputs] {output}")
     return outputs
+
+
+def write_gp_plots(config, state, evaluator, posterior, paths, *, log=print):
+    """:func:`save_gp_diagnostics`, then :func:`render_gp_diagnostics`, for GP runs only."""
+    if save_gp_diagnostics(config, state, evaluator, posterior, paths, log=log) is None:
+        return []
+    return render_gp_diagnostics(config, state, posterior, paths, log=log)

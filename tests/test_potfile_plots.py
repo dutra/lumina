@@ -41,7 +41,7 @@ def test_run_outputs_create_potfile_corner(tmp_path, monkeypatch):
     monkeypatch.setattr(results_tex, "write_run_results", lambda *args, **kwargs: None)
     summary = outputs.write_outputs(config, state, SimpleNamespace(physical=lambda p: p), posterior, {}, paths,
                                     only=("fit",), skip=(), fail_fast=False, log=lambda _: None)
-    assert summary["modules"]["fit"]["steps"]["potfiles"]["status"] == "done"
+    assert summary["modules"]["fit"]["render_steps"]["potfiles"]["status"] == "done"
     for kind in ("corner",):
         path = paths.figures / f"hera_potfile_members_{kind}.pdf"
         assert path.read_bytes().startswith(b"%PDF")
