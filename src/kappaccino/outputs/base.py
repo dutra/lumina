@@ -322,9 +322,9 @@ class OutputModule:
 
     # TRANSITIONAL: a module not yet split into compute and render defines ``run(ctx)`` instead of the three methods,
     # which writes its products and figures and returns its product.  This path (``run``, ``converted``, ``steps``,
-    # NOT_CONVERTED, ``images.stored_image_table`` and the branches of run_modules and the --list table that use them)
-    # is scaffolding for the parallel conversion of fit, images and rgb, and is deleted once all five modules are
-    # converted; it is not a compatibility layer.
+    # NOT_CONVERTED and the branches of run_modules and the --list table that use them) is scaffolding for the parallel
+    # conversion of fit, images and rgb, and is deleted once all five modules are converted; it is not a
+    # compatibility layer.
 
     @property
     def converted(self) -> bool:
