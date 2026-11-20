@@ -82,8 +82,8 @@ def likelihood(name: str, gp_blocks: str):
         likelihood_mode=mode, sigma_sel_prior=None, gp_kernel=kernel, gp_blocks=gp_blocks,
         gp_knee_project_modes=(("translation", "convergence", "shear") if name == "grf_gp" and gp_blocks == "all" else ()),
         gp_knee_gamma_prior=(2.0, 6.0), gp_knee_gamma=4.0,     # sampled: the injected field varies the slope
-        gp_knee_scales_arcsec=(0.2, 100.0),
-        lambda_b_prior=truncated_lognormal(6.0, 0.5, low=2.5, high=20.0),   # below the scale of the cluster halos; the mocks inject 3-12"
+        gp_knee_scales_arcsec=(0.2, 1000.0),                   # the long end of the cluster run files
+        lambda_b_prior=truncated_lognormal(6.0, 0.5, low=2.5, high=20.0),   # centred on the injection: the mocks inject 3-12"
         lambda_b_start_arcsec=6.0,
         # Mock only (the cluster runs keep median 0.08", cap 0.5", and the library sigma_gp prior, median 0.10", cap 0.3"):
         # the geometric centres of the mock's injection ranges, each range inside about one prior width of the median.
