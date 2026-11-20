@@ -277,9 +277,10 @@ def test_fold_pair_in_a_two_knot_system_survives_a_displaced_source(tmp_path):
     from kappaccino.diagnostics.image_recovery import predictions_at
     from kappaccino.diagnostics.exact_images import ExactImageSolver
     config, _ = two_knot_config(tmp_path, depth=0.004)
-    # A marginal toy: with the spectrum's long end at 30" (the default) the (4, 4) offset loses one image.  The test is
-    # about the mean-deflection mechanism, so it keeps the 100" range it was written for.
-    config = knee_config(config, "system", gp_knee_scales_arcsec=(0.2, 100.0))
+    # A marginal toy: the (4, 4) offset loses one image when the spectrum's long end moves.  The test is about the
+    # mean-deflection mechanism, so it keeps the 100" range and the short knee prior it was written for.
+    config = knee_config(config, "system", gp_knee_scales_arcsec=(0.2, 100.0),
+                         lambda_b_prior=priors.truncated_lognormal(6.0, 0.5, high=20.0), lambda_b_start_arcsec=6.0)
     state = build_state(config)
     evaluator = Evaluator(state, "gp_image_plane")
     solver = ExactImageSolver(evaluator, config.image_diagnostics)
