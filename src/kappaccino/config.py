@@ -673,6 +673,8 @@ class RuntimeConfig:
 # Settings that change how fast a run goes but not what it computes: left out of the run hash (``cli.config_hash``)
 # and of the configuration a resume compares (``pipeline.resume_payload``), keyed by section.
 PERFORMANCE_FIELDS: dict[str, tuple[str, ...]] = {"runtime": ("output_workers",)}
+# Settings that only add a report to the outputs, left out the same way so earlier runs stay resumable.
+REPORT_ONLY_FIELDS: dict[str, tuple[str, ...]] = {"truth": ("deflection_true_fits",)}
 
 
 @dataclass(frozen=True)
@@ -1463,6 +1465,9 @@ class TruthRecoveryConfig:
         :math:`\\det A` and magnification.  Default None.
     gammay_true_fits : str or pathlib.Path or None, optional
         FITS map of the true shear component :math:`\\gamma_2`.  Default None.
+    deflection_true_fits : str or pathlib.Path or None, optional
+        FITS map of the true deflection (FF-SIMS ``deflAngles*.fits``).  Setting it adds the true-lens RMS of the
+        image catalog (``diagnostics.true_lens``) to the residual histogram.  Outside the run hash.  Default None.
     truth_grid_size : int, optional
         Largest number of pixels per side of the comparison grid (the true map's footprint, resampled).  Nonnegative;
         ``0`` keeps the native grid.  Default ``256``.
@@ -1475,6 +1480,7 @@ class TruthRecoveryConfig:
     kappa_true_fits: str | Path | None = None
     gammax_true_fits: str | Path | None = None
     gammay_true_fits: str | Path | None = None
+    deflection_true_fits: str | Path | None = None
     truth_grid_size: int = 256
     caustic_source_redshift: float = 9.0
 

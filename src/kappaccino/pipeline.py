@@ -622,9 +622,13 @@ def write_init_bic(state: ModelState, evaluator: Evaluator, theta: np.ndarray, d
 def resume_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """The part of a configuration dictionary (``to_json_dict``) that a resume compares and the run hash covers: all
     of it but the WBIC settings, which may change between a finished run and its resume, and the performance settings
-    (``config.PERFORMANCE_FIELDS``), which do not change what a run computes."""
-    from .config import PERFORMANCE_FIELDS
-    dropped = {"sampling": ("wbic", "wbic_warmup", "wbic_samples"), **PERFORMANCE_FIELDS}
+    (``config.PERFORMANCE_FIELDS``), which do not change what a run computes, and the report-only settings
+    (``config.REPORT_ONLY_FIELDS``)."""
+    from .config import PERFORMANCE_FIELDS, REPORT_ONLY_FIELDS
+    dropped: dict[str, tuple[str, ...]] = {"sampling": ("wbic", "wbic_warmup", "wbic_samples")}
+    for fields in (PERFORMANCE_FIELDS, REPORT_ONLY_FIELDS):
+        for section, names in fields.items():
+            dropped[section] = dropped.get(section, ()) + tuple(names)
     payload = dict(payload)
     for section, fields in dropped.items():
         if isinstance(payload.get(section), dict):

@@ -45,6 +45,7 @@ truth:
   kappa_true_fits: ../../data/imaging/ares/ffsims/kappa_z9_0.fits
   gammax_true_fits: ../../data/imaging/ares/ffsims/gammax_z9_0.fits
   gammay_true_fits: ../../data/imaging/ares/ffsims/gammay_z9_0.fits
+  deflection_true_fits: ../../data/imaging/ares/ffsims/deflAnglesAres.fits
 
 # Every product is a median over posterior draws with its 16-84% range.  64 draws: the median RMS scatters by 0.01".
 reporting: {draws: 64, image_draws: 64, extra_images: true}

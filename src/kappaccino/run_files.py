@@ -106,7 +106,7 @@ _IMPLICIT = {"id", "z_lens", "priors", "profile_type"}
 PRIORS_KEYS = {"extends", "reference", "cosmology", "z_lens", "images", "halos", "members", "scaling"}
 RUN_KEYS = {"extends", "name", "priors", "profiles"}
 # Paths in run.yaml sections, resolved against the file's folder.
-RUN_PATHS = {"truth": ("kappa_true_fits", "gammax_true_fits", "gammay_true_fits"),
+RUN_PATHS = {"truth": ("kappa_true_fits", "gammax_true_fits", "gammay_true_fits", "deflection_true_fits"),
              "image_catalog": ("image_dir", "candidate_catalog_path"), "partition": ("catalog_path",)}
 
 

@@ -57,6 +57,29 @@ def classification_table(state: ModelState) -> pd.DataFrame:
                          for r in rankings])
 
 
+def write_true_lens_rms(stage: Path, image_df: pd.DataFrame, deflection_fits, cosmo_config: dict, *, log=print) -> dict | None:
+    """The true-lens RMS of the image catalog (``diagnostics.true_lens``): the per-image table ``true_lens_residuals``
+    and the record ``true_lens_rms`` (rms, bootstrap band over families, amplitude, images left out) in results.h5.
+    Report-only: an unreadable map or no usable image logs the reason and returns None."""
+    from ..diagnostics.exact_images import astropy_cosmology
+    from ..diagnostics.true_lens import true_lens_residuals, true_lens_rms
+    try:
+        table, amplitude = true_lens_residuals(image_df, deflection_fits, astropy_cosmology(cosmo_config))
+        record = {**true_lens_rms(table), "amplitude": amplitude, "deflection_fits": str(deflection_fits)}
+    except (OSError, KeyError, IndexError, ValueError) as error:
+        log(f"[outputs] true-lens RMS skipped: {type(error).__name__}: {error}")
+        return None
+    with store.batch(stage):
+        store.write_table(stage, "true_lens_residuals", table)
+        store.write_record(stage, "true_lens_rms", record)
+    left_out = ", ".join(f"{v} {k[2:].replace('_', ' ')}" for k, v in record.items()
+                         if k.startswith("n_") and k not in ("n_images", "n_catalog_images", "n_families") and v)
+    log(f"[outputs] true-lens RMS {record['rms_arcsec']:.3f}\" ({record['p16_arcsec']:.3f}-{record['p84_arcsec']:.3f}) on "
+        f"{record['n_images']}/{record['n_catalog_images']} images of {record['n_families']} families, amplitude {amplitude:.4f}"
+        f"; left out: {left_out or 'none'}")
+    return record
+
+
 def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator: Evaluator, posterior: PosteriorResults,
                   audit: dict[str, Any], paths, *, log=print) -> dict[str, Any]:
     """``paths`` is the final StagePaths.  Every product is computed over one set of reporting draws
@@ -110,9 +133,12 @@ def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator:
     if "recovered_image_count" in fit:
         log(f"[outputs] recovered {fit['recovered_image_count']['median']:g}/{fit['observed_image_count']} images (median over "
             f"{len(draws.image_indices)} draws), rms {fit['image_rms_arcsec']['median']:.3f}\"")
+    true_lens = None
+    if config.truth.deflection_true_fits and not image_df.empty:
+        true_lens = write_true_lens_rms(stage, image_df, config.truth.deflection_true_fits, state.cosmo_config, log=log)
     if not image_df.empty:
         plots.plot_image_residual_histogram(image_df, plots.figure_path(figures, "image_residual_histogram.pdf", prefix),
-                                            draws=recovery.get("posterior_image_residual_draws"), log=log)
+                                            draws=recovery.get("posterior_image_residual_draws"), true_lens=true_lens, log=log)
         plots.plot_image_recovery(image_df, recovery["image_recovery_extra_images"], plots.figure_path(figures, "image_recovery.pdf", prefix))
 
     from ..plotting.chain_traces import trace_data
