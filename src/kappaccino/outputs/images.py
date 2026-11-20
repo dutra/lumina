@@ -32,6 +32,15 @@ def write_true_lens_rms(stage: Path, image_df: pd.DataFrame, deflection_fits, co
     return record
 
 
+def stored_image_table(ctx: OutputContext) -> pd.DataFrame:
+    """TRANSITIONAL: the table ``image_fit_quality`` of the image recovery, read from the stage's store, for the
+    converted modules (mass, truth) in every phase.  It stands in for ``ctx.products["images"]["image_df"]`` while
+    ``images`` is not converted: in a render pass an unconverted module gives no product.  Replace every call by the
+    product of the converted ``images`` module (loaded from the store by its ``product``) and delete this function."""
+    from ..io import store
+    return store.read_table(ctx.stage, "image_fit_quality")
+
+
 class ImagesModule(OutputModule):
     """Product: ``{"recovery": the tables of image_recovery_with_reuse plus position_coverage, "image_df": the table
     image_fit_quality, "true_lens": the true_lens_rms record or None}``.  Raises ModuleUnavailable when the recovery

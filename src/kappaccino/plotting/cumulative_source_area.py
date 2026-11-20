@@ -120,8 +120,10 @@ def render_cumulative_area(table, z_source, volume_per_arcsec2, path):
     save_page(fig, path)
 
 
-def write_cumulative_source_area(truth, draws, cosmology, figures, tables, prefix, *, log=print):
-    """Write ``cumulative_source_area.pdf`` with its table and provenance; only simulations with shear truth qualify.
+def save_cumulative_source_area(truth, draws, cosmology, tables, *, log=print):
+    """The table ``cumulative_source_area`` (:func:`area_table`) and the record ``cumulative_source_area_provenance``
+    (with the source redshift and the comoving volume per square arcsecond of the right axis) in the stage's results;
+    only simulations with shear truth qualify.
 
     Parameters
     ----------
@@ -131,15 +133,13 @@ def write_cumulative_source_area(truth, draws, cosmology, figures, tables, prefi
         The reporting draws; their maps on the truth grid are the ones the truth recovery already evaluated.
     cosmology : astropy.cosmology.FLRW
         Cosmology of the volume axis.
-    figures, tables : pathlib.Path
-        Output directories.
-    prefix : str
-        Figure prefix of the run.
+    tables : pathlib.Path
+        The stage folder (or its ``tables``).
 
     Returns
     -------
     pathlib.Path or None
-        The figure, or None when the truth has no magnification.
+        The ``results.h5`` written, or None when the truth has no magnification.
     """
     from ..diagnostics.truth_recovery import pixel_scale_arcsec
     if truth is None or 'detA' not in truth['truth']:
@@ -150,14 +150,31 @@ def write_cumulative_source_area(truth, draws, cosmology, figures, tables, prefi
     with_grf = bool(draws.has_field)
     table = area_table(truth['truth']['detA'], draws.grid_maps('truth', x, y, z_source, log=log), pixel_area, with_grf=with_grf)
     volume = shell_volume_per_arcsec2(cosmology, z_source)
-    store.write_table(tables, 'cumulative_source_area', table)
     metadata = dict(source_redshift=z_source, definition='sum of pixel_area/|mu| over map pixels with |mu| above the threshold',
                     region='the whole truth map', pixel_arcsec=float(np.sqrt(pixel_area)), map_area_arcsec2=float(pixel_area * np.isfinite(x).sum()),
                     field_of_view_limited_below=FIELD_LIMIT, posterior_draws=len(draws), bands='16th to 84th percentiles over the posterior draws',
                     grf='conditional realization of each draw' if with_grf else 'none',
                     comoving_volume_shell=[z_source - SHELL_HALF_WIDTH, z_source + SHELL_HALF_WIDTH], comoving_mpc3_per_arcsec2=volume)
-    store.write_record(tables, 'cumulative_source_area_provenance', metadata)
-    path = figures / f'{prefix + "_" if prefix else ""}cumulative_source_area.pdf'
-    render_cumulative_area(table, z_source, volume, path)
+    with store.batch(tables):
+        store.write_table(tables, 'cumulative_source_area', table)
+        store.write_record(tables, 'cumulative_source_area_provenance', metadata)
+    return store.results_path(tables)
+
+
+def render_cumulative_source_area(stage, path, *, log=print):
+    """``cumulative_source_area.pdf`` at ``path`` (:func:`render_cumulative_area`) from the table and record that
+    :func:`save_cumulative_source_area` wrote in ``stage``; returns the figure."""
+    metadata = store.read_record(stage, 'cumulative_source_area_provenance')
+    render_cumulative_area(store.read_table(stage, 'cumulative_source_area'), metadata['source_redshift'],
+                           metadata['comoving_mpc3_per_arcsec2'], path)
     log(f'[outputs] cumulative source area: {path}')
     return path
+
+
+def write_cumulative_source_area(truth, draws, cosmology, figures, tables, prefix, *, log=print):
+    """:func:`save_cumulative_source_area`, then :func:`render_cumulative_source_area` to
+    ``<prefix>_cumulative_source_area.pdf`` in ``figures``; returns the figure, or None when the truth has no
+    magnification."""
+    if save_cumulative_source_area(truth, draws, cosmology, tables, log=log) is None:
+        return None
+    return render_cumulative_source_area(tables, figures / f'{prefix + "_" if prefix else ""}cumulative_source_area.pdf', log=log)

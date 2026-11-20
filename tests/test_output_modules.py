@@ -1,5 +1,5 @@
-"""The outputs stage as modules: ordering, selection, skipping, failures, lazy draws, the config section and the
-``kappaccino outputs`` command."""
+"""The outputs stage as modules: ordering, selection, skipping, failures, lazy draws, compute and render, the config
+section and the ``kappaccino outputs`` command."""
 from __future__ import annotations
 
 import json
@@ -12,7 +12,7 @@ import pytest
 from kappaccino.config import LensClusterSolverConfig, OutputsConfig
 from kappaccino.io import artifacts, store
 from kappaccino.outputs import MODULES, OutputContext, OutputModule, module_named, order_modules, plan_modules, run_modules
-from kappaccino.outputs.base import ModuleUnavailable
+from kappaccino.outputs.base import ComputeOnly, ModuleUnavailable, completion_name
 
 
 class Fake(OutputModule):
@@ -32,9 +32,9 @@ class Fake(OutputModule):
         return f"product of {self.name}"
 
 
-def context(tmp_path=None, log=None):
+def context(tmp_path=None, log=None, mode="full"):
     paths = None if tmp_path is None else SimpleNamespace(tables=tmp_path / "tables", figures=tmp_path / "figures", root=tmp_path)
-    return OutputContext(None, None, None, None, {}, paths, log=log if log is not None else (lambda _: None))
+    return OutputContext(None, None, None, None, {}, paths, log=log if log is not None else (lambda _: None), mode=mode)
 
 
 def names(modules):
@@ -273,7 +273,7 @@ def test_a_failing_step_with_fail_fast_reraises():
     assert sum("Traceback" in line for line in lines) == 1          # logged once, by the step
     record = ctx.summary["modules"]["stepped"]
     assert record["status"] == "failed" and record["steps"]["table"]["status"] == "failed"
-    with pytest.raises(RuntimeError, match="outside a module run"):
+    with pytest.raises(RuntimeError, match="outside a module.s compute, render or run"):
         context().step("x", print)
 
 
@@ -348,7 +348,8 @@ def test_outputs_list_command(capsys, synthetic_config, tmp_path):
     assert [line.split()[0] for line in lines[1::2]] == [m.name for m in MODULES]
     assert lines[0].split()[:4] == ["module", "requires", "after", "description"]
     assert lines[5].split()[:3] == ["mass", "images", "fit"]
-    assert lines[6] == "    steps: critical_curves, aperture_masses, zeta_masses"
+    assert lines[6] == "    compute: critical_curves, aperture_masses, zeta_masses; render: critical_curves, zeta_masses"
+    assert lines[2].startswith("    steps: tables, chain_traces") and lines[2].endswith("(compute and render in one: not converted yet)")
     # With a run: whether each module applies, from its saved configuration.
     run = tmp_path / "run"
     config = replace(synthetic_config, image_catalog=replace(synthetic_config.image_catalog, image_dir=None),
@@ -508,3 +509,235 @@ def test_draws_option_sets_both_draw_counts(monkeypatch, synthetic_config, tmp_p
     monkeypatch.setattr(command, "check_module_paths", lambda config: None)
     config, *_ = command.prepare_rerun(tmp_path, draws=4)
     assert (config.reporting.draws, config.reporting.image_draws) == (4, 4)
+
+
+# ----------------------------------------------------------------------------- compute, product and render
+class Phased(OutputModule):
+    """A converted module: compute writes the table ``<name>_table`` (step ``table``) and nothing (step ``nothing``),
+    product reads the table back, render draws ``<name>.pdf`` from it (step ``figure``).  ``use`` names what a phase
+    asks for that it should not: ``{"render": "draws"}``."""
+
+    compute_steps = ("table", "nothing")
+    render_steps = ("figure", "unused")
+
+    def __init__(self, name, requires=(), events=None, fail=(), use=None, error=None):
+        self.name, self.requires = name, tuple(requires)
+        self.events = events if events is not None else []
+        self.fail, self.use, self.error = set(fail), dict(use or {}), error
+
+    def _touch(self, ctx, phase):
+        if phase in self.use:
+            getattr(ctx, self.use[phase])
+
+    def compute(self, ctx):
+        self.events.append(f"{self.name}.compute")
+
+        def table():
+            self._touch(ctx, "compute")
+            if "table" in self.fail:
+                raise ValueError("table broke")
+            store.write_table(ctx.stage, f"{self.name}_table", pd.DataFrame({"x": [1.0, 2.0]}))
+            return "written"
+        ctx.step("table", table)
+        ctx.step("nothing", lambda: None)
+        if self.error is not None:
+            raise self.error
+
+    def product(self, ctx):
+        self.events.append(f"{self.name}.product")
+        self._touch(ctx, "product")
+        return store.read_table(ctx.stage, f"{self.name}_table")
+
+    def render(self, ctx):
+        self.events.append(f"{self.name}.render")
+
+        def figure():
+            self._touch(ctx, "render")
+            ctx.figures.mkdir(parents=True, exist_ok=True)
+            (ctx.figures / f"{self.name}.pdf").write_text(str(store.read_table(ctx.stage, f"{self.name}_table").x.sum()))
+            return "drawn"
+        ctx.render_step("figure", figure, needs="table")
+        ctx.render_step("unused", lambda: self.events.append("unused drawn"), needs="nothing")
+
+
+def test_a_full_pass_runs_compute_product_render_in_order(tmp_path):
+    events = []
+    modules = [Phased("a", events=events), Phased("b", requires=["a"], events=events)]
+    ctx = context(tmp_path)
+    records = run_modules(ctx, modules)
+    assert events == ["a.compute", "a.product", "a.render", "b.compute", "b.product", "b.render"]
+    # The product is what product() loaded from the store.
+    assert ctx.products["a"].x.tolist() == [1.0, 2.0] and (tmp_path / "figures" / "a.pdf").read_text() == "3.0"
+    record = records["a"]
+    assert record["status"] == "done" and record["mode"] == "full"
+    assert set(record["steps"]) == {"table", "nothing"} and record["steps"]["table"]["wrote"] is True
+    assert record["steps"]["nothing"]["wrote"] is False
+    # A render step whose compute step wrote nothing is left out; the step that drew is recorded under render_steps.
+    assert list(record["render_steps"]) == ["figure"] and "unused drawn" not in events
+    completion = store.read_record(tmp_path, completion_name("a"))
+    assert completion["complete"] is True and completion["steps"]["table"]["status"] == "done" and "computed_at" in completion
+
+
+def test_a_render_pass_never_computes_and_redraws_from_the_store(tmp_path):
+    events = []
+    run_modules(context(tmp_path), [Phased("a", events=events)])
+    (tmp_path / "figures" / "a.pdf").unlink()
+    events.clear()
+    ctx = context(tmp_path, mode="render")
+    records = run_modules(ctx, [Phased("a", events=events)])
+    assert events == ["a.product", "a.render"] and (tmp_path / "figures" / "a.pdf").read_text() == "3.0"
+    assert records["a"]["status"] == "done" and records["a"]["mode"] == "render"
+    # The compute steps are those of the saved completeness record.
+    assert records["a"]["steps"]["table"]["status"] == "done" and list(records["a"]["render_steps"]) == ["figure"]
+
+
+def test_a_compute_pass_draws_no_figures(tmp_path):
+    events = []
+    ctx = context(tmp_path, mode="compute")
+    records = run_modules(ctx, [Phased("a", events=events)])
+    assert events == ["a.compute", "a.product"] and not (tmp_path / "figures").exists()
+    assert "render_steps" not in records["a"] and ctx.products["a"] is not None
+    assert store.read_record(tmp_path, completion_name("a"))["complete"] is True
+
+
+@pytest.mark.parametrize("what", ["draws", "evaluator"])
+def test_draws_and_evaluator_raise_outside_compute(tmp_path, what):
+    lines = []
+    # In the render phase of a full pass: the step fails and names the module and the step.
+    records = run_modules(context(tmp_path, log=lines.append), [Phased("a", use={"render": what})])
+    error = records["a"]["render_steps"]["figure"]["error"]
+    assert error.startswith("ComputeOnly: a.figure asked for ctx." + what + " in the render phase of a full pass")
+    # In product: the module fails without a product.
+    records = run_modules(context(tmp_path), [Phased("a", use={"product": what}), Phased("b", requires=["a"])])
+    assert records["a"]["status"] == "failed" and "ComputeOnly: a (product) asked for ctx." + what in records["a"]["error"]
+    assert records["b"]["status"] == "skipped"
+    # In a render pass even a compute step's request is refused (compute never runs there), and outside a module too.
+    ctx = context(tmp_path, mode="render")
+    with pytest.raises(ComputeOnly, match="outside any module"):
+        getattr(ctx, what)
+    # In a compute step of a full pass it is allowed.
+    assert run_modules(context(tmp_path), [Phased("a", use={"compute": "evaluator"})])["a"]["status"] == "done"
+
+
+def test_render_without_a_completed_compute_is_unavailable(tmp_path):
+    events = []
+    records = run_modules(context(tmp_path, mode="render"), [Phased("a", events=events), Phased("b", requires=["a"], events=events)])
+    assert events == []
+    assert records["a"]["status"] == "failed"
+    assert records["a"]["error"].startswith("ModuleUnavailable: no record output_module_a of a completed compute")
+    assert "run its compute first: kappaccino outputs RUN --only a" in records["a"]["error"]
+    assert records["b"]["reason"] == "requires a, which failed without a product"
+
+
+def test_a_failed_compute_leaves_no_record_of_completeness(tmp_path):
+    # A complete compute first, then one whose step fails: the record says incomplete, and a render pass refuses.
+    run_modules(context(tmp_path), [Phased("a")])
+    records = run_modules(context(tmp_path), [Phased("a", fail={"table"})])
+    assert records["a"]["status"] == "failed" and records["a"]["error"] == "failed steps: table"
+    # The full pass still rendered what it could: the figure step is skipped with its reason.
+    assert records["a"]["render_steps"]["figure"] == {"status": "skipped", "seconds": 0.0, "reason": "compute step table failed"}
+    saved = store.read_record(tmp_path, completion_name("a"))
+    assert saved["complete"] is False and saved["steps"]["table"]["status"] == "failed"
+    records = run_modules(context(tmp_path, mode="render"), [Phased("a")])
+    assert "the last compute of a is incomplete (steps not done: table)" in records["a"]["error"]
+    # A compute that raises outside its steps.
+    run_modules(context(tmp_path), [Phased("a")])
+    run_modules(context(tmp_path), [Phased("a", error=ModuleUnavailable("no table"))])
+    assert store.read_record(tmp_path, completion_name("a"))["complete"] is False
+    # A compute interrupted half way (no chance to write the end record) leaves the incomplete marker.
+    run_modules(context(tmp_path), [Phased("a")])
+    with pytest.raises(KeyboardInterrupt):
+        run_modules(context(tmp_path), [Phased("a", error=KeyboardInterrupt())])
+    saved = store.read_record(tmp_path, completion_name("a"))
+    assert saved["complete"] is False and "started_at" in saved and "steps" not in saved
+
+
+def test_only_in_a_render_pass_takes_just_the_product_of_a_required_module(tmp_path):
+    events = []
+    run_modules(context(tmp_path), [Phased("a"), Phased("b", requires=["a"])])
+    ctx = context(tmp_path, mode="render")
+    records = run_modules(ctx, [Phased("a", events=events), Phased("b", requires=["a"], events=events)], only=["b"])
+    assert events == ["a.product", "b.product", "b.render"]
+    assert ctx.products["a"].x.tolist() == [1.0, 2.0] and "render_steps" not in records["a"]
+    # In a full pass the module pulled in by only runs entirely, as before.
+    events.clear()
+    run_modules(context(tmp_path), [Phased("a", events=events), Phased("b", requires=["a"], events=events)], only=["b"])
+    assert events == ["a.compute", "a.product", "a.render", "b.compute", "b.product", "b.render"]
+
+
+def test_an_undeclared_step_is_an_error(tmp_path):
+    class Wrong(Phased):
+        def compute(self, ctx):
+            ctx.step("other", lambda: 1)
+
+    records = run_modules(context(tmp_path), [Wrong("a")])
+    assert "compute step 'other' is not in its compute_steps ['table', 'nothing']" in records["a"]["error"]
+
+
+def test_the_transitional_path_of_an_unconverted_module(tmp_path):
+    # TRANSITIONAL: delete with the run() path once every module is converted.
+    calls, events = [], []
+    modules = [Fake("old", calls=calls), Phased("new", requires=["old"], events=events)]
+    assert not modules[0].converted and modules[1].converted
+    records = run_modules(context(tmp_path), modules)
+    assert calls == ["old"] and records["old"]["status"] == "done" and events[0] == "new.compute"
+    run_modules(context(tmp_path, mode="compute"), modules)
+    assert calls == ["old", "old"]
+    # A render pass cannot run it; the converted module that requires it still renders (reading the store).
+    events.clear()
+    ctx = context(tmp_path, mode="render")
+    records = run_modules(ctx, modules)
+    assert calls == ["old", "old"] and events == ["new.product", "new.render"]
+    assert records["old"] == {"status": "unavailable", "mode": "render", "seconds": records["old"]["seconds"],
+                              "reason": "not converted to compute/render yet"}
+    assert ctx.products["old"] is None and records["new"]["status"] == "done"
+
+
+def test_a_render_pass_keeps_the_numbers_of_the_last_compute(monkeypatch, tmp_path):
+    from kappaccino.reporting import results_tex
+    from kappaccino.reporting.outputs import write_run_summary
+    monkeypatch.setattr(results_tex, "write_run_results", lambda *a, **k: None)
+
+    class Numbers(Phased):
+        summary_keys = ("numbers",)
+
+        def compute(self, ctx):
+            super().compute(ctx)
+            ctx.summary["numbers"] = {"value": 7}
+
+    modules = [Numbers("a")]
+    ctx = context(tmp_path)
+    ctx.config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="toy"))
+    run_modules(ctx, modules)
+    write_run_summary(ctx, partial=False, modules=modules)
+    ctx = context(tmp_path, mode="render")
+    ctx.config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="toy"))
+    run_modules(ctx, modules)
+    write_run_summary(ctx, partial=True, modules=modules)
+    saved = store.read_record(tmp_path, "run_summary")
+    assert saved["numbers"] == {"value": 7} and saved["modules"]["a"]["mode"] == "render"
+
+
+def test_render_and_compute_flags(monkeypatch, tmp_path, capsys):
+    from kappaccino.outputs import command
+    from kappaccino.reporting import outputs
+    for argv in ([str(tmp_path), "--render", "--compute"], [str(tmp_path), "--render", "--draws", "4"]):
+        with pytest.raises(SystemExit):
+            command.main(argv)
+    seen = []
+    monkeypatch.setattr(command, "prepare_rerun", lambda run, **options: seen.append(options["mode"]) or ("config",))
+    monkeypatch.setattr(outputs, "write_outputs", lambda *a, **k: seen.append(k["mode"]) or {"modules": {}})
+    for flag, mode in (("--render", "render"), ("--compute", "compute"), (None, "full")):
+        assert command.main([str(tmp_path)] + ([flag] if flag else [])) == 0
+        assert seen[-2:] == [mode, mode]
+
+
+def test_a_render_rerun_loads_no_evaluator(monkeypatch, synthetic_config, tmp_path):
+    from kappaccino.outputs import command, saved_run
+    monkeypatch.setattr(saved_run, "load_run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("evaluator built")))
+    monkeypatch.setattr(saved_run, "load_saved_run", lambda run, **k: (synthetic_config, "state", "posterior"))
+    monkeypatch.setattr(command, "check_module_paths", lambda config: (_ for _ in ()).throw(AssertionError("paths checked")))
+    config, state, evaluator, posterior, audit, final = command.prepare_rerun(tmp_path, mode="render")
+    assert (state, evaluator, posterior) == ("state", None, "posterior") and final.root == tmp_path / "final"
+    with pytest.raises(ValueError, match="--draws"):
+        command.prepare_rerun(tmp_path, mode="render", draws=4)
