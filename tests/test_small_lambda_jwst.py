@@ -35,8 +35,11 @@ def test_render_from_the_reporting_draws(tmp_path, monkeypatch):
     config=NS(paths=NS(figure_prefix='test'),image_catalog=NS(image_dir='test'))
     paths=NS(tables=tmp_path,figures=tmp_path)
     from kappaccino.plotting import critical_fields
-    monkeypatch.setattr(critical_fields,'median_cutout_determinants',
-        lambda *a,**k:(np.zeros((1,2,2,2)),np.ones((1,2,2)),np.ones((1,2,2)),np.ones((1,2,2))))
+    def critical(draws,centers,fovs,redshifts,path,**k):           # what median_cutout_determinants saves
+        store.write_arrays(path.parent,path.stem,median_determinant=np.ones((1,2,2)),lower=np.ones((1,2,2)),upper=np.ones((1,2,2)),
+                           centers=np.asarray(centers),fovs=np.asarray(fovs),redshifts=np.asarray(redshifts))
+        store.write_record(path.parent,path.stem,dict(resolution=2))
+    monkeypatch.setattr(critical_fields,'median_cutout_determinants',critical)
     calls=[]
     def fields(t,**kwargs):
         calls.append(kwargs)
@@ -46,6 +49,7 @@ def test_render_from_the_reporting_draws(tmp_path, monkeypatch):
     data=dict(recovered=np.random.default_rng(1).normal(0,.1,(32,1,2)),
               image_labels=np.array(['a']),draw_indices=np.arange(32))
     contours=dict(position_data=data,fingerprint='test-fingerprint')
+    store.write_arrays(tmp_path,'posterior_overview_positions',data)    # as load_or_compute_contours saves them
     ref=NS(pixel_scale_arcsec=.03,wcs=NS(world_to_pixel_values=lambda x,y:(x/.03+50,y/.03+50)))
     imaging=({'band':ref},('band',),None,'test')
     monkeypatch.setattr(module,'rgb_reference_band',lambda _: 'band')

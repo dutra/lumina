@@ -14,7 +14,9 @@ from ..io import store
 def overview_cutout_data(tables, prefix, *, image_labels=(), system_ids=(), draws=None, neighbors=False, log=print):
     """Reuse saved image draws and fold geometry, never run an image search.  ``neighbors`` adds to each image panel
     the other catalog images inside its field (``item['neighbors']``: label, family, observed position, density grid
-    or None), which :func:`render_overview_cutouts` then draws and labels."""
+    or None), which :func:`render_overview_cutouts` then draws and labels.  An image panel whose median det A the
+    small-lambda figure did not save gets it from the reporting ``draws`` (saved as ``<prefix>_rgb_inset_critical``),
+    or without draws from that saved entry, which must hold exactly these panels."""
     image_labels,system_ids=tuple(image_labels),tuple(system_ids)
     if not image_labels and not system_ids:
         return None
@@ -78,13 +80,21 @@ def overview_cutout_data(tables, prefix, *, image_labels=(), system_ids=(), draw
                 item['critical']={key:critical[key][matches[0]] for key in ('median_determinant','lower','upper')}
         images.append(item)
     if any('critical' not in item for item in images):
+        inset=f'{prefix}_rgb_inset_critical'
         if draws is None:
-            raise ValueError('Selected RGB cutouts require source-redshift critical fields')
-        # Explicit launcher selections are independent of the standalone uncertainty cuts.
-        from .critical_fields import median_cutout_determinants
-        _,median,lower,upper=median_cutout_determinants(draws,
-            [item['center'] for item in images],[item['fov'] for item in images],
-            [item['z'] for item in images],tables/f'{prefix}_rgb_inset_critical.h5',log=log)
+            # Without the draws: the fields an earlier call with them saved for exactly these panels.
+            saved=store.read_arrays(tables,inset) if store.has_arrays(tables,inset) else None
+            if saved is None or not all(np.array_equal(saved[key],[item[name] for item in images])
+                                        for key,name in (('centers','center'),('fovs','fov'),('redshifts','z'))):
+                raise ValueError(f'Selected RGB cutouts require source-redshift critical fields; {inset} holds none '
+                                 'for these panels (compute them with the reporting draws first)')
+            median,lower,upper=saved['median_determinant'],saved['lower'],saved['upper']
+        else:
+            # Explicit launcher selections are independent of the standalone uncertainty cuts.
+            from .critical_fields import median_cutout_determinants
+            _,median,lower,upper=median_cutout_determinants(draws,
+                [item['center'] for item in images],[item['fov'] for item in images],
+                [item['z'] for item in images],tables/f'{inset}.h5',log=log)
         for i,item in enumerate(images):
             item['critical']=dict(median_determinant=median[i],lower=lower[i],upper=upper[i])
     return dict(images=images,systems=systems)

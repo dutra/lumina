@@ -194,11 +194,9 @@ of a full pass and of a later render-only pass come from the same code and the s
 | `images` | `recovery` (the image-recovery tables, record `image_recovery_fingerprint`, `position_coverage`, `fit` in `run_summary`), `true_lens` (with `truth.deflection_true_fits` and observed images: `true_lens_residuals`, record `true_lens_rms`) | `residual_histogram`, `recovery_figure` (both with observed images) | | always |
 | `mass` | `critical_curves` (arrays `critical_curves`), `aperture_masses` (`member_aperture_masses`, record `aperture_mass_histogram`), `zeta_masses` (`member_zeta_masses`, record `zeta_masses`, arrays `subhalo_mass_concentration`) | `critical_curves`, `zeta_masses` (the figure and the table `zeta_mass_function`) | `images` | always; the masses with a truth convergence map |
 | `truth` | `truth_maps` (FITS, profile tables, record `truth_recovery`, arrays `truth_recovery_residuals`, the published ratios), `magnification_recovery`, `cumulative_source_area`, `magnification_scatter` | `magnification_recovery`, `cumulative_source_area`, `truth_residuals`, `mass_profile`, `kappa_mass_residuals` | `images` | with `truth.kappa_true_fits` |
-| `rgb` | not converted yet: per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and, computed once, `fold_data`, then `fold_cutouts`; for the JWST overview also `position_contours` and `small_lambda` (before the mass figure) and `apj_fold_cutouts` and `paper_cutouts` (after the folds) | | `images` | with `image_catalog.image_dir` and observed images |
+| `rgb` | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and, once, `fold_data`; for the JWST overview also `position_contours` and `small_lambda` (before the mass figure) and `paper_cutouts` (see [The rgb module](#the-rgb-module)) | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and `fold_cutouts`; for the JWST overview also `small_lambda`, `apj_fold_cutouts` and `paper_cutouts` | `images` | with `image_catalog.image_dir` and observed images |
 
-`rgb` is being converted. Until then it still computes and draws in one `run`: a full or compute pass runs it
-whole (a compute pass then draws its figures too, because its dependents need what it computes), and a render pass
-reports it `unavailable` ("not converted to compute/render yet") and gives no product.
+All five modules are split into compute and render.
 
 The product of `images` is read from the store, so `mass`, `truth` and `rgb` get the same tables in every pass mode:
 
@@ -248,14 +246,45 @@ field figures from `conditional_field_maps` (only when `gp_diagnostics` says thi
 figures from the member entries above and the scaling relation from `member_scaling_relation` and the posterior. A
 render pass of `fit` on Hera takes 46 s, 21 s of them for the global corner; the full pass that computed it took 1 min 41 s.
 
+### The rgb module
+
+`rgb` loops over the imaging variants (`imaging.cutouts.imaging_variants`) in both phases. A variant is named by its
+`figure_suffix` without the underscore, `primary` without one. Compute evaluates the lens and saves what each figure
+draws; render draws every figure from `results.h5` and the imaging pixels, never from `cache.h5`. Render reads the
+saved median det A maps with their percentiles and the saved position contours. Two things it still derives from
+saved per-draw values, with the same functions compute uses: the KDE regions of the per-draw positions in the
+small-lambda, fold and paper cutouts (their density grids would take 3.5 MB per panel), and the percentiles of the
+per-draw critical-curve tracks of the fold figures (8 to 64 curves of 97 points each).
+
+Compute needs the imaging FITS files, but only their headers and paths: the reference band's WCS, shape and pixel
+scale set the overview grid, the cutout fields and the imaging footprint, and the band paths go into the record of the
+covariance cutouts. Loading a variant also reads a subsample of each band for its sky level, which only the display
+uses. The command checks that `image_catalog.image_dir` exists before a full or compute pass, so on a machine without
+the imaging run `--compute --skip rgb`. A variant whose band files are missing (the extra JWST variant of M0416 and
+AS1063, for example) is logged once and left out in either phase, and the other variants go on; a variant the compute
+left out is left out of the render too.
+
+| step | compute saves | render reads |
+|---|---|---|
+| `covariance_cutouts:<variant>` | table and record `small_lambda_covariance_cutouts<suffix>`, arrays `..._contours` and, new, `..._ellipses` (the selected images' indices, directions and widths of the linear ellipse) | those, the table `covariance_errors_both_planes` |
+| `rgb_critical:<variant>` | arrays `<stem>` and record `<stem>_band` (`hst_rgb_critical_z9` or `jwst_rgb_critical_z9`), new record `<stem>_model` (whether the run has a shared GRF and its label), the position contours | those; writes the figure records and the marker tables |
+| `position_contours:<variant>` | arrays and record `posterior_overview_positions`, new arrays and record `posterior_overview_contours` (the 68.3% and 95.4% curves, `curve_<c>_segment_<k>`) | (no figure) |
+| `small_lambda:<variant>` | table and arrays `<prefix>_small_lambda_a_image_posteriors_jwst` (the ranking, with the panels shown and their fields), arrays and record `..._critical`, new record `..._selection` (the figure's settings) | those, `posterior_overview_positions`; writes the record `<prefix>_small_lambda_a_image_posteriors_jwst` |
+| `cluster_mass:<variant>` | tables `image_catalog_arc_directions<suffix>`, `..._extra_arc_directions`, `image_catalog_mass_profile<suffix>` and `..._y`, the covariance ellipses table, record `image_catalog_mass_provenance<suffix>`, the FITS, new arrays `image_catalog_family_cluster_mass<suffix>` (the median maps `model`, `model_grf`, `grf`, the resampled `truth` and the covariance curves) | those and, for the JWST overview, the position contours |
+| `fold_data` | arrays and record `fold_pairs_source_caustics` | `fold_cutouts`, `apj_fold_cutouts` read them |
+| `paper_cutouts:<variant>` | arrays and record `<prefix>_rgb_inset_critical` when a selected image panel is not in the small-lambda figure | those, the small-lambda ranking, the positions and the fold data |
+
+The render of the paper cutouts takes the inset critical fields only when the saved entry holds exactly the panels of
+the figure (same centres, fields and redshifts), and fails the step otherwise.
+
 ### Pass modes
 
 `full`
 : compute, product and render; the default, and what the run command does after the fit.
 
 `compute`
-: compute and product, no figures (`kappaccino outputs RUN --compute`), for example on a machine without the
-  imaging.
+: compute and product, no figures (`kappaccino outputs RUN --compute`), for example `--compute --skip rgb` on a
+  machine without the imaging.
 
 `render`
 : product and render only (`kappaccino outputs RUN --render`): every figure of a converted module drawn again from
@@ -263,7 +292,8 @@ render pass of `fit` on Hera takes 46 s, 21 s of them for the global corner; the
   state and posterior; on Hera 3 s, of which 0.8 s go to about 40 one-operation JAX kernels the state's arrays need,
   and no model function is compiled), the reporting draws are never built, and the files the computes read (truth
   maps, imaging) are not checked. A render pass of `mass` and `truth` on Hera takes 5 s; the full pass that computed
-  them took 3 min 40 s.
+  them took 3 min 40 s. `rgb` renders in 6 s on Hera (26 s in a full pass) and in 49 s on M0416 (2 min in a full
+  pass), most of it building the RGB cutouts from the JWST mosaics.
 
 In a render pass (and in the product and render phases of any pass) `ctx.draws` and `ctx.evaluator` raise
 `ComputeOnly`, which names the module and step that asked, so a figure that still needs the lens fails its step
@@ -432,7 +462,7 @@ run summary is written before it.
 
 ### Converting a module to compute and render
 
-This is how `mass`, `truth`, `images` and `fit` were converted, for the module still on `run` (`rgb`).
+This is how the five modules were converted from a single `run`.
 
 1. **List every product.** For each step of `run`, write down what it writes (tables, records, arrays, FITS, figures)
    and what each figure function reads. Most writers already save part of what their figure needs (a table, a
@@ -585,7 +615,8 @@ When imaging is configured and present under `data/imaging/`:
 - for M0416 and AS1063, JWST versions with an `_jwst` suffix, including contours of the predicted observed image positions (68.3% solid,
   95.4% dashed).
 
-Missing imaging is reported and skipped.
+Missing imaging is reported and skipped. `kappaccino outputs RUN --render --only rgb` draws all of these again from
+the store and the imaging (see [The rgb module](#the-rgb-module)).
 
 The det A maps of the fold pairs, fold systems and small cutouts are not evaluated over the whole lens on their own
 grids. Each draw's parametric lens on those grids is the overview's (512 x 512 over the cluster, evaluated anyway)

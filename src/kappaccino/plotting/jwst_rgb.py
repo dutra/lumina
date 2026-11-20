@@ -98,14 +98,21 @@ def recovered_contour_segments(contours):
             for curve in curves]
 
 
-@plt.rc_context()
 def render_rgb_critical(config, state, draws, catalog, extra, imaging, output, tables, *, log=print):
     """Render the z = 9 critical curve (zero contour of the per-pixel median det A over the reporting draws) and its
-    16-84% band on the RGB overview.  Computes and saves what the picture needs in the stage's results (the arrays
-    ``<stem>``, the record ``<stem>_band`` and the position contours; ``tables``
-    is the stage folder or its ``tables``) and draws it with :func:`draw_rgb_critical`; :func:`redraw_rgb_critical`
-    draws it again from those entries."""
-    output,tables=Path(output),Path(tables)
+    16-84% band on the RGB overview: :func:`save_rgb_critical` then :func:`render_saved_rgb_critical`."""
+    save_rgb_critical(config, state, draws, catalog, extra, imaging, tables, log=log)
+    render_saved_rgb_critical(config, state, catalog, extra, imaging, output, tables, log=log)
+    return Path(output)
+
+
+def save_rgb_critical(config, state, draws, catalog, extra, imaging, tables, *, log=print):
+    """Compute and save what the RGB critical overview draws, in the stage's results (``tables`` is the stage folder or
+    its ``tables``): the arrays ``<stem>`` (median det A over the reporting draws on the overview grid, its 16th and
+    84th percentiles), the records ``<stem>_band`` and ``<stem>_model`` (whether the run has a shared GRF and its
+    label) and the position contours (:func:`~kappaccino.diagnostics.position_contours.load_or_compute_contours`).
+    Of the imaging only the reference band's WCS and shape (the overview grid) are read.  Returns the stem."""
+    tables=Path(tables)
     from .mass_figure import overview_geometry
     from ..imaging import cutouts
 
@@ -127,13 +134,26 @@ def render_rgb_critical(config, state, draws, catalog, extra, imaging, output, t
         store.write_arrays(tables,stem,determinant=det,lower=lower,upper=upper,band=band,
                             fingerprint=fingerprint,z_source=9.,draw_indices=draws.indices,
                             central_statistic='pointwise posterior median determinant')
+        store.write_record(tables,f'{stem}_model',dict(shared_grf=shared_field_evaluator(draws.evaluator) is not None,
+                                                       grf_field=shared_grf_label(draws.evaluator)))
     from ..diagnostics.position_contours import load_or_compute_contours
-    recovered_contours = load_or_compute_contours(config, state, draws, extra, tables, log=log)
-    draw_rgb_critical(config, state.reference, catalog, extra, imaging, output, tables, determinant=det, lower=lower,
-                      upper=upper, contours=recovered_contours, fingerprint=fingerprint,
-                      reporting_draws=len(draws), shared_grf=shared_field_evaluator(draws.evaluator) is not None,
-                      grf_field=shared_grf_label(draws.evaluator), log=log)
-    return output
+    load_or_compute_contours(config, state, draws, extra, tables, log=log)
+    return stem
+
+
+def render_saved_rgb_critical(config, state, catalog, extra, imaging, output, tables, contours=None, *, log=print):
+    """Draw the RGB critical overview (:func:`draw_rgb_critical`) from what :func:`save_rgb_critical` saved; the
+    position ``contours`` are read from the store unless given (as
+    :func:`~kappaccino.diagnostics.position_contours.load_position_contours` returns them).  Returns the PDF paths."""
+    from ..diagnostics.position_contours import load_position_contours
+    stem=rgb_overview_stem(config.image_catalog, imaging[1])
+    saved=store.read_arrays(tables,stem)
+    model=store.read_record(tables,f'{stem}_model')
+    return draw_rgb_critical(config, state.reference, catalog, extra, imaging, output, tables, determinant=saved['determinant'],
+                             lower=saved['lower'], upper=saved['upper'],
+                             contours=load_position_contours(tables) if contours is None else contours,
+                             fingerprint=np.asarray(saved['fingerprint']).item(), reporting_draws=len(saved['draw_indices']),
+                             shared_grf=model['shared_grf'], grf_field=model['grf_field'], log=log)
 
 
 @plt.rc_context()

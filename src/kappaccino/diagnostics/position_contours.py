@@ -180,16 +180,28 @@ def prepare_contours(data, *, grid_size=256, log=print):
     return dict(curves=curves, summaries=summaries)
 
 
+CONTOURS = 'posterior_overview_contours'      # the curves of prepare_contours: arrays (the segments) and record
+
+
 def load_or_compute_contours(config, state, draws, extra, tables, *, grid_size=256, log=print):
     """Position contours of the reporting draws (``reporting.draws.ReportingDraws``) from the saved image recovery in
-    ``tables``; ``extra`` (the common extra images) is read from there too and kept in the signature for the callers."""
+    ``tables``; ``extra`` (the common extra images) is read from there too and kept in the signature for the callers.
+    Saves the per-draw positions (arrays and record ``posterior_overview_positions``) and the curves (arrays and record
+    ``posterior_overview_contours``), which :func:`load_position_contours` reads back."""
     tables = Path(tables)
     data = position_draws(draws.indices, tables)
     contours = prepare_contours(data, grid_size=grid_size, log=log)
     contours['position_data'] = data
     contours['fingerprint'] = draws.key
-    # Arrays and record in one commit: a kill between them must not leave new arrays beside an old record.
+    segments = {f'curve_{c}_segment_{k}': segment for c, curve in enumerate(contours['curves'])
+                for k, segment in enumerate(curve['segments'])}
+    # Arrays and records in one commit: a kill between them must not leave new arrays beside an old record.
     with store.batch(tables):
+        store.write_arrays(tables, CONTOURS, segments)
+        store.write_record(tables, CONTOURS, dict(
+            curves=[dict(kind=curve['kind'], identity=curve['identity'], probability=curve['probability'],
+                         segments=len(curve['segments'])) for curve in contours['curves']],
+            arrays='curve_<c>_segment_<k>: segment k (vertex, 2) of curve c, arcsec'))
         store.write_arrays(tables, 'posterior_overview_positions', data)
         store.write_record(tables, 'posterior_overview_positions', dict(
             fingerprint=draws.key, draws=len(draws.indices), selected_draw_indices=np.asarray(draws.indices).tolist(),
@@ -201,3 +213,16 @@ def load_or_compute_contours(config, state, draws, extra, tables, *, grid_size=2
             contours=f'KDE highest-density regions (at least {MIN_KDE_DRAWS} draws) or Gaussian ellipses, 68.3% and 95.4%',
             summaries=contours['summaries']))
     return contours
+
+
+def load_position_contours(tables):
+    """The position contours :func:`load_or_compute_contours` saved in the stage of ``tables``, as it returned them:
+    ``curves``, ``summaries``, ``position_data`` and ``fingerprint``."""
+    record = store.read_record(tables, CONTOURS)
+    segments = store.read_arrays(tables, CONTOURS)
+    positions = store.read_record(tables, 'posterior_overview_positions')
+    curves = [dict(kind=curve['kind'], identity=curve['identity'], probability=curve['probability'],
+                   segments=[segments[f'curve_{c}_segment_{k}'] for k in range(curve['segments'])])
+              for c, curve in enumerate(record['curves'])]
+    return dict(curves=curves, summaries=positions['summaries'],
+                position_data=store.read_arrays(tables, 'posterior_overview_positions'), fingerprint=positions['fingerprint'])

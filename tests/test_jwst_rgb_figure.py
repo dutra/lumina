@@ -122,6 +122,7 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
         position_calls.append(True)
         return {'curves': []}
     monkeypatch.setattr(image_position_contours, 'load_or_compute_contours', positions)
+    monkeypatch.setattr(image_position_contours, 'load_position_contours', lambda tables: {'curves': []})
     catalog=_overview_catalog()
     extra=pd.DataFrame(dict(family_id=['1'],x_model_arcsec=[.1],y_model_arcsec=[-.2]))
     config=NS(paths=NS(run_name=cluster),image_catalog=NS(candidate_catalog_path='must-not-read.json'))

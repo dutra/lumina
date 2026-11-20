@@ -5,13 +5,14 @@ variants (``imaging_variants(config, overview_only=True)``) also the cluster mas
 (computed once, at the first overview), with first the position contours and the small-lambda figures for the JWST
 overview (``figure_suffix == "_jwst"``) and after them its ApJ fold cutouts and paper cutouts.  The steps of a variant
 are named ``<step>:<variant>``, the variant being its ``figure_suffix`` without the underscore (``primary`` without
-one).
+one).  Compute evaluates the lens and saves what each figure draws; render draws the figures from the store and the
+imaging pixels.  A variant whose imaging folder is missing is logged once and left out, in either phase.
 """
 from __future__ import annotations
 
 from dataclasses import replace
 
-from .base import OutputContext, OutputModule
+from .base import ModuleUnavailable, OutputContext, OutputModule
 
 
 def overview_variant(image_config, overview_configs):
@@ -20,9 +21,35 @@ def overview_variant(image_config, overview_configs):
     return next((view for view in overview_configs if replace(view, figure_suffix=image_config.figure_suffix) == image_config), None)
 
 
+def variant_label(image_config) -> str:
+    """The name of an imaging variant in its step names: its ``figure_suffix`` without the underscore, ``primary``
+    without one."""
+    return image_config.figure_suffix.lstrip('_') or 'primary'
+
+
+def image_tables(ctx: OutputContext):
+    """``(image_df, extra)``: the tables ``image_fit_quality`` and ``image_recovery_extra_images`` of the images
+    product."""
+    images = ctx.products["images"]
+    if images is None:
+        # TRANSITIONAL: an unconverted images module gives no product in a render pass; deleted once it is converted.
+        raise ModuleUnavailable("the images module gave no product (not converted to compute/render yet), so the "
+                                "imaging products cannot be drawn in a render pass")
+    return images["image_df"], images["recovery"]["image_recovery_extra_images"]
+
+
 class RGBModule(OutputModule):
-    """The covariance cutouts read the table ``covariance_errors_both_planes`` (``fit``), hence ``after``.  Product:
-    ``{"position_contours": {figure_suffix: contours}, "fold_data": the fold diagnostics or None}``."""
+    """The covariance cutouts read the table ``covariance_errors_both_planes`` (``fit``), hence ``after``.
+
+    Compute, per imaging variant whose imaging loads (``imaging``): the covariance cutouts
+    (``covariance_cutouts.save_covariance_cutouts``) and the band of the RGB critical overview
+    (``jwst_rgb.save_rgb_critical``); per overview variant the position contours
+    (``position_contours.load_or_compute_contours``) and the small-lambda ranking (``save_small_lambda_jwst``) for the
+    JWST overview, the cluster mass maps (``mass_figure.save_cluster_mass_figure``), the fold diagnostics once
+    (``fold_pairs.compute_fold_diagnostics`` and ``save_fold_data``) and the paper-cutout critical fields
+    (``paper_cutouts.prepare_paper_cutouts``).  Of the imaging the compute reads only the band files' WCS, shape and
+    paths.  Render, per variant: every figure from the store and the imaging pixels.  No product: no module reads
+    it."""
 
     name = "rgb"
     requires = ("images",)
@@ -30,8 +57,10 @@ class RGBModule(OutputModule):
     checkpoint = True
     description = ("covariance RGB cutouts, RGB critical overview, position contours, small-lambda figures, cluster mass "
                    "figure, fold diagnostics, ApJ fold cutouts, paper cutouts (with imaging)")
-    steps = ("imaging", "covariance_cutouts", "rgb_critical", "position_contours", "small_lambda", "cluster_mass", "fold_data",
-             "fold_cutouts", "apj_fold_cutouts", "paper_cutouts")
+    compute_steps = ("imaging", "covariance_cutouts", "rgb_critical", "position_contours", "small_lambda", "cluster_mass",
+                     "fold_data", "paper_cutouts")
+    render_steps = ("imaging", "covariance_cutouts", "rgb_critical", "small_lambda", "cluster_mass", "fold_cutouts",
+                    "apj_fold_cutouts", "paper_cutouts")
     path_fields = ("image_catalog.image_dir", "image_catalog.candidate_catalog_path", "truth.kappa_true_fits")
 
     def active(self, ctx: OutputContext) -> str | None:
@@ -42,91 +71,119 @@ class RGBModule(OutputModule):
             return "no observed image in the image recovery"
         return None
 
-    def run(self, ctx: OutputContext):
+    def compute(self, ctx: OutputContext) -> None:
         from ..diagnostics.position_contours import load_or_compute_contours
+        from ..imaging.cutouts import imaging_variants
+        from ..plotting.covariance_cutouts import save_covariance_cutouts
+        from ..plotting.fold_pairs import compute_fold_diagnostics, save_fold_data
+        from ..plotting.jwst_rgb import save_rgb_critical
+        from ..plotting.mass_figure import save_cluster_mass_figure
+        from ..plotting.paper_cutouts import prepare_paper_cutouts
+        from ..plotting.small_lambda_jwst import save_small_lambda_jwst
+        config, state, paths, tables, log = ctx.config, ctx.state, ctx.paths, ctx.tables, ctx.log
+        image_df, extra = image_tables(ctx)
+        z_crit = float(config.truth.caustic_source_redshift)
+
+        def fold_data():
+            save_fold_data(compute_fold_diagnostics(config, state, ctx.draws, tables, log=log), tables)
+            return "fold_pairs_source_caustics"
+
+        overview_configs = imaging_variants(config, overview_only=True)
+        for image_config in imaging_variants(config):
+            label = variant_label(image_config)
+            imaging = ctx.step(f"imaging:{label}", ctx.imaging, image_config)
+            if imaging is None:
+                continue
+            variant = replace(config, image_catalog=image_config)
+            ctx.step(f"covariance_cutouts:{label}", lambda: save_covariance_cutouts(variant, state, ctx.draws, paths, imaging, log=log))
+            ctx.step(f"rgb_critical:{label}", lambda: save_rgb_critical(variant, state, ctx.draws, image_df, extra, imaging, tables, log=log))
+            view = overview_variant(image_config, overview_configs)
+            if view is None:
+                continue
+            label, variant, jwst = variant_label(view), replace(config, image_catalog=view), view.figure_suffix == '_jwst'
+            position_contours, contours_ready = None, True
+            if jwst:
+                position_contours = ctx.step(f"position_contours:{label}", lambda: load_or_compute_contours(
+                    variant, state, ctx.draws, extra, tables, log=log))
+                contours_ready = ctx.ok(f"position_contours:{label}")
+                if contours_ready:
+                    ctx.step(f"small_lambda:{label}", lambda: save_small_lambda_jwst(variant, state, ctx.draws, paths, imaging,
+                                                                                    position_contours, log=log))
+                else:
+                    ctx.skip_step(f"small_lambda:{label}", f"position_contours:{label} failed")
+            if contours_ready:
+                ctx.step(f"cluster_mass:{label}", lambda: save_cluster_mass_figure(
+                    ctx.draws, image_df, extra, imaging, z_source=z_crit, kappa_true_fits=config.truth.kappa_true_fits,
+                    tables_dir=tables, fits_dir=paths.fits, artifact_suffix=view.figure_suffix,
+                    position_contours=position_contours, log=log))
+            else:
+                ctx.skip_step(f"cluster_mass:{label}", f"position_contours:{label} failed")
+            if "fold_data" not in ctx._steps:            # once, at the first overview
+                ctx.step("fold_data", fold_data)
+            if not jwst:
+                continue
+            if not ctx.ok("fold_data"):
+                ctx.skip_step(f"paper_cutouts:{label}", "fold_data failed")
+            elif ctx.ok(f"small_lambda:{label}"):
+                # The paper cutouts read the saved position contours and small-lambda ranking of this pass.
+                ctx.step(f"paper_cutouts:{label}", lambda: prepare_paper_cutouts(variant, tables, ctx.draws, log=log))
+            else:
+                ctx.skip_step(f"paper_cutouts:{label}", f"small_lambda:{label} did not run")
+
+    def render(self, ctx: OutputContext) -> None:
+        from functools import cache
+        from ..diagnostics.position_contours import load_position_contours
         from ..imaging.cutouts import imaging_variants
         from ..io import store
         from ..plotting import plots
         from ..plotting.apj_fold_cutouts import render_apj_fold_cutouts
-        from ..plotting.covariance_cutouts import write_covariance_cutouts
-        from ..plotting.fold_pairs import compute_fold_diagnostics, render_fold_diagnostics, save_fold_data
-        from ..plotting.jwst_rgb import render_rgb_critical, rgb_overview_stem
-        from ..plotting.mass_figure import render_cluster_mass_figure
-        from ..plotting.paper_cutouts import write_paper_cutouts
-        from ..plotting.small_lambda_jwst import write_small_lambda_jwst
-        config, state, draws, paths, figures, tables, prefix, log = (ctx.config, ctx.state, ctx.draws, ctx.paths, ctx.figures,
-                                                                     ctx.tables, ctx.prefix, ctx.log)
-        images = ctx.products["images"]
-        image_df, extra = images["image_df"], images["recovery"]["image_recovery_extra_images"]
-        z_crit = float(config.truth.caustic_source_redshift)
-        fold_data, contours_by_view = None, {}
+        from ..plotting.covariance_cutouts import render_covariance_cutouts
+        from ..plotting.fold_pairs import load_fold_data, render_fold_diagnostics
+        from ..plotting.jwst_rgb import render_saved_rgb_critical, rgb_overview_stem
+        from ..plotting.paper_cutouts import render_paper_cutouts
+        from ..plotting.small_lambda_jwst import render_small_lambda_jwst
+        config, state, paths, tables, figures, prefix, log = (ctx.config, ctx.state, ctx.paths, ctx.tables, ctx.figures,
+                                                              ctx.prefix, ctx.log)
+        image_df, extra = image_tables(ctx)
+        contours = cache(lambda: load_position_contours(tables))        # read once, when a figure first needs them
+        folds = cache(lambda: load_fold_data(tables))
         overview_configs = imaging_variants(config, overview_only=True)
         for image_config in imaging_variants(config):
-            label = image_config.figure_suffix.lstrip('_') or 'primary'
-            imaging = ctx.step(f"imaging:{label}", ctx.imaging, image_config)
+            label = variant_label(image_config)
+            # Left out when the compute had no imaging; None (logged once) when this machine has none.
+            imaging = ctx.render_step(f"imaging:{label}", ctx.imaging, image_config)
             if imaging is None:
                 continue
-            ctx.step(f"covariance_cutouts:{label}", write_covariance_cutouts, replace(config, image_catalog=image_config), state,
-                     draws, paths, imaging, log=log)
-            ctx.step(f"rgb_critical:{label}", lambda: render_rgb_critical(
-                replace(config, image_catalog=image_config), state, draws, image_df, extra, imaging,
-                plots.figure_path(figures, rgb_overview_stem(image_config, imaging[1]) + '.pdf', prefix), tables, log=log))
+            variant = replace(config, image_catalog=image_config)
+            ctx.render_step(f"covariance_cutouts:{label}", render_covariance_cutouts, variant, state, paths, imaging, log=log)
+            ctx.render_step(f"rgb_critical:{label}", lambda: render_saved_rgb_critical(
+                variant, state, image_df, extra, imaging,
+                plots.figure_path(figures, rgb_overview_stem(image_config, imaging[1]) + '.pdf', prefix), tables, contours(), log=log))
             view = overview_variant(image_config, overview_configs)
             if view is None:
                 continue
-            image_config = view
-            label = image_config.figure_suffix.lstrip('_') or 'primary'
-            position_contours, contours_ready = None, True
-            if image_config.figure_suffix == '_jwst':
-                position_contours = ctx.step(f"position_contours:{label}", load_or_compute_contours,
-                                             replace(config, image_catalog=image_config), state, draws, extra, tables, log=log)
-                contours_ready = ctx.ok(f"position_contours:{label}")
-                if contours_ready:
-                    contours_by_view[image_config.figure_suffix] = position_contours
-                    ctx.step(f"small_lambda:{label}", write_small_lambda_jwst, replace(config, image_catalog=image_config), state,
-                             draws, paths, imaging, position_contours, log=log)
-                else:
-                    ctx.skip_step(f"small_lambda:{label}", f"position_contours:{label} failed")
-            if contours_ready:
-                ctx.step(f"cluster_mass:{label}", self._cluster_mass, ctx, render_cluster_mass_figure, image_df, extra, imaging,
-                         image_config, z_crit, position_contours)
-            else:
-                ctx.skip_step(f"cluster_mass:{label}", f"position_contours:{label} failed")
-            if fold_data is None and "fold_data" not in ctx._steps:
-                fold_data = ctx.step("fold_data", self._fold_data, ctx, compute_fold_diagnostics, save_fold_data)
-            if not ctx.ok("fold_data"):
-                for step in ("fold_cutouts", *(("apj_fold_cutouts", "paper_cutouts") if image_config.figure_suffix == '_jwst' else ())):
-                    ctx.skip_step(f"{step}:{label}", "fold_data failed")
+            label, variant, jwst = variant_label(view), replace(config, image_catalog=view), view.figure_suffix == '_jwst'
+            if jwst:
+                ctx.render_step(f"small_lambda:{label}", render_small_lambda_jwst, variant, state, paths, imaging, log=log)
+            ctx.render_step(f"cluster_mass:{label}", lambda: self._cluster_mass(ctx, image_df, extra, imaging, view,
+                                                                               contours() if jwst else None))
+            ctx.render_step(f"fold_cutouts:{label}", lambda: render_fold_diagnostics(variant, state, folds(), paths, imaging, log=log),
+                            needs="fold_data")
+            if not jwst:
                 continue
-            ctx.step(f"fold_cutouts:{label}", render_fold_diagnostics, replace(config, image_catalog=image_config), state, fold_data,
-                     paths, imaging, log=log)
-            if image_config.figure_suffix == '_jwst':
-                output = ctx.step(f"apj_fold_cutouts:{label}", render_apj_fold_cutouts, config, fold_data, imaging,
-                                  plots.figure_path(figures, 'fold_cutouts_apj_jwst.pdf', prefix),
-                                  run_directory=paths.root.parent,
-                                  source_cache=f"{store.results_path(ctx.stage)} (arrays and record fold_pairs_source_caustics)")
-                if output is not None:
-                    log(f'[outputs] ApJ fold cutouts: {output}')
-                # The paper cutouts read the saved position contours and small-lambda ranking of this pass.
-                if ctx.ok(f"small_lambda:{label}"):
-                    ctx.step(f"paper_cutouts:{label}", write_paper_cutouts, replace(config, image_catalog=image_config), state, draws,
-                             tables, figures, imaging, log=log)
-                else:
-                    ctx.skip_step(f"paper_cutouts:{label}", f"small_lambda:{label} did not run")
-        return {"position_contours": contours_by_view, "fold_data": fold_data}
+            output = ctx.render_step(f"apj_fold_cutouts:{label}", lambda: render_apj_fold_cutouts(
+                config, folds(), imaging, plots.figure_path(figures, 'fold_cutouts_apj_jwst.pdf', prefix),
+                run_directory=paths.root.parent,
+                source_cache=f"{store.results_path(ctx.stage)} (arrays and record fold_pairs_source_caustics)"), needs="fold_data")
+            if output is not None:
+                log(f'[outputs] ApJ fold cutouts: {output}')
+            ctx.render_step(f"paper_cutouts:{label}", render_paper_cutouts, variant, state, tables, figures, imaging, log=log)
 
     @staticmethod
-    def _cluster_mass(ctx, render, image_df, extra, imaging, view, z_crit, position_contours):
+    def _cluster_mass(ctx, image_df, extra, imaging, view, position_contours):
         from ..plotting import plots
-        config, paths = ctx.config, ctx.paths
-        render(ctx.draws, image_df, extra, imaging, z_source=z_crit, kappa_true_fits=config.truth.kappa_true_fits,
-               figure_path=plots.figure_path(ctx.figures, f"image_catalog_family_cluster_mass{view.figure_suffix}.pdf", ctx.prefix),
-               tables_dir=ctx.tables, fits_dir=paths.fits, artifact_suffix=view.figure_suffix,
-               position_contours=position_contours, log=ctx.log)
+        from ..plotting.mass_figure import draw_cluster_mass_figure
+        draw_cluster_mass_figure(image_df, extra, imaging, reference=ctx.state.reference,
+                                 figure_path=plots.figure_path(ctx.figures, f"image_catalog_family_cluster_mass{view.figure_suffix}.pdf", ctx.prefix),
+                                 tables_dir=ctx.tables, artifact_suffix=view.figure_suffix, position_contours=position_contours)
         ctx.log(f"[outputs] cluster mass figure rendered from {imaging[3]} imaging ({view.image_dir})")
-
-    @staticmethod
-    def _fold_data(ctx, compute, save):
-        data = compute(ctx.config, ctx.state, ctx.draws, ctx.tables, log=ctx.log)
-        save(data, ctx.tables)
-        return data

@@ -316,10 +316,37 @@ def overview_axes(fig, ax, images, bands, display, display_image, catalog, extra
               facecolor="black", edgecolor="none", framealpha=0.65, borderpad=0.6, handletextpad=0.5, handlelength=1.2)
 
 
+def _available(values):
+    """The contour levels (Msun/kpc^2) inside the range of ``values``."""
+    levels = CONTOUR_LEVELS_MSUN_PER_KPC2
+    return levels[(levels > np.min(values)) & (levels < np.max(values))]
+
+
+def cluster_mass_arrays_name(artifact_suffix: str = "") -> str:
+    """The arrays the cluster mass figure draws: the median convergence maps and the covariance ellipses."""
+    return f"image_catalog_family_cluster_mass{artifact_suffix}"
+
+
 def render_cluster_mass_figure(draws, catalog: pd.DataFrame, extra: pd.DataFrame, imaging, *,
                                z_source: float, kappa_true_fits: str | Path | None, figure_path: Path, tables_dir: Path, fits_dir: Path,
                                artifact_suffix: str = "", position_contours=None, log=print) -> dict[str, Any]:
-    """Write the overview-plus-mass-panels figure, the strip profiles and the convergence FITS. Returns provenance.
+    """Write the overview-plus-mass-panels figure, the strip profiles and the convergence FITS
+    (:func:`save_cluster_mass_figure` then :func:`draw_cluster_mass_figure`). Returns provenance."""
+    provenance = save_cluster_mass_figure(draws, catalog, extra, imaging, z_source=z_source, kappa_true_fits=kappa_true_fits,
+                                          tables_dir=tables_dir, fits_dir=fits_dir, artifact_suffix=artifact_suffix,
+                                          position_contours=position_contours, log=log)
+    draw_cluster_mass_figure(catalog, extra, imaging, reference=draws.evaluator.state.reference, figure_path=figure_path,
+                             tables_dir=tables_dir, artifact_suffix=artifact_suffix, position_contours=position_contours)
+    return provenance
+
+
+def save_cluster_mass_figure(draws, catalog: pd.DataFrame, extra: pd.DataFrame, imaging, *,
+                             z_source: float, kappa_true_fits: str | Path | None, tables_dir: Path, fits_dir: Path,
+                             artifact_suffix: str = "", position_contours=None, log=print) -> dict[str, Any]:
+    """Compute what the overview-plus-mass-panels figure draws: the stretch directions, the strip profiles, the
+    convergence FITS, the maps and covariance ellipses (arrays ``image_catalog_family_cluster_mass<suffix>``) and the
+    provenance record. Of the imaging only the reference band's WCS and shape (the overview grid) are read. Returns
+    provenance.
 
     The convergence maps are per-pixel medians over the reporting draws (``reporting.draws.ReportingDraws``) of the
     parametric convergence, of the convergence of its realization of the shared field and of their sum, each draw's field
@@ -390,17 +417,45 @@ def render_cluster_mass_figure(draws, catalog: pd.DataFrame, extra: pd.DataFrame
     if position_contours is not None:
         provenance['posterior_position_contours'] = dict(contours='68.3/95.4% regions of the predicted observed positions over the reporting draws',
             conditional_on='successful local recovery', catalog_markers='tiny crosses; recovery status in at least half the draws', stretch_sticks=False, summaries=position_contours['summaries'])
+    provenance.update(bounds_arcsec=dict(zip(("xmin", "xmax", "ymin", "ymax"), bounds)), contour_levels_msun_per_kpc2=_available(model * sigma_crit).tolist(),
+                      grid_shape=list(model.shape))
+    with store.batch(tables_dir):
+        store.write_arrays(tables_dir, cluster_mass_arrays_name(artifact_suffix), {**maps, **({"grf": grf} if grf is not None else {}),
+                           **{f"covariance_curve_{k}": curve for k, curve in enumerate(covariance_curves or ())}})
+        store.write_record(tables_dir, f"image_catalog_mass_provenance{artifact_suffix}", provenance, default=float)
+    return provenance
+
+
+def draw_cluster_mass_figure(catalog: pd.DataFrame, extra: pd.DataFrame, imaging, *, reference, figure_path: Path,
+                             tables_dir: Path, artifact_suffix: str = "", position_contours=None) -> None:
+    """Draw the overview-plus-mass-panels figure from what :func:`save_cluster_mass_figure` saved (``reference`` is
+    the run's sky reference, ``ModelState.reference``)."""
+    images, bands, display, cluster = imaging
+    display_image = images[cutouts.rgb_reference_band(bands)]
+    geometry = overview_geometry(display_image, catalog, extra, reference)
+    arc_directions = store.read_table(tables_dir, f"image_catalog_arc_directions{artifact_suffix}")
+    extra_directions = store.read_table(tables_dir, f"image_catalog_extra_arc_directions{artifact_suffix}")
+    provenance = store.read_record(tables_dir, f"image_catalog_mass_provenance{artifact_suffix}")
+    saved = store.read_arrays(tables_dir, cluster_mass_arrays_name(artifact_suffix))
+    model, kappa_total, grf, truth = (saved.get(name) for name in ("model", "model_grf", "grf", "truth"))
+    maps = {"model": model, **({"model_grf": kappa_total} if grf is not None else {}), **({"truth": truth} if truth is not None else {})}
+    sigma_crit = provenance["sigma_crit_msun_per_kpc2"]
+    x, y = geometry["x"], geometry["y"]
+    profile = store.read_table(tables_dir, f"image_catalog_mass_profile{artifact_suffix}")
+    yprofile = store.read_table(tables_dir, f"image_catalog_mass_profile_y{artifact_suffix}")
+    centers, yc = profile["x_arcsec"].to_numpy(), yprofile["y_arcsec"].to_numpy()
+    profiles = {name: (profile[f"{name}_dMdx_msun_per_arcsec"].to_numpy(), yprofile[f"{name}_dMdy_msun_per_arcsec"].to_numpy())
+                for name in maps}
+    covariance_curves = None
+    if "covariance_ellipses" in provenance:
+        covariance_curves = [saved[f"covariance_curve_{k}"] for k in range(provenance["covariance_ellipses"]["defined_count"])]
     fig = plt.figure(figsize=(7.1, 7.1), facecolor="white")
     grid = fig.add_gridspec(2, 2, width_ratios=[3.2, 1], height_ratios=[3.2, 1], left=0.09, right=0.95, bottom=0.10, top=0.96, wspace=0.025, hspace=0.025)
     ax = fig.add_subplot(grid[0, 0])
     overview_axes(fig, ax, images, bands, display, display_image, catalog, extra, geometry,
                   arc_directions=arc_directions, extra_directions=extra_directions, covariance_curves=covariance_curves, position_contours=position_contours)
     lower, right, corner = fig.add_subplot(grid[1, 0]), fig.add_subplot(grid[0, 1]), fig.add_subplot(grid[1, 1])
-    levels = CONTOUR_LEVELS_MSUN_PER_KPC2
-
-    def available(values):
-        return levels[(levels > np.min(values)) & (levels < np.max(values))]
-
+    available = _available
     rx, ry = grid_pixels(geometry, x, y)
     selected = available(model * sigma_crit)
     if len(selected):
@@ -483,7 +538,3 @@ def render_cluster_mass_figure(draws, catalog: pd.DataFrame, extra: pd.DataFrame
     np.testing.assert_allclose(wy, gy, atol=1e-6, rtol=0)
     fig.savefig(figure_path, dpi=300, bbox_inches="tight", pad_inches=0.04, facecolor="white")
     plt.close(fig)
-    provenance.update(bounds_arcsec=dict(zip(("xmin", "xmax", "ymin", "ymax"), bounds)), contour_levels_msun_per_kpc2=selected.tolist(),
-                      grid_shape=list(model.shape))
-    store.write_record(tables_dir, f"image_catalog_mass_provenance{artifact_suffix}", provenance, default=float)
-    return provenance
