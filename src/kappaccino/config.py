@@ -1469,7 +1469,9 @@ class TruthRecoveryConfig:
         FITS map of the true shear component :math:`\\gamma_2`.  Default None.
     deflection_true_fits : str or pathlib.Path or None, optional
         FITS map of the true deflection (FF-SIMS ``deflAngles*.fits``).  Setting it adds the true-lens RMS of the
-        image catalog (``diagnostics.true_lens``) to the residual histogram.  Outside the run hash.  Default None.
+        image catalog (``diagnostics.true_lens``) to the residual histogram and, with a shared mass field, the
+        relative displacement against separation (``plotting.relative_displacement``).  Outside the run hash.
+        Default None.
     truth_grid_size : int, optional
         Largest number of pixels per side of the comparison grid (the true map's footprint, resampled).  Nonnegative;
         ``0`` keeps the native grid.  Default ``256``.

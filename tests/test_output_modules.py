@@ -365,7 +365,8 @@ def test_outputs_list_command(capsys, synthetic_config, tmp_path):
     assert cli.main(["outputs", "--list", str(run)]) == 0
     rows = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()[1::2]}
     assert rows["fit"].rstrip().endswith("yes")
-    assert rows["truth"].rstrip().endswith("no: no truth convergence map (truth.kappa_true_fits)")
+    assert rows["truth"].rstrip().endswith("no: no truth convergence or deflection map (truth.kappa_true_fits, "
+                                              "truth.deflection_true_fits)")
     assert rows["rgb"].rstrip().endswith("no: no imaging (image_catalog.image_dir)")
     with pytest.raises(SystemExit):
         cli.main(["outputs", str(run), "--only", "nope"])
