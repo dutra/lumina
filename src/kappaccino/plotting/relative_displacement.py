@@ -1,5 +1,5 @@
 """Relative displacement against separation for a simulated cluster with a true deflection map
-(``truth.deflection_true_fits``): the rms difference of a vector field between two points, split along and across
+(``outputs.truth.deflection_true_fits``): the rms difference of a vector field between two points, split along and across
 their separation, as a function of the separation.
 
 For a field v at points i, j, Delta = v_i - v_j; per separation bin S_L = sqrt(mean Delta_L^2) along the separation
@@ -347,8 +347,8 @@ def save_relative_displacement(config, state, evaluator, draws, recovery: dict, 
     image_df = recovery.get("image_fit_quality") if recovery else None
     residual_draws = recovery.get("posterior_image_residual_draws") if recovery else None
     reason = None
-    if not config.truth.deflection_true_fits:
-        reason = "no truth.deflection_true_fits"
+    if not config.outputs.truth.deflection_true_fits:
+        reason = "no outputs.truth.deflection_true_fits"
     elif true_lens is None:
         reason = "no true-lens record"
     elif not draws.has_field:
@@ -362,13 +362,13 @@ def save_relative_displacement(config, state, evaluator, draws, recovery: dict, 
     start = time.perf_counter()
     try:
         true_table = store.read_table(stage, "true_lens_residuals")
-        alpha_true, lens_map, scale = true_deflection(config.truth.deflection_true_fits, astropy_cosmology(state.cosmo_config),
+        alpha_true, lens_map, scale = true_deflection(config.outputs.truth.deflection_true_fits, astropy_cosmology(state.cosmo_config),
                                                float(state.gp_reference_redshift), float(true_lens["amplitude"]))
     except (OSError, KeyError, IndexError, ValueError) as error:
         log(f"[outputs] relative displacement skipped: {type(error).__name__}: {error}")
         return None
     table, record = relative_displacement_table(state, evaluator, draws, residual_draws, true_table, alpha_true, lens_map, log=log)
-    record.update(amplitude=float(true_lens["amplitude"]), scale_to_reference=scale, deflection_fits=str(config.truth.deflection_true_fits))
+    record.update(amplitude=float(true_lens["amplitude"]), scale_to_reference=scale, deflection_fits=str(config.outputs.truth.deflection_true_fits))
     with store.batch(stage):
         store.write_table(stage, "relative_displacement", table)
         store.write_record(stage, "relative_displacement", record)

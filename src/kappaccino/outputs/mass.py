@@ -9,7 +9,7 @@ CRITICAL_CURVES = "critical_curves"          # the arrays of the figure critical
 class MassModule(OutputModule):
     """The aperture masses and the zeta masses read the table ``member_diagnostics`` (``fit``), hence ``after``; each
     decides by itself whether it applies (a truth convergence map and population members).  Compute: the arrays
-    ``critical_curves`` (``plots.critical_curve_maps``), the aperture masses (``member_aperture_masses`` and the record
+    ``critical_curves`` (``plots.critical_curve_maps``, at ``outputs.caustic_source_redshift``), the aperture masses (``member_aperture_masses`` and the record
     ``aperture_mass_histogram``; no figure) and the zeta masses (``zeta_masses.save_zeta_masses``).  Render: the
     critical curves and the subhalo mass and concentration figure.  No product."""
 
@@ -28,7 +28,7 @@ class MassModule(OutputModule):
         from ..plotting.zeta_masses import save_zeta_masses
         config, state, log = ctx.config, ctx.state, ctx.log
         image_df = ctx.products["images"]["image_df"]
-        z_crit = float(config.truth.caustic_source_redshift)
+        z_crit = float(config.outputs.caustic_source_redshift)
 
         def critical_curves():
             maps = plots.critical_curve_maps(state, ctx.draws, z_crit if z_crit > state.z_lens else max(state.z_source_values), log=log)

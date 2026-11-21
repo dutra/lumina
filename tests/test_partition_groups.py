@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from kappaccino import pipeline
-from kappaccino.config import ImageDiagnosticsConfig, PartitionConfig, ReportingConfig, RuntimeConfig, SamplingConfig, SearchConfig
+from kappaccino.config import ImageSolverConfig, ImagesOutputConfig, OutputsConfig, PartitionConfig, RuntimeConfig, SamplingConfig, SearchConfig
 from kappaccino.likelihood.evaluator import Evaluator
 from kappaccino.diagnostics.exact_images import ExactImageSolver
 from kappaccino.partition import add_uncertain_images, write_partition_outputs
@@ -41,7 +41,7 @@ def _mock(config, root: Path, *, counterimage: bool = False):
     state = build_state(config)
     evaluator = Evaluator(state)
     physical = evaluator.physical(jnp.asarray(state.initial_theta))
-    solver = ExactImageSolver(evaluator, ImageDiagnosticsConfig())
+    solver = ExactImageSolver(evaluator, ImageSolverConfig())
     rng = np.random.default_rng(1)
     rows = []
     for family, (z, source) in enumerate(SOURCES):
@@ -421,7 +421,7 @@ def test_final_stage_samples_the_lens_with_the_uncertain_images(synthetic_config
                      runtime=RuntimeConfig(seed=3, chains=1, nuts_chain_method="sequential", resume=True, skip_plots=True),
                      search=SearchConfig(n_starts=2, member_starts=1, lbfgs_max_iter=20, polish_max_iter=5),
                      sampling=SamplingConfig(warmup=5, samples=5, max_tree_depth=3),
-                     reporting=ReportingConfig(draws=1, image_draws=1, extra_images=False)).validate()
+                     outputs=OutputsConfig(draws=1, image_draws=1, images=ImagesOutputConfig(extra_images=False))).validate()
     result = pipeline.run(config)
     assert result.state.uncertain_images is not None and result.posterior.samples.shape[1] == result.init.state.n_parameters
     saved = load_arrays(result.paths.final.artifacts / groups.OUTPUT_FILE)

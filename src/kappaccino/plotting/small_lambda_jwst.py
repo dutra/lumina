@@ -144,7 +144,7 @@ def save_small_lambda_jwst(config, state, draws, paths, imaging, position_contou
         store.write_table(paths.tables,stem,rows)
         store.write_arrays(paths.tables,stem,lambda_a=values,draw_indices=indices,image_labels=labels,
                             abs_lambda_a_quantiles=quantiles,observed_xy=xy,posterior_axis_statistics=axis_statistics)
-        store.write_record(paths.tables,f'{stem}_selection',dict(run=str(paths.figures.parent),image_dir=config.image_catalog.image_dir,bands=list(bands),minimum_fov_arcsec=minimum_fov,
+        store.write_record(paths.tables,f'{stem}_selection',dict(run=str(paths.figures.parent),image_dir=config.outputs.rgb.image_dir,bands=list(bands),minimum_fov_arcsec=minimum_fov,
             critical_curve='Blue: zero contour of posterior median determinant at each source redshift; parametric + shared GRF when enabled',critical_draw_indices=critical_indices.tolist(),critical_band='16-84% determinant interval from the same smoothed parametric + GRF draws',
             minimum_major_sigma_arcsec=minimum_major_sigma,minimum_axis_ratio=minimum_axis_ratio,maximum_cutouts=count,
             ranking='Descending major-axis standard deviation (sqrt of largest eigenvalue of recovered image-position sample covariance); ties by image label; at least 10 recovered draws and positive-definite covariance',

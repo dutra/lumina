@@ -7,15 +7,19 @@ from typing import Any, Iterable
 from ..config import LensClusterSolverConfig
 from ..core.model import ModelState, PosteriorResults
 from ..likelihood.evaluator import Evaluator
-from ..outputs.base import OutputContext, plan_modules, run_modules
+from ..outputs.base import OutputContext, disabled_modules, plan_modules, run_modules
 
 
 def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator: Evaluator | None, posterior: PosteriorResults,
                   audit: dict[str, Any], paths, *, log=print, only: Iterable[str] | None = None,
-                  skip: Iterable[str] | None = None, fail_fast: bool | None = None, mode: str = "full") -> dict[str, Any]:
+                  skip: Iterable[str] | None = None, all_modules: bool = False, fail_fast: bool | None = None,
+                  mode: str = "full") -> dict[str, Any]:
     """Run the output modules (``outputs.registry.MODULES``) and write the record ``run_summary`` and the results
-    macros; returns the summary.  ``paths`` is the final StagePaths.  ``only``, ``skip`` and ``fail_fast`` default to
-    the ``outputs`` section of ``config`` (``config.OutputsConfig``).  ``mode`` is the pass mode
+    macros; returns the summary.  ``paths`` is the final StagePaths.  The modules run are chosen by the ``enabled``
+    switch of each module's section of ``config.outputs`` (``config.OutputsConfig``), unless a selection is given
+    (``kappaccino outputs --only/--skip/--all``), which replaces it: ``only`` runs these modules and the modules they
+    require, ``skip`` every module but these and those that require them, ``all_modules`` every module.  ``fail_fast``
+    defaults to ``config.outputs.fail_fast``.  ``mode`` is the pass mode
     (``outputs.base.MODES``): ``full``, ``compute`` (no figures) or ``render`` (figures from the store only; the
     evaluator may be None and is never used).  A render pass always merges its summary into the saved one and keeps
     every module's numbers (``summary_keys``) from the last compute.
@@ -24,7 +28,7 @@ def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator:
     evaluated once and shared by all of them; none uses the single best sample.  The summary and the macros are written
     before the first imaging module (the slowest and most failure-prone part: the Ares run of 2026-11-08 ended inside
     it with no run_summary and "not available" macros) and again at the end, also when a module failed.  A pass that
-    does not run every module (``only`` or ``skip``, or a module failed or was skipped) merges its summary into the
+    does not run every module (``only`` or ``skip``, a disabled module, or a module failed or was skipped) merges its summary into the
     saved ``run_summary`` (:func:`merged_summary`).  ``cache.h5`` and ``results.h5`` are compacted at the end, also when
     ``fail_fast`` raises.
 
@@ -34,15 +38,16 @@ def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator:
     logged with its reason."""
     from ..io import store
     from ..outputs.registry import MODULES
-    settings = config.outputs if None in (only, skip, fail_fast) else None
-    only = settings.only if only is None else tuple(only)
-    skip = settings.skip if skip is None else tuple(skip)
-    fail_fast = settings.fail_fast if fail_fast is None else fail_fast
+    selected = only is not None or skip is not None or all_modules
+    disabled = () if selected else disabled_modules(config, MODULES)
+    only = None if only is None else tuple(only)
+    skip = () if skip is None else tuple(skip)
+    fail_fast = config.outputs.fail_fast if fail_fast is None else fail_fast
     plan_modules(MODULES, only=only, skip=skip)          # unknown names fail here, before anything is written
     ctx = OutputContext(config, state, evaluator, posterior, audit, paths, log=log, mode=mode)
-    partial = only is not None or bool(skip) or mode == "render"
+    partial = only is not None or bool(skip) or bool(disabled) or mode == "render"
     try:
-        run_modules(ctx, MODULES, only=only, skip=skip, fail_fast=fail_fast,
+        run_modules(ctx, MODULES, only=only, skip=skip, disabled=disabled, fail_fast=fail_fast,
                     checkpoint=lambda: write_run_summary(ctx, partial=partial))
     except Exception:                   # fail_fast: the summary of what ran, then the error
         try:
@@ -62,7 +67,8 @@ def merged_summary(saved: dict[str, Any], summary: dict[str, Any], modules) -> d
     (the record before it).  For each module that ran in this pass (done or failed), its ``summary_keys`` are dropped
     from ``saved`` first, so a failed module leaves no old numbers.  So are those of a module skipped because a module
     it requires failed in this pass (its record has ``failed_requirement``): what its numbers came from was computed
-    again and failed, and its record is this pass's.  A module that did not run otherwise (not selected, in the skip
+    again and failed, and its record is this pass's.  A disabled module (``outputs.<name>.enabled`` false) keeps its
+    saved keys and gets this pass's record, "disabled".  A module that did not run otherwise (not selected, in the skip
     list or requiring one that is, or inactive) keeps its saved keys and its saved module record.  In a render pass
     (``mode`` "render") the modules get this pass's records but keep their saved keys, which come from their last
     compute.  ``warnings`` belong to the reporting draws and are replaced when this pass built them; the warning of
@@ -84,7 +90,9 @@ def merged_summary(saved: dict[str, Any], summary: dict[str, Any], modules) -> d
     if warnings:
         base["warnings"] = warnings
     saved_records = saved.get("modules", {}) if isinstance(saved.get("modules"), dict) else {}
-    chosen = {**saved_records, **{name: record for name, record in records.items() if name in ran or name not in saved_records}}
+    disabled = {name for name, record in records.items() if record["status"] == "disabled"}
+    chosen = {**saved_records, **{name: record for name, record in records.items()
+                                  if name in ran or name in disabled or name not in saved_records}}
     order = [m.name for m in modules] + [name for name in chosen if name not in {m.name for m in modules}]
     return {**base, **{key: value for key, value in summary.items() if key not in ("modules", "warnings")},
             "modules": {name: chosen[name] for name in order if name in chosen}}

@@ -100,8 +100,8 @@ def recovered_contour_segments(contours):
 
 def candidate_catalog(config):
     """The M0416 candidate catalog the ``_candidates`` overview draws: ``{"path": ..., "candidates": [...]}``, read from
-    ``image_catalog.candidate_catalog_path`` (default: the packaged ``data/m0416_candidates.json``)."""
-    path = getattr(config.image_catalog, 'candidate_catalog_path', None)
+    ``outputs.rgb.candidate_catalog_path`` (default: the packaged ``data/m0416_candidates.json``)."""
+    path = config.outputs.rgb.candidate_catalog_path
     path = Path(path) if path else Path(__file__).parents[1] / 'data' / 'm0416_candidates.json'
     return dict(path=str(path), candidates=json.loads(path.read_text())['candidates'])
 
@@ -124,7 +124,7 @@ def save_rgb_critical(config, state, draws, catalog, extra, imaging, tables, *, 
     from ..imaging import cutouts
 
     images,bands,display,cluster=imaging
-    stem=rgb_overview_stem(config.image_catalog, bands)
+    stem=rgb_overview_stem(config.outputs.rgb, bands)
     reference_image=images[cutouts.rgb_reference_band(bands)]
     band_geometry=overview_geometry(reference_image,catalog,extra,state.reference)
     from ..reporting.draws import OVERVIEW_QUANTITIES
@@ -156,7 +156,7 @@ def render_saved_rgb_critical(config, state, catalog, extra, imaging, output, ta
     position ``contours`` are read from the store unless given (as
     :func:`~kappaccino.diagnostics.position_contours.load_position_contours` returns them).  Returns the PDF paths."""
     from ..diagnostics.position_contours import load_position_contours
-    stem=rgb_overview_stem(config.image_catalog, imaging[1])
+    stem=rgb_overview_stem(config.outputs.rgb, imaging[1])
     saved=store.read_arrays(tables,stem)
     model=store.read_record(tables,f'{stem}_model')
     candidates=store.read_record(tables,candidate_record(stem)) if imaging[3].lower()=='m0416' else None
@@ -182,7 +182,7 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
     from ..imaging import cutouts
 
     images,bands,display,cluster=imaging
-    stem=rgb_overview_stem(config.image_catalog, bands)
+    stem=rgb_overview_stem(config.outputs.rgb, bands)
     m0416=cluster.lower()=='m0416'
     if m0416 and candidates is None:
         raise ValueError('The M0416 overview needs the saved candidates of its _candidates variant (candidate_catalog)')
@@ -389,7 +389,7 @@ def saved_grf_field(saved, path='final/artifacts/config.json'):
 
 def rebuild_run_config(run_dir):
     """The configuration of the finished run in ``run_dir``, rebuilt from ``inputs/command.json`` so that its paths
-    point at ``run_dir``.  Refuses when the picture's inputs (the ``image_catalog`` section, ``model.image_constraints``,
+    point at ``run_dir``.  Refuses when the picture's inputs (the ``outputs.rgb`` section, ``model.image_constraints``,
     ``model.reference`` and ``paths.figure_prefix``) differ from the run's saved ``final/artifacts/config.json``."""
     from ..cli import build_config
     run_dir = Path(run_dir).resolve()
@@ -404,7 +404,7 @@ def rebuild_run_config(run_dir):
     saved_path = run_dir / 'final' / 'artifacts' / 'config.json'
     saved = read_saved_config(run_dir)
     rebuilt = json.loads(json.dumps(config.to_json_dict()))
-    for name in ('image_catalog', 'model.image_constraints', 'model.reference', 'paths.figure_prefix'):
+    for name in ('outputs.rgb', 'model.image_constraints', 'model.reference', 'paths.figure_prefix'):
         old = saved_section(saved, name, saved_path)
         new = saved_section(rebuilt, name, 'the rebuilt configuration')
         if old != new:
@@ -450,10 +450,9 @@ def redraw_rgb_critical(run_dir, *, log=print):
     recovery does not hold.  Does not rewrite the arrays ``<stem>`` or the record ``<stem>_band``; rewrites the
     figures, their records, the marker tables and ``posterior_overview_positions`` (all in ``final/results.h5``).
     Returns the written PDF paths."""
-    from dataclasses import replace
     from types import SimpleNamespace
     from ..imaging import cutouts
-    from ..imaging.cutouts import imaging_variants, load_cluster_imaging, DEFAULT_HFF_RGB_BANDS
+    from ..imaging.cutouts import imaging_variants, load_cluster_imaging, variant_config, DEFAULT_HFF_RGB_BANDS
     from ..diagnostics.position_contours import load_or_compute_contours
     from .mass_figure import overview_geometry
     from . import plots
@@ -497,7 +496,7 @@ def redraw_rgb_critical(run_dir, *, log=print):
         if tuple(saved['determinant'].shape) != tuple(expected):
             raise ValueError(f'{stem} holds a {saved["determinant"].shape} determinant, the band geometry is {expected}')
         draws = SavedDraws(saved['draw_indices'], np.asarray(saved['fingerprint']).item())
-        view = replace(config, image_catalog=image_config)
+        view = variant_config(config, image_config)
         contours = load_or_compute_contours(view, state, draws, extra, tables, log=log)
         paths = draw_rgb_critical(view, state.reference, catalog, extra, imaging,
                                   plots.figure_path(figures, stem + '.pdf', config.paths.figure_prefix), tables,

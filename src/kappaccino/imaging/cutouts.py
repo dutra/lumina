@@ -88,18 +88,19 @@ def cluster_from_config(model_config: Any, run_name: str = "") -> str:
 
 
 def imaging_variants(config, *, overview_only=False):
-    """Saved imaging plus JWST; CANUCS mass/fold overviews use only JWST."""
+    """The imaging variants of the ``rgb`` output module, each a ``config.outputs.rgb`` section: the configured imaging
+    plus JWST; CANUCS mass/fold overviews use only JWST."""
     from dataclasses import replace
     from ..config import RGBDisplayConfig as DisplayConfig
 
-    primary = config.image_catalog
+    primary = config.outputs.rgb
     variants = [primary]
     cluster = cluster_from_config(config.model, config.paths.run_name)
     if cluster in {"m0416", "as1063"} and not any(
         str(band).upper() in DEFAULT_JWST_RGB_BANDS for band in (primary.bands or ())
     ):
         variants.append(replace(primary, image_dir=f"data/imaging/{cluster}/{'canucs_dr1' if cluster == 'm0416' else 'dja_v7.5'}", image_scale="auto",
-                                bands=tuple(DEFAULT_JWST_RGB_BANDS), rgb=DisplayConfig(),
+                                bands=tuple(DEFAULT_JWST_RGB_BANDS), display=DisplayConfig(),
                                 figure_suffix="_jwst"))
     if overview_only:
         catalog = str(getattr(getattr(config.model, "image_constraints", None), "catalog_path", "")).lower()
@@ -108,6 +109,12 @@ def imaging_variants(config, *, overview_only=False):
             return [replace(view, figure_suffix="_jwst") for view in variants
                     if any(str(band).upper() in DEFAULT_JWST_RGB_BANDS for band in (view.bands or ()))]
     return variants
+
+
+def variant_config(config, image_config):
+    """``config`` with the imaging variant ``image_config`` (one of :func:`imaging_variants`) as its ``outputs.rgb``."""
+    from dataclasses import replace
+    return replace(config, outputs=replace(config.outputs, rgb=image_config))
 
 
 def _fits_like(path: Path) -> bool:
@@ -366,12 +373,12 @@ def downsample_rgb(rgb: np.ndarray, max_side_pixels: int | None) -> np.ndarray:
 
 
 def load_cluster_imaging(config, model_config: Any, run_name: str) -> tuple[dict[str, BandImage], tuple[str, ...], RGBDisplayConfig, str]:
-    """Band images, bands, RGB display and cluster name from an ImageCatalogCutoutConfig."""
+    """Band images, bands, RGB display and cluster name from an ``outputs.rgb`` section (``config.RGBOutputConfig``)."""
     cluster = cluster_from_config(model_config, run_name)
     bands = tuple(config.bands) if config.bands else tuple(DEFAULT_HFF_RGB_BANDS)
     paths = find_rgb_band_paths(Path(str(config.image_dir)), cluster=cluster, bands=bands, image_scale=str(config.image_scale))
     images = load_band_images(paths, bands)
-    rgb = config.rgb
+    rgb = config.display
     gains = {role: getattr(rgb, f"{role}_gain") for role in ("red", "green", "blue")}
     display = build_rgb_display(images, bands=bands, q=rgb.q, stretch=rgb.stretch, minimum=rgb.minimum,
                                 channel_gains=gains if all(v is not None for v in gains.values()) else None)

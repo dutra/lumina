@@ -53,9 +53,9 @@ def describe(config, profiles=()) -> str:
 
 def config_hash(config) -> str:
     """Six hex characters identifying a configuration: a hash of everything the pipeline compares when it resumes a
-    run (the whole configuration but ``paths``, the WBIC settings, which a finished run may add, and the performance
-    settings such as ``runtime.output_workers``: ``pipeline.resume_payload``).  Equal hashes are resumable runs; any
-    other change, a prior set with ``--set`` included, gives a new folder."""
+    run (the whole configuration but ``paths``, the WBIC settings, which a finished run may add, and the ``outputs``
+    section, which never changes a fit: ``pipeline.resume_payload``).  Equal hashes are resumable runs; any other
+    change of a fit setting, a prior set with ``--set`` included, gives a new folder."""
     from .pipeline import resume_payload
     payload = {key: value for key, value in resume_payload(config.to_json_dict()).items() if key != "paths"}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:6]
@@ -85,7 +85,7 @@ def _accept(text: str) -> float:
 FIELD_OPTIONS = {"chains": ("runtime.chains",), "seed": ("runtime.seed",), "starts": ("search.n_starts",),
                  "warm_start": ("search.warm_start",), "warmup": ("sampling.warmup",), "samples": ("sampling.samples",),
                  "tree_depth": ("sampling.max_tree_depth",), "target_accept": ("sampling.target_accept",),
-                 "draws": ("reporting.draws", "reporting.image_draws")}
+                 "draws": ("outputs.draws", "outputs.image_draws")}
 
 
 def _option_overrides(args) -> list[str]:
@@ -133,7 +133,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--tree-depth", type=_positive_int, metavar="N", help="NUTS maximum tree depth (sampling.max_tree_depth)")
     p.add_argument("--target-accept", type=_accept, metavar="P", help="NUTS target acceptance in (0, 1) (sampling.target_accept)")
     p.add_argument("--draws", type=_positive_int, metavar="N",
-                   help="posterior draws behind every reported product (reporting.draws and reporting.image_draws)")
+                   help="posterior draws behind every reported product (outputs.draws and outputs.image_draws)")
     p.add_argument("--skip-plots", action="store_true", help="no figures or tables after sampling (runtime.skip_plots)")
     p.add_argument("--member-profile", choices=("dpie", "power-law"), default=None,
                    help="the member halos: dpie, or power-law, the cored power law (the dPIE with a free 3D slope gamma, "

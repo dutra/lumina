@@ -5,9 +5,8 @@ A run is described by one :class:`LensClusterSolverConfig`, which groups the len
 constraints) with the settings of each stage: output paths (:class:`RunPathsConfig`), runtime
 (:class:`RuntimeConfig`), the initial search (:class:`SearchConfig`), NUTS sampling (:class:`SamplingConfig`), member
 classification (:class:`MemberConfig`), the member scaling relation (:class:`ScalingModelConfig`), the likelihood and
-error model (:class:`LikelihoodConfig`) and the output diagnostics (:class:`ImageDiagnosticsConfig`,
-:class:`TruthRecoveryConfig`, :class:`ImageCatalogCutoutConfig`), the posterior draws behind them
-(:class:`ReportingConfig`) and the output modules to run (:class:`OutputsConfig`).  Every class is a frozen dataclass; change a field
+error model (:class:`LikelihoodConfig`), and the outputs stage (:class:`OutputsConfig`: the reporting draws, the
+exact-image solver and one section per output module), which never changes a fit.  Every class is a frozen dataclass; change a field
 with :func:`dataclasses.replace` or :meth:`LensClusterSolverConfig.with_updates`, and check a finished configuration
 with :meth:`LensClusterSolverConfig.validate`.
 
@@ -654,11 +653,6 @@ class RuntimeConfig:
         device) or ``"sequential"`` (one chain at a time).  Default ``"parallel"``.
     numpyro_print_summary : bool, optional
         Print a summary table of the global parameters after sampling.  Default False.
-    output_workers : int, optional
-        Threads that evaluate the reporting draws of the output stage at the same time (image recovery and the lens maps
-        on grids); at least 1, which is a plain loop.  The products are the same for any value; more threads are faster
-        and hold more memory (each thread holds one draw's working arrays).  A performance setting: it is not part of
-        the run hash and does not block a resume (``PERFORMANCE_FIELDS``).  Default ``4``.
     """
     seed: int = 12345
     chains: int = 4
@@ -667,15 +661,11 @@ class RuntimeConfig:
     quiet: bool = False
     nuts_chain_method: str = "parallel"
     numpyro_print_summary: bool = False
-    output_workers: int = 4
 
 
-# Settings that change how fast a run goes but not what it computes: left out of the run hash (``cli.config_hash``)
-# and of the configuration a resume compares (``pipeline.resume_payload``), keyed by section.
-PERFORMANCE_FIELDS: dict[str, tuple[str, ...]] = {"runtime": ("output_workers",)}
-# Settings that only add a report to the outputs, left out the same way so earlier runs stay resumable.
-REPORT_ONLY_FIELDS: dict[str, tuple[str, ...]] = {"truth": ("deflection_true_fits",)}
-# Whole sections that only choose what is reported (the output modules, ``OutputsConfig``), left out the same way.
+# Sections that change only what is reported, never a fit (``OutputsConfig``): left out of the run hash
+# (``cli.config_hash``), of the configuration a resume compares (``pipeline.resume_payload``) and of the init signature
+# (``io.artifacts.init_signature``).
 REPORT_ONLY_SECTIONS: tuple[str, ...] = ("outputs",)
 
 
@@ -1364,215 +1354,6 @@ class LikelihoodConfig:
 
 
 @dataclass(frozen=True)
-class ImageDiagnosticsConfig:
-    """Exact-image solver and posterior image diagnostics written after sampling.
-
-    Every reporting draw's model images are found with ``exact_image_finder``; the lens-only images (without the GRF)
-    use one batched local Levenberg-Marquardt (LM) solve started at the observed positions, without
-    fallback.  Predicted images are matched to the observed ones within ``match_tolerance_arcsec``.
-
-    Parameters
-    ----------
-    fold_pair_max_separation_arcsec : float, optional
-        Largest separation of a candidate fold image pair (same family, model-verified), in arcsec.  Positive.
-        Default ``5.0``.
-    exact_image_min_distance_arcsec : float, optional
-        ``"local-lm-adaptive"``: starting half-size of the 3 x 3 box of fallback starts (at most
-        ``exact_image_lm_trust_radius_arcsec``), in arcsec.  Default ``0.5``.
-    exact_image_precision_limit : float, optional
-        Lower limit of the source-plane tolerance of convergence of the LM solvers, in arcsec.  Default ``1e-2``.
-    exact_image_finder : str, optional
-        Finder of each reporting draw's images: ``"global-jax"`` (seeds from a coarse grid over each family window, one
-        batched LM solve; also reports extra model images), ``"local-lm-adaptive"`` (LM from the observed positions,
-        with a shrinking-box fallback for images not found) or ``"local-lm"`` (LM from the observed positions).
-        Default ``"global-jax"``.
-    exact_image_grid_pitch_arcsec : float, optional
-        ``"global-jax"``: pitch of the coarse grid over each family window, in arcsec.  Positive.  Default ``0.5``.
-    exact_image_fine_pitch_arcsec : float, optional
-        ``"global-jax"``: pitch of the sub-grid seeded inside near-source cells close to a critical curve, in arcsec;
-        at most the coarse pitch.  Default ``0.1``.
-    exact_image_critical_det_threshold : float, optional
-        ``"global-jax"``: :math:`|\\det A|` (dimensionless) below which a cell counts as close to a critical curve.
-        Default ``0.25``.
-    exact_image_seed_tolerance_pitches : float, optional
-        ``"global-jax"``: a cell is near the source when :math:`|\\beta - \\beta_{source}|` is within this many coarse
-        pitches (scaled by the local stretching).  Positive.  Default ``3.0``.
-    exact_image_window_margin_arcsec : float, optional
-        ``"global-jax"``: margin added around each family's image span to form its search window, in arcsec.  Default
-        ``3.0``.
-    exact_image_min_separation_arcsec : float, optional
-        Local solver: two observed images that converge onto roots closer than this, in arcsec, are one model image.
-        Default ``0.05``.
-    exact_image_root_residual_arcsec : float, optional
-        ``"global-jax"``: a candidate root is polished with Newton steps and accepted only when its source-plane residual
-        is below this, in arcsec.  Points on a critical curve with the source just outside (or inside) the caustic stall at
-        a residual equal to the caustic offset, so a loose tolerance would accept them; a true image converges to round-
-        off.  A fold pair 0.001" apart comes from a source about 1e-8" inside its caustic, so the tolerance sits well
-        below that.  Default ``1e-11``.
-    exact_image_root_separation_arcsec : float, optional
-        ``"global-jax"``: two accepted roots closer than this, in arcsec, are one image; below the separation of the
-        tightest fold pairs to be resolved (0.001").  Default ``1e-4``.
-    exact_image_polish_iterations : int, optional
-        ``"global-jax"``: Newton iterations polishing each candidate root.  Default ``40``.
-    exact_image_displacement_tol_arcsec : float, optional
-        LM convergence tolerance on the step and the source-plane residual, in arcsec; a ``"global-jax"`` root must
-        meet it in both planes.  Default ``1e-4``.
-    exact_image_identification_tol_arcsec : float, optional
-        A solve identifies an image when the Newton step at its end point is below this, in arcsec (a looser test than
-        convergence, met by near-roots).  Default ``1e-3``.
-    exact_image_lm_max_iter : int, optional
-        LM iteration budget per solve.  Default ``100``.
-    exact_image_lm_trust_radius_arcsec : float, optional
-        LM steps are softly limited to this length (tanh scaling), in arcsec; ``0`` or less disables the limit.
-        Default ``1.0``.
-    exact_image_adaptive_max_levels : int, optional
-        ``"local-lm-adaptive"``: number of times the fallback box is halved.  Default ``8``.
-    match_tolerance_arcsec : float, optional
-        Largest distance between a predicted and an observed image for a match, in arcsec; unmatched predictions are
-        extra images.  Default ``5.0``.
-    """
-    fold_pair_max_separation_arcsec: float = 5.0
-    exact_image_min_distance_arcsec: float = 0.5
-    exact_image_precision_limit: float = 1.0e-2
-    exact_image_finder: str = "global-jax"
-    exact_image_grid_pitch_arcsec: float = 0.5
-    exact_image_fine_pitch_arcsec: float = 0.1
-    exact_image_critical_det_threshold: float = 0.25
-    exact_image_seed_tolerance_pitches: float = 3.0
-    exact_image_window_margin_arcsec: float = 3.0
-    exact_image_min_separation_arcsec: float = 0.05
-    exact_image_root_residual_arcsec: float = 1.0e-11
-    exact_image_root_separation_arcsec: float = 1.0e-4
-    exact_image_polish_iterations: int = 40
-    exact_image_displacement_tol_arcsec: float = 1.0e-4
-    exact_image_identification_tol_arcsec: float = 1.0e-3
-    exact_image_lm_max_iter: int = 100
-    exact_image_lm_trust_radius_arcsec: float = 1.0
-    exact_image_adaptive_max_levels: int = 8
-    match_tolerance_arcsec: float = 5.0
-
-
-@dataclass(frozen=True)
-class TruthRecoveryConfig:
-    """Comparison with true lens maps (simulated clusters) and the source redshift of the critical-curve outputs.
-
-    Parameters
-    ----------
-    kappa_true_fits : str or pathlib.Path or None, optional
-        FITS map (with WCS) of the true convergence.  Setting it turns on the truth comparison: model maps of the
-        posterior median and draws on the map's grid, residuals and the projected-mass aperture profile.  None skips
-        it.  Default None.
-    gammax_true_fits : str or pathlib.Path or None, optional
-        FITS map of the true shear component :math:`\\gamma_1`.  With ``gammay_true_fits`` it adds the true
-        :math:`\\det A` and magnification.  Default None.
-    gammay_true_fits : str or pathlib.Path or None, optional
-        FITS map of the true shear component :math:`\\gamma_2`.  Default None.
-    deflection_true_fits : str or pathlib.Path or None, optional
-        FITS map of the true deflection (FF-SIMS ``deflAngles*.fits``).  Setting it adds the true-lens RMS of the
-        image catalog (``diagnostics.true_lens``) to the residual histogram and, with a shared mass field, the
-        relative displacement against separation (``plotting.relative_displacement``).  Outside the run hash.
-        Default None.
-    truth_grid_size : int, optional
-        Largest number of pixels per side of the comparison grid (the true map's footprint, resampled).  Nonnegative;
-        ``0`` keeps the native grid.  Default ``256``.
-    caustic_source_redshift : float, optional
-        Source redshift of the critical curves, convergence maps and truth comparison.  The true maps are compared at
-        this redshift; the magnification comparison reads the maps' ``ZSOURCE`` (or ``REDSHIFT``) header and falls back
-        to it.  When it is not behind the lens, the critical-curve figure uses the highest family redshift and the
-        truth comparison is skipped.  Default ``9.0``.
-    """
-    kappa_true_fits: str | Path | None = None
-    gammax_true_fits: str | Path | None = None
-    gammay_true_fits: str | Path | None = None
-    deflection_true_fits: str | Path | None = None
-    truth_grid_size: int = 256
-    caustic_source_redshift: float = 9.0
-
-
-@dataclass(frozen=True)
-class RGBDisplayConfig:
-    """Overrides of the calibrated Lupton (asinh) RGB display of the imaging cutouts.
-
-    Each None keeps the display recipe's default for the bands (HST Frontier Fields, JWST NIRCam or a three-band
-    composite).
-
-    Parameters
-    ----------
-    q : float or None, optional
-        Lupton asinh softening parameter, dimensionless.  Default None.
-    stretch : float or None, optional
-        Lupton linear stretch, in the reference band's flux units.  Default None.
-    minimum : float or None, optional
-        Black level, in the reference band's flux units.  Default None.
-    red_gain : float or None, optional
-        Gain of the red channel, dimensionless.  The three gains apply only when all three are set.  Default None.
-    green_gain : float or None, optional
-        Gain of the green channel, dimensionless.  Default None.
-    blue_gain : float or None, optional
-        Gain of the blue channel, dimensionless.  Default None.
-    """
-    q: float | None = None
-    stretch: float | None = None
-    minimum: float | None = None
-    red_gain: float | None = None
-    green_gain: float | None = None
-    blue_gain: float | None = None
-
-
-@dataclass(frozen=True)
-class ImageCatalogCutoutConfig:
-    """Imaging behind the cluster mass figure, the RGB cutouts and the fold-diagnostic panels.
-
-    Parameters
-    ----------
-    image_dir : str or pathlib.Path or None, optional
-        Directory of the cluster's FITS imaging.  None skips the figures that need imaging.  Default None.
-    candidate_catalog_path : str or pathlib.Path or None, optional
-        Optional catalog of proposed image associations, drawn on the RGB critical-curve figure for display only.
-        Default None.
-    paper_small_lambda_cutouts : tuple of str, optional
-        Panels of the standalone small-eigenvalue posterior figure, one per selector, in order: ``image:<label>`` (one
-        image), ``family:<id>`` (a knot's images) or ``system:<id>`` (every knot of a saved fold cutout).  Empty
-        (default) skips the figure.
-    paper_fold_cutouts : tuple of str, optional
-        Panels of the standalone fold-cutout figure, same selectors.  Empty (default) skips the figure.
-    image_scale : str, optional
-        Pixel scale of the imaging to use when several exist: ``"auto"``, ``"20mas"``, ``"30mas"``, ``"40mas"`` or
-        ``"60mas"``.  Default ``"60mas"``.
-    bands : tuple of str or None, optional
-        Bands of the RGB composite.  None uses the HST Frontier Fields bands (F435W, F606W, F814W, F105W, F125W,
-        F140W, F160W).  Default None.
-    figure_suffix : str, optional
-        Suffix appended to the cluster mass figure name and related products, e.g. ``"_jwst"``.  Default ``""``.
-    rgb : RGBDisplayConfig, optional
-        Display overrides.  Default: ``RGBDisplayConfig()`` (recipe defaults).
-    mode : str, optional
-        Not read by the current pipeline.  Default ``"full"``.
-    dpi : int or None, optional
-        Not read by the current pipeline.  Default None.
-    max_side_pixels : int or None, optional
-        Not read by the current pipeline.  Default None.
-    critical_lines : str, optional
-        Not read by the current pipeline.  Default ``"auto"``.
-    cutouts : bool, optional
-        Not read by the current pipeline.  Default True.
-    """
-    image_dir: str | Path | None = None
-    candidate_catalog_path: str | Path | None = None
-    paper_small_lambda_cutouts: tuple[str, ...] = ()  # image:/family:/system: selectors, one per panel
-    paper_fold_cutouts: tuple[str, ...] = ()          # same syntax; empty disables the figure
-    image_scale: str = "60mas"
-    bands: tuple[str, ...] | None = None
-    figure_suffix: str = ""
-    rgb: RGBDisplayConfig = field(default_factory=RGBDisplayConfig)
-    mode: str = "full"
-    dpi: int | None = None
-    max_side_pixels: int | None = None
-    critical_lines: str = "auto"
-    cutouts: bool = True
-
-
-@dataclass(frozen=True)
 class PartitionConfig:
     """Uncertain images whose sources are inferred jointly with the lens (``kappaccino.partition.groups``).
 
@@ -1653,17 +1434,311 @@ class PartitionConfig:
 
 
 @dataclass(frozen=True)
-class ReportingConfig:
-    """The posterior draws behind every reported product.
+class ImageSolverConfig:
+    """The exact-image solver of the outputs stage, shared by the image recovery (``outputs.images``) and the covariance
+    cutouts (``outputs.rgb``).
+
+    Every reporting draw's model images are found with ``exact_image_finder``; the lens-only images (without the GRF)
+    use one batched local Levenberg-Marquardt (LM) solve started at the observed positions, without
+    fallback.  Predicted images are matched to the observed ones within ``match_tolerance_arcsec``.
+
+    Parameters
+    ----------
+    exact_image_min_distance_arcsec : float, optional
+        ``"local-lm-adaptive"``: starting half-size of the 3 x 3 box of fallback starts (at most
+        ``exact_image_lm_trust_radius_arcsec``), in arcsec.  Default ``0.5``.
+    exact_image_precision_limit : float, optional
+        Lower limit of the source-plane tolerance of convergence of the LM solvers, in arcsec.  Default ``1e-2``.
+    exact_image_finder : str, optional
+        Finder of each reporting draw's images: ``"global-jax"`` (seeds from a coarse grid over each family window, one
+        batched LM solve; also reports extra model images), ``"local-lm-adaptive"`` (LM from the observed positions,
+        with a shrinking-box fallback for images not found) or ``"local-lm"`` (LM from the observed positions).
+        Default ``"global-jax"``.
+    exact_image_grid_pitch_arcsec : float, optional
+        ``"global-jax"``: pitch of the coarse grid over each family window, in arcsec.  Positive.  Default ``0.5``.
+    exact_image_fine_pitch_arcsec : float, optional
+        ``"global-jax"``: pitch of the sub-grid seeded inside near-source cells close to a critical curve, in arcsec;
+        at most the coarse pitch.  Default ``0.1``.
+    exact_image_critical_det_threshold : float, optional
+        ``"global-jax"``: :math:`|\\det A|` (dimensionless) below which a cell counts as close to a critical curve.
+        Default ``0.25``.
+    exact_image_seed_tolerance_pitches : float, optional
+        ``"global-jax"``: a cell is near the source when :math:`|\\beta - \\beta_{source}|` is within this many coarse
+        pitches (scaled by the local stretching).  Positive.  Default ``3.0``.
+    exact_image_window_margin_arcsec : float, optional
+        ``"global-jax"``: margin added around each family's image span to form its search window, in arcsec.  Default
+        ``3.0``.
+    exact_image_min_separation_arcsec : float, optional
+        Local solver: two observed images that converge onto roots closer than this, in arcsec, are one model image.
+        Default ``0.05``.
+    exact_image_root_residual_arcsec : float, optional
+        ``"global-jax"``: a candidate root is polished with Newton steps and accepted only when its source-plane residual
+        is below this, in arcsec.  Points on a critical curve with the source just outside (or inside) the caustic stall at
+        a residual equal to the caustic offset, so a loose tolerance would accept them; a true image converges to round-
+        off.  A fold pair 0.001" apart comes from a source about 1e-8" inside its caustic, so the tolerance sits well
+        below that.  Default ``1e-11``.
+    exact_image_root_separation_arcsec : float, optional
+        ``"global-jax"``: two accepted roots closer than this, in arcsec, are one image; below the separation of the
+        tightest fold pairs to be resolved (0.001").  Default ``1e-4``.
+    exact_image_polish_iterations : int, optional
+        ``"global-jax"``: Newton iterations polishing each candidate root.  Default ``40``.
+    exact_image_displacement_tol_arcsec : float, optional
+        LM convergence tolerance on the step and the source-plane residual, in arcsec; a ``"global-jax"`` root must
+        meet it in both planes.  Default ``1e-4``.
+    exact_image_identification_tol_arcsec : float, optional
+        A solve identifies an image when the Newton step at its end point is below this, in arcsec (a looser test than
+        convergence, met by near-roots).  Default ``1e-3``.
+    exact_image_lm_max_iter : int, optional
+        LM iteration budget per solve.  Default ``100``.
+    exact_image_lm_trust_radius_arcsec : float, optional
+        LM steps are softly limited to this length (tanh scaling), in arcsec; ``0`` or less disables the limit.
+        Default ``1.0``.
+    exact_image_adaptive_max_levels : int, optional
+        ``"local-lm-adaptive"``: number of times the fallback box is halved.  Default ``8``.
+    match_tolerance_arcsec : float, optional
+        Largest distance between a predicted and an observed image for a match, in arcsec; unmatched predictions are
+        extra images.  Default ``5.0``.
+    """
+    exact_image_min_distance_arcsec: float = 0.5
+    exact_image_precision_limit: float = 1.0e-2
+    exact_image_finder: str = "global-jax"
+    exact_image_grid_pitch_arcsec: float = 0.5
+    exact_image_fine_pitch_arcsec: float = 0.1
+    exact_image_critical_det_threshold: float = 0.25
+    exact_image_seed_tolerance_pitches: float = 3.0
+    exact_image_window_margin_arcsec: float = 3.0
+    exact_image_min_separation_arcsec: float = 0.05
+    exact_image_root_residual_arcsec: float = 1.0e-11
+    exact_image_root_separation_arcsec: float = 1.0e-4
+    exact_image_polish_iterations: int = 40
+    exact_image_displacement_tol_arcsec: float = 1.0e-4
+    exact_image_identification_tol_arcsec: float = 1.0e-3
+    exact_image_lm_max_iter: int = 100
+    exact_image_lm_trust_radius_arcsec: float = 1.0
+    exact_image_adaptive_max_levels: int = 8
+    match_tolerance_arcsec: float = 5.0
+
+    def validate(self, where: str = "outputs.image_solver") -> None:
+        """Raise ValueError, naming ``<where>.<field>``, for an unknown finder or a pitch, tolerance or iteration count
+        out of range."""
+        if self.exact_image_finder not in {"global-jax", "local-lm", "local-lm-adaptive"}:
+            raise ValueError(f"{where}.exact_image_finder must be 'global-jax', 'local-lm', or 'local-lm-adaptive'.")
+        _positive(f"{where}.exact_image_grid_pitch_arcsec", self.exact_image_grid_pitch_arcsec)
+        _positive(f"{where}.exact_image_fine_pitch_arcsec", self.exact_image_fine_pitch_arcsec)
+        if self.exact_image_fine_pitch_arcsec > self.exact_image_grid_pitch_arcsec:
+            raise ValueError(f"{where}.exact_image_fine_pitch_arcsec must not exceed the coarse grid pitch.")
+        _positive(f"{where}.exact_image_root_residual_arcsec", self.exact_image_root_residual_arcsec)
+        _positive(f"{where}.exact_image_root_separation_arcsec", self.exact_image_root_separation_arcsec)
+        if int(self.exact_image_polish_iterations) < 1:
+            raise ValueError(f"{where}.exact_image_polish_iterations must be positive.")
+        _positive(f"{where}.exact_image_seed_tolerance_pitches", self.exact_image_seed_tolerance_pitches)
+
+
+@dataclass(frozen=True)
+class FitOutputConfig:
+    """The ``fit`` output module (:mod:`kappaccino.outputs.fit`): posterior tables, chain traces, audit, scaling relation,
+    corners, covariance errors, GP and GRF figures and member diagnostics.
+
+    Parameters
+    ----------
+    enabled : bool, optional
+        Run the module.  Default True.
+    """
+    enabled: bool = True
+
+    def validate(self, where: str = "outputs.fit") -> None:
+        """Raise ValueError, naming ``<where>.<field>``, for a bad value."""
+        _boolean(f"{where}.enabled", self.enabled)
+
+
+@dataclass(frozen=True)
+class ImagesOutputConfig:
+    """The ``images`` output module (:mod:`kappaccino.outputs.images`): the image recovery of the reporting draws, the fit
+    numbers of ``run_summary``, the true-lens RMS, the residual histogram and the image recovery figure.
+
+    Parameters
+    ----------
+    enabled : bool, optional
+        Run the module.  The modules that require it (``mass``, ``truth``, ``rgb``) are then skipped.  Default True.
+    extra_images : bool, optional
+        Run the global image search on the ``outputs.draws`` product draws to find extra (unobserved) model images, at
+        about 15 s (Hera) to 140 s (Ares) per draw.  Default True.
+    """
+    enabled: bool = True
+    extra_images: bool = True
+
+    def validate(self, where: str = "outputs.images") -> None:
+        """Raise ValueError, naming ``<where>.<field>``, for a bad value."""
+        _boolean(f"{where}.enabled", self.enabled)
+        _boolean(f"{where}.extra_images", self.extra_images)
+
+
+@dataclass(frozen=True)
+class MassOutputConfig:
+    """The ``mass`` output module (:mod:`kappaccino.outputs.mass`): critical curves, aperture masses and zeta masses (the
+    last two with ``outputs.truth.kappa_true_fits``).
+
+    Parameters
+    ----------
+    enabled : bool, optional
+        Run the module.  Default True.
+    """
+    enabled: bool = True
+
+    def validate(self, where: str = "outputs.mass") -> None:
+        """Raise ValueError, naming ``<where>.<field>``, for a bad value."""
+        _boolean(f"{where}.enabled", self.enabled)
+
+
+@dataclass(frozen=True)
+class TruthOutputConfig:
+    """The ``truth`` output module (:mod:`kappaccino.outputs.truth`): the comparison with the true lens maps of a
+    simulated cluster.  The maps are also read by other modules: ``kappa_true_fits`` by ``mass`` (aperture and zeta
+    masses) and ``rgb`` (the cluster mass figure), ``deflection_true_fits`` by ``images`` (the true-lens RMS).
+
+    Parameters
+    ----------
+    enabled : bool, optional
+        Run the module.  The module also needs ``kappa_true_fits`` or ``deflection_true_fits`` to be active.  Default
+        True.
+    kappa_true_fits : str or pathlib.Path or None, optional
+        FITS map (with WCS) of the true convergence.  Setting it turns on the truth comparison: model maps of the
+        posterior median and draws on the map's grid, residuals and the projected-mass aperture profile.  None skips
+        it.  Default None.
+    gammax_true_fits : str or pathlib.Path or None, optional
+        FITS map of the true shear component :math:`\\gamma_1`.  With ``gammay_true_fits`` it adds the true
+        :math:`\\det A` and magnification.  Default None.
+    gammay_true_fits : str or pathlib.Path or None, optional
+        FITS map of the true shear component :math:`\\gamma_2`.  Default None.
+    deflection_true_fits : str or pathlib.Path or None, optional
+        FITS map of the true deflection (FF-SIMS ``deflAngles*.fits``).  Setting it adds the true-lens RMS of the
+        image catalog (``diagnostics.true_lens``) to the residual histogram and, with a shared mass field, the
+        relative displacement against separation (``plotting.relative_displacement``).  Default None.
+    grid_size : int, optional
+        Largest number of pixels per side of the comparison grid (the true map's footprint, resampled).  Nonnegative;
+        ``0`` keeps the native grid.  Default ``256``.
+    """
+    enabled: bool = True
+    kappa_true_fits: str | Path | None = None
+    gammax_true_fits: str | Path | None = None
+    gammay_true_fits: str | Path | None = None
+    deflection_true_fits: str | Path | None = None
+    grid_size: int = 256
+
+    def validate(self, where: str = "outputs.truth") -> None:
+        """Raise ValueError, naming ``<where>.<field>``, for a bad value."""
+        _boolean(f"{where}.enabled", self.enabled)
+        for name in ("kappa_true_fits", "gammax_true_fits", "gammay_true_fits", "deflection_true_fits"):
+            _optional_path(f"{where}.{name}", getattr(self, name))
+        if isinstance(self.grid_size, bool) or not isinstance(self.grid_size, Integral) or int(self.grid_size) < 0:
+            raise ValueError(f"{where}.grid_size must be a nonnegative integer.")
+
+
+@dataclass(frozen=True)
+class RGBDisplayConfig:
+    """Overrides of the calibrated Lupton (asinh) RGB display of the imaging cutouts.
+
+    Each None keeps the display recipe's default for the bands (HST Frontier Fields, JWST NIRCam or a three-band
+    composite).
+
+    Parameters
+    ----------
+    q : float or None, optional
+        Lupton asinh softening parameter, dimensionless.  Default None.
+    stretch : float or None, optional
+        Lupton linear stretch, in the reference band's flux units.  Default None.
+    minimum : float or None, optional
+        Black level, in the reference band's flux units.  Default None.
+    red_gain : float or None, optional
+        Gain of the red channel, dimensionless.  The three gains apply only when all three are set.  Default None.
+    green_gain : float or None, optional
+        Gain of the green channel, dimensionless.  Default None.
+    blue_gain : float or None, optional
+        Gain of the blue channel, dimensionless.  Default None.
+    """
+    q: float | None = None
+    stretch: float | None = None
+    minimum: float | None = None
+    red_gain: float | None = None
+    green_gain: float | None = None
+    blue_gain: float | None = None
+
+
+@dataclass(frozen=True)
+class RGBOutputConfig:
+    """The ``rgb`` output module (:mod:`kappaccino.outputs.rgb`): the products drawn on the cluster imaging (covariance
+    cutouts, RGB critical overview, position contours, small-lambda figures, cluster mass figure, fold diagnostics,
+    ApJ fold cutouts and paper cutouts).
+
+    Parameters
+    ----------
+    enabled : bool, optional
+        Run the module.  The module also needs ``image_dir`` to be active.  Default True.
+    image_dir : str or pathlib.Path or None, optional
+        Directory of the cluster's FITS imaging.  None leaves the module inactive.  Default None.
+    candidate_catalog_path : str or pathlib.Path or None, optional
+        Optional catalog of proposed image associations, drawn on the RGB critical-curve figure for display only.
+        Default None.
+    image_scale : str, optional
+        Pixel scale of the imaging to use when several exist: ``"auto"``, ``"20mas"``, ``"30mas"``, ``"40mas"`` or
+        ``"60mas"``.  Default ``"60mas"``.
+    bands : tuple of str or None, optional
+        Bands of the RGB composite.  None uses the HST Frontier Fields bands (F435W, F606W, F814W, F105W, F125W,
+        F140W, F160W).  Default None.
+    figure_suffix : str, optional
+        Suffix appended to the cluster mass figure name and related products, e.g. ``"_jwst"``.  Default ``""``.
+    display : RGBDisplayConfig, optional
+        Display overrides.  Default: ``RGBDisplayConfig()`` (recipe defaults).
+    paper_small_lambda_cutouts : tuple of str, optional
+        Panels of the standalone small-eigenvalue posterior figure, one per selector, in order: ``image:<label>`` (one
+        image), ``family:<id>`` (a knot's images) or ``system:<id>`` (every knot of a saved fold cutout).  Empty
+        (default) skips the figure.
+    paper_fold_cutouts : tuple of str, optional
+        Panels of the standalone fold-cutout figure, same selectors.  Empty (default) skips the figure.
+    fold_pair_max_separation_arcsec : float, optional
+        Largest separation of a candidate fold image pair of the fold diagnostics (same family, model-verified), in
+        arcsec.  Positive.  Default ``5.0``.
+    """
+    enabled: bool = True
+    image_dir: str | Path | None = None
+    candidate_catalog_path: str | Path | None = None
+    image_scale: str = "60mas"
+    bands: tuple[str, ...] | None = None
+    figure_suffix: str = ""
+    display: RGBDisplayConfig = field(default_factory=RGBDisplayConfig)
+    paper_small_lambda_cutouts: tuple[str, ...] = ()  # image:/family:/system: selectors, one per panel
+    paper_fold_cutouts: tuple[str, ...] = ()          # same syntax; empty disables the figure
+    fold_pair_max_separation_arcsec: float = 5.0
+
+    def validate(self, where: str = "outputs.rgb") -> None:
+        """Raise ValueError, naming ``<where>.<field>``, for a bad value."""
+        _boolean(f"{where}.enabled", self.enabled)
+        for name in ("image_dir", "candidate_catalog_path"):
+            _optional_path(f"{where}.{name}", getattr(self, name))
+        if not isinstance(self.display, RGBDisplayConfig):
+            raise ValueError(f"{where}.display must be a section (q, stretch, minimum, red_gain, green_gain, blue_gain).")
+        if not math.isfinite(self.fold_pair_max_separation_arcsec) or self.fold_pair_max_separation_arcsec <= 0:
+            raise ValueError(f"{where}.fold_pair_max_separation_arcsec must be finite and positive.")
+
+
+@dataclass(frozen=True)
+class OutputsConfig:
+    """The outputs stage (:mod:`kappaccino.outputs`): the settings shared by its modules and one section per module
+    (``kappaccino outputs --list`` names them).  Nothing here changes a fit: the section is outside the run hash and
+    the resume comparison (``REPORT_ONLY_SECTIONS``), and ``kappaccino outputs --set`` may change any of it.
+    ``runtime.skip_plots`` turns the whole stage off.
 
     One set of random posterior draws (over all chains, chosen with ``runtime.seed``) is evaluated once, each draw with
     one conditional realization of the shared GRF, and every figure, table and results macro is a median over those
-    draws with its 16th to 84th percentile range, which holds the uncertainty of the lens parameters and of the field.  No product uses the single best sample.
+    draws with its 16th to 84th percentile range, which holds the uncertainty of the lens parameters and of the field.
+    No product uses the single best sample.  The image positions, residuals, RMS and recovered counts are cheap (a
+    local solve from the observed positions in each draw's own lens) and need many draws: the median RMS of 64 draws
+    scatters by about 0.01" between draw sets on Hera.  They use ``image_draws`` draws; the maps, curves and other
+    products use the first ``draws`` of them (one seeded shuffle of the posterior, so the product draws are a subset
+    of the image draws).
 
-    The image positions, residuals, RMS and recovered counts are cheap (a local solve from the observed positions in
-    each draw's own lens) and need many draws: the median RMS of 64 draws scatters by about 0.01" between draw sets on Hera.
-    They use ``image_draws`` draws; the maps, curves and other products use the first ``draws`` of them (one seeded
-    shuffle of the posterior, so the product draws are a subset of the image draws).
+    A module runs when its ``enabled`` is true and it is active (its inputs exist, ``OutputModule.active``).  A
+    disabled module is recorded as disabled, and the modules that require it are skipped.
 
     Parameters
     ----------
@@ -1673,37 +1748,61 @@ class ReportingConfig:
     image_draws : int, optional
         Number of draws behind the image positions, residuals, RMS and recovered counts, solved with the local solver.
         At least ``draws``.  Default ``256``.
-    extra_images : bool, optional
-        Run the global image search on the ``draws`` product draws to find extra (unobserved) model images, at about
-        15 s (Hera) to 140 s (Ares) per draw.  Default True.
-    """
-    draws: int = 64
-    image_draws: int = 256
-    extra_images: bool = True
-
-
-@dataclass(frozen=True)
-class OutputsConfig:
-    """The output modules the outputs stage runs (:mod:`kappaccino.outputs`; ``kappaccino outputs --list`` names them).
-
-    These settings change only what is reported: they are not part of the run hash and do not block a resume
-    (``REPORT_ONLY_SECTIONS``).  ``runtime.skip_plots`` turns the whole stage off.
-
-    Parameters
-    ----------
-    only : tuple of str or None, optional
-        Run only these modules (``fit``, ``images``, ``mass``, ``truth``, ``rgb``) and the modules they require.  None
-        runs every module.  Default None.
-    skip : tuple of str, optional
-        Do not run these modules, nor the modules that require them.  Default ``()``.
+    workers : int, optional
+        Threads that evaluate the reporting draws at the same time (image recovery and the lens maps on grids); at
+        least 1, which is a plain loop.  The products are the same for any value; more threads are faster and hold
+        more memory (each thread holds one draw's working arrays).  Default ``4``.
+    caustic_source_redshift : float, optional
+        Source redshift of the critical curves, convergence maps, member environment and truth comparison, and of the
+        init stage's figures.  The true maps are compared at this redshift; the magnification comparison reads the
+        maps' ``ZSOURCE`` (or ``REDSHIFT``) header and falls back to it.  When it is not behind the lens, the
+        critical-curve figure uses the highest family redshift and the truth comparison is skipped.  Default ``9.0``.
     fail_fast : bool, optional
         Stop the stage at the first step that raises.  By default the error is logged with its traceback, the step and
         its module are recorded as failed in ``run_summary``, and the other steps and modules that do not depend on it
         still run.  Default False.
+    image_solver : ImageSolverConfig, optional
+        The exact-image solver, shared by ``images`` and ``rgb``.  Default: ``ImageSolverConfig()``.
+    fit, images, mass, truth, rgb : FitOutputConfig, ImagesOutputConfig, MassOutputConfig, TruthOutputConfig, RGBOutputConfig, optional
+        The settings of each output module, by its name.  Defaults: the classes' defaults.
     """
-    only: tuple[str, ...] | None = None
-    skip: tuple[str, ...] = ()
+    draws: int = 64
+    image_draws: int = 256
+    workers: int = 4
+    caustic_source_redshift: float = 9.0
     fail_fast: bool = False
+    image_solver: ImageSolverConfig = field(default_factory=ImageSolverConfig)
+    fit: FitOutputConfig = field(default_factory=FitOutputConfig)
+    images: ImagesOutputConfig = field(default_factory=ImagesOutputConfig)
+    mass: MassOutputConfig = field(default_factory=MassOutputConfig)
+    truth: TruthOutputConfig = field(default_factory=TruthOutputConfig)
+    rgb: RGBOutputConfig = field(default_factory=RGBOutputConfig)
+
+    def validate(self) -> None:
+        """Check the shared settings and every section (each section's own ``validate``).
+
+        Raises
+        ------
+        ValueError
+            At the first bad value, with a message naming ``outputs.<field>`` or ``outputs.<section>.<field>``.
+        """
+        _positive_int("outputs.draws", self.draws)
+        if isinstance(self.image_draws, bool) or not isinstance(self.image_draws, Integral) or self.image_draws < self.draws:
+            raise ValueError("outputs.image_draws must be an integer of at least outputs.draws.")
+        _positive_int("outputs.workers", self.workers)
+        if isinstance(self.caustic_source_redshift, bool) or not isinstance(self.caustic_source_redshift, (int, float)) \
+                or not math.isfinite(self.caustic_source_redshift):
+            raise ValueError("outputs.caustic_source_redshift must be a finite number.")
+        _boolean("outputs.fail_fast", self.fail_fast)
+        hints = get_type_hints(OutputsConfig)
+        for item in fields(self):
+            section, cls = getattr(self, item.name), _hint_class(hints[item.name])
+            if cls is None:
+                continue
+            if not isinstance(section, cls):
+                raise ValueError(f"outputs.{item.name} must be a section ({', '.join(f.name for f in fields(cls))}); "
+                                 f"got {section!r}")
+            section.validate(f"outputs.{item.name}")
 
 
 @dataclass(frozen=True)
@@ -1728,16 +1827,9 @@ class LensClusterSolverConfig:
         Member scaling relation and deviations.  Default: ``ScalingModelConfig()``.
     likelihood : LikelihoodConfig, optional
         Likelihood and error model.  Default: ``LikelihoodConfig()``.
-    image_diagnostics : ImageDiagnosticsConfig, optional
-        Exact-image solver and posterior image diagnostics.  Default: ``ImageDiagnosticsConfig()``.
-    truth : TruthRecoveryConfig, optional
-        Truth comparison and critical-curve redshift.  Default: ``TruthRecoveryConfig()``.
-    reporting : ReportingConfig, optional
-        The posterior draws behind the reported products.  Default: ``ReportingConfig()``.
-    image_catalog : ImageCatalogCutoutConfig, optional
-        Imaging for the figures.  Default: ``ImageCatalogCutoutConfig()``.
     outputs : OutputsConfig, optional
-        The output modules to run.  Default: ``OutputsConfig()``.
+        The outputs stage: its reporting draws and the settings of each output module.  Outside the run hash.
+        Default: ``OutputsConfig()``.
     partition : PartitionConfig or None, optional
         Uncertain images assigned to families jointly with the lens.  Default None (none).
     """
@@ -1749,10 +1841,6 @@ class LensClusterSolverConfig:
     members: MemberConfig = field(default_factory=MemberConfig)
     scaling: ScalingModelConfig = field(default_factory=ScalingModelConfig)
     likelihood: LikelihoodConfig = field(default_factory=LikelihoodConfig)
-    image_diagnostics: ImageDiagnosticsConfig = field(default_factory=ImageDiagnosticsConfig)
-    truth: TruthRecoveryConfig = field(default_factory=TruthRecoveryConfig)
-    reporting: ReportingConfig = field(default_factory=ReportingConfig)
-    image_catalog: ImageCatalogCutoutConfig = field(default_factory=ImageCatalogCutoutConfig)
     outputs: OutputsConfig = field(default_factory=OutputsConfig)
     partition: PartitionConfig | None = None
 
@@ -1924,6 +2012,16 @@ def _positive(name: str, value: float, *, allow_zero: bool = False) -> None:
 def _positive_int(name: str, value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, Integral) or int(value) <= 0:
         raise ValueError(f"{name} must be a positive integer.")
+
+
+def _boolean(name: str, value: Any) -> None:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be true or false; got {value!r}")
+
+
+def _optional_path(name: str, value: Any) -> None:
+    if value is not None and (not isinstance(value, (str, Path)) or not str(value)):
+        raise ValueError(f"{name} must be the path of a file or folder, or null; got {value!r}")
 
 
 def validate_config(config: LensClusterSolverConfig) -> None:
@@ -2151,39 +2249,16 @@ def validate_config(config: LensClusterSolverConfig) -> None:
     if len(mean) != 2 or not all(math.isfinite(float(v)) for v in mean):
         raise ValueError("source_position_prior_mean_arcsec requires two finite coordinates.")
     _positive("source_position_prior_sigma_arcsec", likelihood.source_position_prior_sigma_arcsec)
-    diagnostics = config.image_diagnostics
-    draws = config.reporting.draws
-    if isinstance(draws, bool) or not isinstance(draws, Integral) or draws < 1:
-        raise ValueError("reporting.draws must be a positive integer.")
-    image_draws = config.reporting.image_draws
-    if isinstance(image_draws, bool) or not isinstance(image_draws, Integral) or image_draws < draws:
-        raise ValueError("reporting.image_draws must be an integer of at least reporting.draws.")
-    if not math.isfinite(diagnostics.fold_pair_max_separation_arcsec) or diagnostics.fold_pair_max_separation_arcsec <= 0:
-        raise ValueError("image_diagnostics.fold_pair_max_separation_arcsec must be finite and positive.")
-    if diagnostics.exact_image_finder not in {"global-jax", "local-lm", "local-lm-adaptive"}:
-        raise ValueError("image_diagnostics.exact_image_finder must be 'global-jax', 'local-lm', or 'local-lm-adaptive'.")
-    _positive("image_diagnostics.exact_image_grid_pitch_arcsec", diagnostics.exact_image_grid_pitch_arcsec)
-    _positive("image_diagnostics.exact_image_fine_pitch_arcsec", diagnostics.exact_image_fine_pitch_arcsec)
-    if diagnostics.exact_image_fine_pitch_arcsec > diagnostics.exact_image_grid_pitch_arcsec:
-        raise ValueError("image_diagnostics.exact_image_fine_pitch_arcsec must not exceed the coarse grid pitch.")
-    _positive("image_diagnostics.exact_image_root_residual_arcsec", diagnostics.exact_image_root_residual_arcsec)
-    _positive("image_diagnostics.exact_image_root_separation_arcsec", diagnostics.exact_image_root_separation_arcsec)
-    if int(diagnostics.exact_image_polish_iterations) < 1:
-        raise ValueError("image_diagnostics.exact_image_polish_iterations must be positive.")
-    _positive("image_diagnostics.exact_image_seed_tolerance_pitches", diagnostics.exact_image_seed_tolerance_pitches)
-    if int(config.truth.truth_grid_size) < 0:
-        raise ValueError("truth.truth_grid_size must be nonnegative.")
-    validate_report_settings(config)
+    validate_outputs(config)
     if config.partition is not None:
         _validate_partition_config(config.partition, config)
         if any(prior is not None for prior in config.model.cosmology.priors.values()):
             raise ValueError("partition (uncertain images) is not supported with a sampled cosmology.")
 
 
-def validate_report_settings(config: LensClusterSolverConfig) -> None:
-    """Check the settings ``kappaccino outputs --set`` may change (``REPORT_ONLY_SECTIONS``, ``REPORT_ONLY_FIELDS``,
-    ``PERFORMANCE_FIELDS``): the ``outputs`` section, ``truth.deflection_true_fits`` (None or a path) and
-    ``runtime.output_workers`` (a positive integer).  Part of :func:`validate_config`.
+def validate_outputs(config: LensClusterSolverConfig) -> None:
+    """Check the ``outputs`` section (:meth:`OutputsConfig.validate`), the settings ``kappaccino outputs --set`` may
+    change.  Part of :func:`validate_config`.
 
     Raises
     ------
@@ -2191,27 +2266,8 @@ def validate_report_settings(config: LensClusterSolverConfig) -> None:
         At the first bad value, with a message naming the field.
     """
     if not isinstance(config.outputs, OutputsConfig):
-        raise ValueError(f"outputs must be a section (only, skip, fail_fast); got {config.outputs!r}")
-    _validate_outputs_config(config.outputs)
-    if not isinstance(config.truth, TruthRecoveryConfig):
-        raise ValueError(f"truth must be a section; got {config.truth!r}")
-    deflection = config.truth.deflection_true_fits
-    if deflection is not None and (not isinstance(deflection, (str, Path)) or not str(deflection)):
-        raise ValueError(f"truth.deflection_true_fits must be the path of a FITS file or null; got {deflection!r}")
-    if not isinstance(config.runtime, RuntimeConfig):
-        raise ValueError(f"runtime must be a section; got {config.runtime!r}")
-    _positive_int("runtime.output_workers", config.runtime.output_workers)
-
-
-def _validate_outputs_config(outputs: OutputsConfig) -> None:
-    from .outputs.registry import check_module_names          # the registry imports no JAX or plotting code
-    if outputs.only is not None:
-        check_module_names("outputs.only", outputs.only)
-        if not outputs.only:
-            raise ValueError("outputs.only must name at least one output module, or be null for all of them.")
-    check_module_names("outputs.skip", outputs.skip)
-    if not isinstance(outputs.fail_fast, bool):
-        raise ValueError("outputs.fail_fast must be true or false.")
+        raise ValueError(f"outputs must be a section ({', '.join(f.name for f in fields(OutputsConfig))}); got {config.outputs!r}")
+    config.outputs.validate()
 
 
 def _validate_partition_config(partition: PartitionConfig, config: LensClusterSolverConfig) -> None:

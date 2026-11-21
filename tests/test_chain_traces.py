@@ -72,7 +72,7 @@ def test_normal_output_hook(tmp_path, monkeypatch):
     from kappaccino.reporting import outputs
     p, specs = fixture()
     state = SimpleNamespace(parameter_specs=specs)
-    config = SimpleNamespace(paths=SimpleNamespace(figure_prefix='test'), reporting=SimpleNamespace(draws=2), runtime=SimpleNamespace(seed=0))
+    config = SimpleNamespace(paths=SimpleNamespace(figure_prefix='test'), outputs=SimpleNamespace(draws=2, image_draws=2, workers=1), runtime=SimpleNamespace(seed=0))
     paths = SimpleNamespace(tables=tmp_path/'tables', figures=tmp_path/'figures', root=tmp_path)
     monkeypatch.setattr(module, 'posterior_summary_table', lambda *a: __import__('pandas').DataFrame())
     monkeypatch.setattr(module, 'classification_table', lambda *a: __import__('pandas').DataFrame())

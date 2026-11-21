@@ -32,15 +32,22 @@ sampling: {warmup: 500, samples: 250, max_tree_depth: 7, target_accept: 0.8}
 # Direct (centered) deviations for the members the data pin, unit offsets for the rest.
 members: {centering: auto}
 
-# The dark-matter maps at z_s = 9, written by geometric_telescope/scripts/fit_tngc014.py --dm-only --truth-only from
-# data/tngc014_dm/tngc014_dm_snap73_yz_lens_maps.h5.
-truth:
-  kappa_true_fits: ../../../data/tngc014_dm/kappa_z9.fits
-  gammax_true_fits: ../../../data/tngc014_dm/gammax_z9.fits
-  gammay_true_fits: ../../../data/tngc014_dm/gammay_z9.fits
-
-# No imaging: the mock has catalogs and lens maps only.
-reporting: {draws: 64, image_draws: 64, extra_images: true}
+# What the run reports, never part of the fit.
+outputs:
+  draws: 64
+  image_draws: 64
+  fit: {enabled: true}
+  images: {enabled: true, extra_images: true}
+  mass: {enabled: true}
+  # The dark-matter maps at z_s = 9, written by geometric_telescope/scripts/fit_tngc014.py --dm-only --truth-only from
+  # data/tngc014_dm/tngc014_dm_snap73_yz_lens_maps.h5.
+  truth:
+    enabled: true
+    kappa_true_fits: ../../../data/tngc014_dm/kappa_z9.fits
+    gammax_true_fits: ../../../data/tngc014_dm/gammax_z9.fits
+    gammay_true_fits: ../../../data/tngc014_dm/gammay_z9.fits
+  # No imaging: the mock has catalogs and lens maps only.
+  rgb: {enabled: false}
 
 profiles:
   # Cosmography: Om0 and w0 of flat wCDM sampled with the lens (priors_cosmography.yaml).
@@ -54,5 +61,4 @@ profiles:
     sampling: {max_tree_depth: 8}
     members: {far_field_cut_radii: 2.0, classification_prior_quantile: null, min_deflection_arcsec: null, cut_radius_inflation: 3.0}
     scaling: {member_shape_scatter: null}
-    image_diagnostics: {fold_pair_max_separation_arcsec: 3.0}
-    reporting: {draws: 8, image_draws: 8, extra_images: false}
+    outputs: {draws: 8, image_draws: 8, images: {extra_images: false}, rgb: {fold_pair_max_separation_arcsec: 3.0}}

@@ -68,9 +68,9 @@ def test_cycles_and_unknown_names_are_errors():
         order_modules([Fake("a", after=["ghost"])])
     with pytest.raises(ValueError, match="duplicate"):
         order_modules([Fake("a"), Fake("a")])
-    with pytest.raises(ValueError, match="outputs.only names unknown"):
+    with pytest.raises(ValueError, match="--only names unknown"):
         plan_modules([Fake("a")], only=["b"])
-    with pytest.raises(ValueError, match="outputs.skip names unknown"):
+    with pytest.raises(ValueError, match="--skip names unknown"):
         plan_modules([Fake("a")], skip=["b"])
 
 
@@ -93,9 +93,19 @@ def test_skip_cascades_to_dependents(tmp_path):
     ctx = context(tmp_path)
     records = run_modules(ctx, modules, skip=["a"])
     assert calls == ["d"]
-    assert records["a"] == {"status": "skipped", "seconds": 0.0, "reason": "in outputs.skip"}
+    assert records["a"] == {"status": "skipped", "seconds": 0.0, "reason": "in --skip"}
     assert records["b"]["status"] == records["c"]["status"] == "skipped"
     assert records["c"]["reason"] == "requires b, which was skipped" and records["d"]["status"] == "done"
+
+
+def test_a_disabled_module_is_recorded_and_its_dependents_skipped(tmp_path):
+    calls, lines = [], []
+    modules = [Fake("a", calls=calls), Fake("b", requires=["a"], calls=calls), Fake("c", calls=calls)]
+    records = run_modules(context(tmp_path, log=lines.append), modules, disabled=["a"])
+    assert calls == ["c"]
+    assert records["a"] == {"status": "disabled", "seconds": 0.0, "reason": "outputs.a.enabled is false"}
+    assert records["b"]["status"] == "skipped" and records["b"]["reason"] == "requires a, which was disabled"
+    assert "[outputs] a: disabled (outputs.a.enabled is false)" in lines
 
 
 def test_inactive_module_gives_its_reason(tmp_path):
@@ -294,7 +304,7 @@ def test_imaging_is_loaded_once_per_variant(monkeypatch, synthetic_config):
 
     monkeypatch.setattr(cutouts, "load_cluster_imaging", load)
     ctx = OutputContext(synthetic_config, None, None, None, {}, None, log=lines.append)
-    view = replace(synthetic_config.image_catalog, image_dir="hst")
+    view = replace(synthetic_config.outputs.rgb, image_dir="hst")
     assert ctx.imaging(view) is ctx.imaging(replace(view, figure_suffix="_other"))
     missing = replace(view, image_dir="missing")
     assert ctx.imaging(missing) is None and ctx.imaging(missing) is None
@@ -303,47 +313,94 @@ def test_imaging_is_loaded_once_per_variant(monkeypatch, synthetic_config):
 
 
 def test_outputs_config_is_validated(synthetic_config):
+    from kappaccino.config import ImageSolverConfig, RGBOutputConfig, TruthOutputConfig
     synthetic_config.validate()
-    replace(synthetic_config, outputs=OutputsConfig(only=("fit",), skip=("truth", "rgb"), fail_fast=True)).validate()
-    for bad, match in ((OutputsConfig(skip=("nope",)), "outputs.skip names unknown"),
-                       (OutputsConfig(only=("fit", "nope")), "outputs.only names unknown"),
-                       (OutputsConfig(only=()), "at least one"),
-                       (OutputsConfig(skip="rgb"), "must be a list"),
-                       (OutputsConfig(fail_fast="yes"), "fail_fast")):
+    outputs = synthetic_config.outputs
+    replace(synthetic_config, outputs=replace(outputs, fail_fast=True, rgb=replace(outputs.rgb, enabled=False))).validate()
+    for bad, match in ((OutputsConfig(draws=0), r"^outputs\.draws must be a positive integer"),
+                       (OutputsConfig(draws=8, image_draws=4), r"^outputs\.image_draws must be an integer of at least outputs\.draws"),
+                       (OutputsConfig(workers=0), r"^outputs\.workers must be a positive integer"),
+                       (OutputsConfig(caustic_source_redshift=float("nan")), r"^outputs\.caustic_source_redshift"),
+                       (OutputsConfig(fail_fast="yes"), r"^outputs\.fail_fast must be true or false"),
+                       (OutputsConfig(rgb=RGBOutputConfig(enabled="no")), r"^outputs\.rgb\.enabled must be true or false"),
+                       (OutputsConfig(rgb=RGBOutputConfig(fold_pair_max_separation_arcsec=0.0)),
+                        r"^outputs\.rgb\.fold_pair_max_separation_arcsec must be finite and positive"),
+                       (OutputsConfig(truth=TruthOutputConfig(grid_size=-1)), r"^outputs\.truth\.grid_size must be"),
+                       (OutputsConfig(truth=TruthOutputConfig(kappa_true_fits=3)), r"^outputs\.truth\.kappa_true_fits must be"),
+                       (OutputsConfig(image_solver=ImageSolverConfig(exact_image_finder="newton")),
+                        r"^outputs\.image_solver\.exact_image_finder must be"),
+                       (OutputsConfig(images=5), r"^outputs\.images must be a section"),
+                       (5, r"^outputs must be a section")):
         with pytest.raises(ValueError, match=match):
             replace(synthetic_config, outputs=bad).validate()
 
 
+def test_every_module_has_its_own_section():
+    from dataclasses import fields
+    from kappaccino.outputs.base import disabled_modules
+    sections = {f.name: f for f in fields(OutputsConfig)}
+    for module in MODULES:
+        section = getattr(OutputsConfig(), module.name)
+        assert module.name in sections and section.enabled is True and callable(section.validate)
+        for name in module.path_fields:           # dotted names under outputs
+            node = OutputsConfig()
+            for part in name.split("."):
+                node = getattr(node, part)
+    assert disabled_modules(SimpleNamespace(outputs=OutputsConfig())) == ()
+
+
 def test_outputs_settings_leave_the_hash_and_the_resume_alone(synthetic_config, tmp_path):
     from kappaccino import cli
+    from kappaccino.config import ImageSolverConfig, ImagesOutputConfig, RGBDisplayConfig, RGBOutputConfig, TruthOutputConfig
     from kappaccino.pipeline import resume_payload
     base = synthetic_config
-    chosen = replace(base, outputs=OutputsConfig(only=("truth",), skip=("rgb",), fail_fast=True)).validate()
+    every = OutputsConfig(draws=3, image_draws=5, workers=2, caustic_source_redshift=2.5, fail_fast=True,
+                          image_solver=ImageSolverConfig(match_tolerance_arcsec=1.0),
+                          images=ImagesOutputConfig(enabled=False, extra_images=False),
+                          truth=TruthOutputConfig(enabled=False, kappa_true_fits="k.fits", deflection_true_fits="d.fits", grid_size=8),
+                          rgb=RGBOutputConfig(enabled=False, image_dir="imaging", display=RGBDisplayConfig(q=2.0),
+                                              fold_pair_max_separation_arcsec=1.0))
+    chosen = replace(base, outputs=every).validate()
     assert cli.config_hash(chosen) == cli.config_hash(base)
     assert resume_payload(chosen.to_json_dict()) == resume_payload(base.to_json_dict())
-    assert "outputs" not in resume_payload(base.to_json_dict())
+    assert artifacts.init_signature(chosen) == artifacts.init_signature(base)
+    assert "outputs" not in resume_payload(base.to_json_dict()) and "outputs" not in artifacts.init_signature(base)
     # The section round-trips through config.json.
     artifacts.save_config(tmp_path, chosen)
     assert artifacts.load_config(tmp_path).outputs == chosen.outputs
     assert LensClusterSolverConfig.from_json_dict(chosen.to_json_dict()).outputs == chosen.outputs
-    assert chosen.to_json_dict()["outputs"] == {"only": ["truth"], "skip": ["rgb"], "fail_fast": True}
-    # A config.json without the section (written before it existed) loads with the defaults and resumes.
+    # A config.json of the layout before the outputs section is refused like any unknown field.
+    for section, value in (("truth", {"kappa_true_fits": None}), ("reporting", {"draws": 8}), ("image_catalog", {}),
+                           ("image_diagnostics", {})):
+        payload = chosen.to_json_dict()
+        payload[section] = value
+        with pytest.raises(TypeError, match=section):
+            LensClusterSolverConfig.from_json_dict(payload)
     payload = chosen.to_json_dict()
-    del payload["outputs"]
-    (tmp_path / artifacts.CONFIG_FILE).write_text(json.dumps(payload))
-    saved = artifacts.load_config(tmp_path)
-    assert saved.outputs == OutputsConfig()
-    assert resume_payload(saved.to_json_dict()) == resume_payload(chosen.to_json_dict())
+    payload["runtime"]["output_workers"] = 4
+    with pytest.raises(TypeError, match="output_workers"):
+        LensClusterSolverConfig.from_json_dict(payload)
+    payload = chosen.to_json_dict()
+    payload["outputs"]["only"] = ["fit"]
+    with pytest.raises(TypeError, match="only"):
+        LensClusterSolverConfig.from_json_dict(payload)
 
 
 def test_outputs_section_from_run_files_and_set():
     from kappaccino import cli
     from kappaccino.run_files import load_run
-    config = load_run("catalogs/hera", overrides=["outputs.skip=[truth, rgb]", "outputs.fail_fast=true"])
-    assert config.outputs == OutputsConfig(skip=("truth", "rgb"), fail_fast=True)
-    assert load_run("catalogs/hera", overrides=["outputs.only=[truth]"]).outputs.only == ("truth",)
-    assert (cli.build_config("catalogs/hera", overrides=["outputs.skip=[rgb]"]).paths.run_name
+    config = load_run("catalogs/hera", overrides=["outputs.rgb.enabled=false", "outputs.fail_fast=true", "outputs.workers=2"])
+    assert not config.outputs.rgb.enabled and config.outputs.fail_fast and config.outputs.workers == 2
+    assert config.outputs.rgb.image_dir.endswith("data/imaging/hera/ffsims")         # resolved against the file's folder
+    assert (cli.build_config("catalogs/hera", overrides=["outputs.rgb.enabled=false", "outputs.draws=2", "outputs.image_draws=2",
+                                                         "outputs.truth.deflection_true_fits=null"]).paths.run_name
             == cli.build_config("catalogs/hera").paths.run_name)
+    # The sections and fields before the outputs section are unknown keys, with no special message.
+    with pytest.raises(ValueError, match="unknown keys"):
+        load_run("catalogs/hera", overrides=["reporting.draws=8"])
+    for old in ("outputs.only=[truth]", "outputs.skip=[rgb]", "runtime.output_workers=2", "outputs.rgb.rgb={q: 1}"):
+        with pytest.raises(TypeError):
+            load_run("catalogs/hera", overrides=[old])
 
 
 def test_outputs_list_command(capsys, synthetic_config, tmp_path):
@@ -357,17 +414,22 @@ def test_outputs_list_command(capsys, synthetic_config, tmp_path):
     assert lines[2] == ("    compute: tables, chain_traces, audit, scaling_table, covariance, fields, members; render: "
                         "chain_traces, potfiles, block_corner, cosmology_corner, covariance, fields, members, scaling_plot, "
                         "globals_corner")
-    # With a run: whether each module applies, from its saved configuration.
+    # With a run: whether each module is enabled and whether it applies, from its saved configuration.
     run = tmp_path / "run"
-    config = replace(synthetic_config, image_catalog=replace(synthetic_config.image_catalog, image_dir=None),
-                     truth=replace(synthetic_config.truth, kappa_true_fits=None))
+    outputs = synthetic_config.outputs
+    config = replace(synthetic_config, outputs=replace(outputs, rgb=replace(outputs.rgb, image_dir=None),
+                                                       truth=replace(outputs.truth, kappa_true_fits=None),
+                                                       mass=replace(outputs.mass, enabled=False)))
     artifacts.save_config(run / "final" / "artifacts", config)
     assert cli.main(["outputs", "--list", str(run)]) == 0
-    rows = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()[1::2]}
-    assert rows["fit"].rstrip().endswith("yes")
-    assert rows["truth"].rstrip().endswith("no: no truth convergence or deflection map (truth.kappa_true_fits, "
-                                              "truth.deflection_true_fits)")
-    assert rows["rgb"].rstrip().endswith("no: no imaging (image_catalog.image_dir)")
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].split() == ["module", "requires", "after", "enabled", "active"]
+    rows = {line.split()[0]: line for line in out[1::2]}
+    assert rows["fit"].split()[3:] == ["yes", "yes"] and rows["mass"].split()[3:] == ["no", "yes"]
+    assert rows["truth"].split()[3] == "yes"
+    assert rows["truth"].rstrip().endswith("no: no truth convergence or deflection map (outputs.truth.kappa_true_fits, "
+                                           "outputs.truth.deflection_true_fits)")
+    assert rows["rgb"].rstrip().endswith("no: no imaging (outputs.rgb.image_dir)")
     with pytest.raises(SystemExit):
         cli.main(["outputs", str(run), "--only", "nope"])
     with pytest.raises(SystemExit):
@@ -391,7 +453,7 @@ class SummaryModule(OutputModule):
         return {}
 
 
-def summary_pass(monkeypatch, tmp_path, modules, *, draws, only=None):
+def summary_pass(monkeypatch, tmp_path, modules, *, draws, only=None, disabled=()):
     from kappaccino.reporting import draws as draws_module, results_tex
     from kappaccino.reporting.outputs import write_run_summary
 
@@ -403,8 +465,8 @@ def summary_pass(monkeypatch, tmp_path, modules, *, draws, only=None):
     monkeypatch.setattr(results_tex, "write_run_results", lambda *a, **k: None)
     ctx = context(tmp_path)
     ctx.config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="toy"))
-    run_modules(ctx, modules, only=only)
-    write_run_summary(ctx, partial=only is not None, modules=modules)
+    run_modules(ctx, modules, only=only, disabled=disabled)
+    write_run_summary(ctx, partial=only is not None or bool(disabled), modules=modules)
     return store.read_record(tmp_path, "run_summary")
 
 
@@ -430,6 +492,15 @@ def test_a_partial_pass_leaves_no_stale_numbers(monkeypatch, tmp_path):
     assert kept["truth"] == {"value": "truth over 4 draws"} and kept["modules"]["truth"]["status"] == "done"
 
 
+def test_a_disabled_module_keeps_its_numbers_and_says_disabled(monkeypatch, tmp_path):
+    images = SummaryModule("images", "fit")
+    truth = SummaryModule("truth", "truth", requires=["images"])
+    summary_pass(monkeypatch, tmp_path, [images, truth], draws=8)
+    off = summary_pass(monkeypatch, tmp_path, [images, truth], draws=4, disabled=["truth"])
+    assert off["truth"] == {"value": "truth over 8 draws"} and off["fit"] == {"value": "images over 4 draws"}
+    assert off["modules"]["truth"] == {"status": "disabled", "seconds": 0.0, "reason": "outputs.truth.enabled is false"}
+
+
 def test_fail_fast_still_writes_the_summary_and_compacts(monkeypatch, synthetic_config, tmp_path):
     from kappaccino.io import store as store_module
     from kappaccino.outputs import fit
@@ -447,47 +518,62 @@ def test_fail_fast_still_writes_the_summary_and_compacts(monkeypatch, synthetic_
 
 
 # ----------------------------------------------------------------------------- kappaccino outputs on a saved run
-def test_module_selection_on_the_command_line(synthetic_config):
-    from kappaccino.outputs.command import select_modules
-    saved = replace(synthetic_config, outputs=OutputsConfig(only=("truth",), skip=("rgb",)))
-    assert select_modules(saved).outputs == saved.outputs                       # nothing given: the saved selection
-    assert select_modules(saved, all_modules=True).outputs == OutputsConfig()
-    assert select_modules(saved, only=["mass"]).outputs == OutputsConfig(only=("mass",))
-    assert select_modules(saved, skip=["truth"]).outputs == OutputsConfig(skip=("truth",))
-    assert select_modules(saved, fail_fast=True).outputs.fail_fast
+def test_module_selection_on_the_command_line(monkeypatch, synthetic_config, tmp_path):
+    from kappaccino.io import store as store_module
+    from kappaccino.reporting import outputs
+    seen = []
+    monkeypatch.setattr(outputs, "run_modules", lambda ctx, modules, **k: seen.append(k) or {})
+    monkeypatch.setattr(outputs, "write_run_summary", lambda *a, **k: None)
+    monkeypatch.setattr(store_module, "compact", lambda stage: None)
+    settings = synthetic_config.outputs
+    off = replace(synthetic_config, outputs=replace(settings, truth=replace(settings.truth, enabled=False),
+                                                    rgb=replace(settings.rgb, enabled=False)))
+    paths = SimpleNamespace(tables=tmp_path, figures=tmp_path, root=tmp_path)
+
+    def selection(**options):
+        outputs.write_outputs(off, None, None, None, {}, paths, log=lambda _: None, **options)
+        return {key: seen[-1][key] for key in ("only", "skip", "disabled", "fail_fast")}
+
+    # Nothing given: the enabled switches of the configuration.
+    assert selection() == {"only": None, "skip": (), "disabled": ("truth", "rgb"), "fail_fast": False}
+    # --only, --skip or --all replace them: an explicit request wins.
+    assert selection(only=["rgb"]) == {"only": ("rgb",), "skip": (), "disabled": (), "fail_fast": False}
+    assert selection(skip=["fit"]) == {"only": None, "skip": ("fit",), "disabled": (), "fail_fast": False}
+    assert selection(all_modules=True, fail_fast=True) == {"only": None, "skip": (), "disabled": (), "fail_fast": True}
 
 
 def test_remap_and_report_overrides(synthetic_config, tmp_path):
     from kappaccino.outputs.saved_run import apply_overrides, remap_paths
-    config = replace(synthetic_config, truth=replace(synthetic_config.truth, kappa_true_fits="/far/away/data/kappa.fits"),
-                     image_catalog=replace(synthetic_config.image_catalog, image_dir="/far/away/data/imaging"))
+    outputs = synthetic_config.outputs
+    config = replace(synthetic_config, outputs=replace(outputs, truth=replace(outputs.truth, kappa_true_fits="/far/away/data/kappa.fits"),
+                                                       rgb=replace(outputs.rgb, image_dir="/far/away/data/imaging")))
     lines = []
     moved = remap_paths(config, [("/far/away", str(tmp_path))], log=lines.append)
-    assert moved.truth.kappa_true_fits == f"{tmp_path}/data/kappa.fits" and moved.image_catalog.image_dir == f"{tmp_path}/data/imaging"
-    assert sorted(line.split()[2].rstrip(":") for line in lines) == ["image_catalog.image_dir", "truth.kappa_true_fits"]
-    assert remap_paths(config, [("/far/aw", "/x")], log=lambda _: None).truth.kappa_true_fits == "/far/away/data/kappa.fits"
-    # Report settings may change; nothing else may, also outside the run hash (paths, WBIC).
-    changed = apply_overrides(config, ["truth.deflection_true_fits=defl.fits", "outputs.skip=[rgb]", "runtime.output_workers=2"])
-    assert changed.truth.deflection_true_fits == "defl.fits" and changed.outputs.skip == ("rgb",)
-    assert changed.runtime.output_workers == 2
+    assert (moved.outputs.truth.kappa_true_fits == f"{tmp_path}/data/kappa.fits"
+            and moved.outputs.rgb.image_dir == f"{tmp_path}/data/imaging")
+    assert sorted(line.split()[2].rstrip(":") for line in lines) == ["outputs.rgb.image_dir", "outputs.truth.kappa_true_fits"]
+    assert remap_paths(config, [("/far/aw", "/x")], log=lambda _: None).outputs.truth.kappa_true_fits == "/far/away/data/kappa.fits"
+    # Any field of the outputs section may change; nothing else may, also outside the run hash (paths, WBIC).
+    changed = apply_overrides(config, ["outputs.truth.deflection_true_fits=defl.fits", "outputs.rgb.enabled=false",
+                                       "outputs.workers=2", "outputs.truth.kappa_true_fits=other.fits", "outputs.draws=4"])
+    assert changed.outputs.truth.deflection_true_fits == "defl.fits" and not changed.outputs.rgb.enabled
+    assert (changed.outputs.workers, changed.outputs.truth.kappa_true_fits, changed.outputs.draws) == (2, "other.fits", 4)
+    assert changed.to_json_dict() | {"outputs": None} == config.to_json_dict() | {"outputs": None}
     for bad in ("sampling.warmup=3", "reporting.draws=4", "truth.kappa_true_fits=other.fits", "paths.figure_prefix=../../X",
-                "paths.run_name=other", "paths.output_dir=/tmp", "sampling.wbic=true", "runtime.seed=3", "truth=5"):
-        with pytest.raises(ValueError, match=r"only report settings \(outputs\.\*, truth\.deflection_true_fits, "
-                                             r"runtime\.output_workers\); refused: "):
+                "paths.run_name=other", "paths.output_dir=/tmp", "sampling.wbic=true", "runtime.seed=3",
+                "runtime.output_workers=2", "truth=5", "nosuch.field=1"):
+        with pytest.raises(ValueError, match=r"^--set may change only the outputs section \(outputs\.\*\); refused: "):
             apply_overrides(config, [bad])
-    with pytest.raises(ValueError, match="unknown configuration sections"):
-        apply_overrides(config, ["nosuch.field=1"])
-    with pytest.raises(ValueError):
-        apply_overrides(config, ["outputs.nosuch=1"])
-    # A report setting of the wrong type is refused before the pass, with the field named.
-    for bad, field in (("truth.deflection_true_fits={a: 1}", "truth.deflection_true_fits"),
-                       ("truth.deflection_true_fits=[a, b]", "truth.deflection_true_fits"),
-                       ("truth.deflection_true_fits.x=1", "truth.deflection_true_fits"),
-                       ("truth.deflection_true_fits=true", "truth.deflection_true_fits"),
-                       ("runtime.output_workers=abc", "runtime.output_workers"),
-                       ("runtime.output_workers=-5", "runtime.output_workers"),
-                       ("runtime.output_workers=2.5", "runtime.output_workers"),
-                       ("outputs.skip=rgb", "outputs.skip"), ("outputs.only=[nope]", "outputs.only"),
+    for bad in ("outputs.nosuch=1", "outputs.only=[fit]", "outputs.rgb.rgb={q: 1}"):
+        with pytest.raises(ValueError, match="^--set: "):
+            apply_overrides(config, [bad])
+    # A setting of the wrong type is refused before the pass, with the field named.
+    for bad, field in (("outputs.truth.deflection_true_fits={a: 1}", "outputs.truth.deflection_true_fits"),
+                       ("outputs.truth.deflection_true_fits=[a, b]", "outputs.truth.deflection_true_fits"),
+                       ("outputs.truth.deflection_true_fits.x=1", "outputs.truth.deflection_true_fits"),
+                       ("outputs.truth.deflection_true_fits=true", "outputs.truth.deflection_true_fits"),
+                       ("outputs.workers=abc", "outputs.workers"), ("outputs.workers=-5", "outputs.workers"),
+                       ("outputs.workers=2.5", "outputs.workers"), ("outputs.rgb.enabled=3", "outputs.rgb.enabled"),
                        ("outputs.fail_fast=3", "outputs.fail_fast"), ("outputs=5", "outputs")):
         with pytest.raises(ValueError, match=rf"^--set: {field.replace('.', r'.')} "):
             apply_overrides(config, [bad])
@@ -498,16 +584,23 @@ def test_a_bad_report_setting_is_a_usage_error(synthetic_config, tmp_path, capsy
     from kappaccino.io import artifacts
     run = tmp_path / "run"
     artifacts.save_config(run / "final" / "artifacts", synthetic_config)
-    assert cli.main(["outputs", str(run), "--set", "runtime.output_workers=-5"]) == 2
-    assert "runtime.output_workers must be a positive integer" in capsys.readouterr().out
+    assert cli.main(["outputs", str(run), "--set", "outputs.workers=-5"]) == 2
+    assert "outputs.workers must be a positive integer" in capsys.readouterr().out
 
 
 def test_missing_files_name_the_field_and_suggest_remap(synthetic_config):
     from kappaccino.outputs.command import check_module_paths
-    config = replace(synthetic_config, truth=replace(synthetic_config.truth, kappa_true_fits="/far/away/kappa.fits"))
-    with pytest.raises(FileNotFoundError, match=r"truth.kappa_true_fits = /far/away/kappa.fits \(module mass\).*--remap"):
+    outputs = synthetic_config.outputs
+    config = replace(synthetic_config, outputs=replace(outputs, truth=replace(outputs.truth, kappa_true_fits="/far/away/kappa.fits")))
+    with pytest.raises(FileNotFoundError, match=r"outputs.truth.kappa_true_fits = /far/away/kappa.fits \(module mass\).*--remap"):
         check_module_paths(config)
-    check_module_paths(replace(config, outputs=OutputsConfig(only=("fit",))))      # fit reads no such file
+    check_module_paths(config, only=("fit",))                  # fit reads no such file
+    # Disabled modules read nothing; --only runs (and checks) a module whatever its switch.
+    off = replace(config, outputs=replace(config.outputs, **{name: replace(getattr(config.outputs, name), enabled=False)
+                                                               for name in ("mass", "truth", "rgb")}))
+    check_module_paths(off)
+    with pytest.raises(FileNotFoundError, match=r"\(module mass\)"):
+        check_module_paths(off, only=("mass",))
 
 
 def test_outputs_command_options(monkeypatch, tmp_path, capsys):
@@ -548,9 +641,9 @@ def test_outputs_command_options(monkeypatch, tmp_path, capsys):
 def test_draws_option_sets_both_draw_counts(monkeypatch, synthetic_config, tmp_path):
     from kappaccino.outputs import command, saved_run
     monkeypatch.setattr(saved_run, "load_run", lambda run, **k: (synthetic_config, None, None, None, None))
-    monkeypatch.setattr(command, "check_module_paths", lambda config: None)
+    monkeypatch.setattr(command, "check_module_paths", lambda config, **k: None)
     config, *_ = command.prepare_rerun(tmp_path, draws=4)
-    assert (config.reporting.draws, config.reporting.image_draws) == (4, 4)
+    assert (config.outputs.draws, config.outputs.image_draws) == (4, 4)
 
 
 # ----------------------------------------------------------------------------- compute, product and render
@@ -765,7 +858,7 @@ def test_a_render_rerun_loads_no_evaluator(monkeypatch, synthetic_config, tmp_pa
     from kappaccino.outputs import command, saved_run
     monkeypatch.setattr(saved_run, "load_run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("evaluator built")))
     monkeypatch.setattr(saved_run, "load_saved_run", lambda run, **k: (synthetic_config, "state", "posterior"))
-    monkeypatch.setattr(command, "check_module_paths", lambda config: (_ for _ in ()).throw(AssertionError("paths checked")))
+    monkeypatch.setattr(command, "check_module_paths", lambda config, **k: (_ for _ in ()).throw(AssertionError("paths checked")))
     config, state, evaluator, posterior, audit, final = command.prepare_rerun(tmp_path, mode="render")
     assert (state, evaluator, posterior) == ("state", None, "posterior") and final.root == tmp_path / "final"
     with pytest.raises(ValueError, match="--draws"):
@@ -775,22 +868,23 @@ def test_a_render_rerun_loads_no_evaluator(monkeypatch, synthetic_config, tmp_pa
 def test_remap_moves_only_path_fields(synthetic_config, tmp_path, monkeypatch):
     from kappaccino.outputs.registry import MODULES as registry
     from kappaccino.outputs.saved_run import catalog_fields, path_fields, remap_paths
+    outputs = synthetic_config.outputs
     config = replace(synthetic_config, paths=replace(synthetic_config.paths, figure_prefix="/far/away/prefix",
                                                      run_name="/far/away/name"),
-                     truth=replace(synthetic_config.truth, kappa_true_fits="/far/away/kappa.fits"))
+                     outputs=replace(outputs, truth=replace(outputs.truth, kappa_true_fits="/far/away/kappa.fits")))
     covered = set(path_fields(config))
     # Every path a module checks and every catalog the model is built from is a path field.
-    declared = {field for module in registry for field in module.path_fields} | set(catalog_fields(config))
+    declared = {f"outputs.{field}" for module in registry for field in module.path_fields} | set(catalog_fields(config))
     assert declared <= covered, declared - covered
     assert not {"paths.figure_prefix", "paths.run_name"} & covered
     moved = remap_paths(config, [("/far/away", "/near")], log=lambda _: None)
-    assert moved.truth.kappa_true_fits == "/near/kappa.fits"
+    assert moved.outputs.truth.kappa_true_fits == "/near/kappa.fits"
     assert (moved.paths.figure_prefix, moved.paths.run_name) == ("/far/away/prefix", "/far/away/name")
     # A relative saved path is compared as the absolute path it names from the working directory.
     monkeypatch.chdir(tmp_path)
-    relative = replace(config, image_catalog=replace(config.image_catalog, image_dir="data/imaging/hst"))
+    relative = replace(config, outputs=replace(config.outputs, rgb=replace(config.outputs.rgb, image_dir="data/imaging/hst")))
     moved = remap_paths(relative, [(str(tmp_path / "data" / "imaging"), "/empty")], log=lambda _: None)
-    assert moved.image_catalog.image_dir == "/empty/hst"
+    assert moved.outputs.rgb.image_dir == "/empty/hst"
     for old, match in (("far/away", "must be an absolute path"), ("/", "is the root")):
         with pytest.raises(ValueError, match=match):
             remap_paths(config, [(old, "/x")], log=lambda _: None)

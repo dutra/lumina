@@ -156,7 +156,7 @@ def compute_member_diagnostics(state, evaluator, posterior, config, *, log=print
                      deflection='Maximum member deflection (arcsec)', shear='Maximum member shear')
     table['deflection'], table['shear'] = np.median(fields['deflection'], axis=0), np.median(fields['shear'], axis=0)
     physical_draws = [evaluator.physical(jnp.asarray(theta)) for theta in samples]
-    z = float(config.truth.caustic_source_redshift)
+    z = float(config.outputs.caustic_source_redshift)
     skipped = {}
     if z <= state.z_lens:
         skipped['environment_kappa'] = 'Diagnostic source redshift is not behind lens'

@@ -12,7 +12,7 @@ from kappaccino.core.state import build_state
 def test_batched_local_solve_matches_per_family_solver(synthetic_config):
     state = build_state(synthetic_config)
     evaluator = Evaluator(state)
-    solver = ExactImageSolver(evaluator, synthetic_config.image_diagnostics)
+    solver = ExactImageSolver(evaluator, synthetic_config.outputs.image_solver)
     theta = np.asarray(state.initial_theta)
     per_family = predictions_at(solver, state, evaluator, theta)
     batched = predictions_at(solver, state, evaluator, theta, adaptive=False)

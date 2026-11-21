@@ -285,16 +285,16 @@ def footprint_metrics(final, cfg):
     cent range; without those tables they come from the median profile and the intervals are not available."""
     import numpy as np
     import pandas as pd
-    from ..config import TruthRecoveryConfig
+    from ..config import TruthOutputConfig, _from_jsonable
     from ..diagnostics.truth_recovery import footprint_mean_ratios, literature_ratios
     names = ('truth_recovery_m2d_aperture_profile', 'truth_recovery_kappa_annulus_profile', 'image_fit_quality')
-    if not all(store.has_table(final, name) for name in names) or not cfg.get('truth', {}).get('kappa_true_fits'):
+    if not all(store.has_table(final, name) for name in names) or not cfg.get('outputs', {}).get('truth', {}).get('kappa_true_fits'):
         return {}
     mass, kappa, images = (_table(final, name) for name in names)
     draws = ('truth_recovery_m2d_aperture_ratio_draws', 'truth_recovery_kappa_annulus_ratio_draws')
     mass_draws, kappa_draws = (_table(final, name) for name in draws) if all(store.has_table(final, name) for name in draws) else (None, None)
     radii = np.hypot(images['x_obs_arcsec'] - mass['center_x_arcsec'].iloc[0], images['y_obs_arcsec'] - mass['center_y_arcsec'].iloc[0])
-    truth = TruthRecoveryConfig(**cfg['truth'])
+    truth = _from_jsonable(cfg['outputs']['truth'], TruthOutputConfig)
     found = footprint_mean_ratios(mass, kappa, radii.to_numpy(float), literature_ratios(truth, 'mass'),
                                   literature_ratios(truth, 'kappa'), mass_draws, kappa_draws)
     result = {'FootprintInnerArcsec': number(found['inner_arcsec'], 1), 'FootprintOuterArcsec': number(found['outer_arcsec'], 1),

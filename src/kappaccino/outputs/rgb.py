@@ -74,11 +74,11 @@ class RGBModule(OutputModule):
     render_steps = ("imaging", "covariance_cutouts", "rgb_critical", "small_lambda", "cluster_mass", "fold_cutouts",
                     "apj_fold_cutouts", "paper_cutouts")
     input_steps = ("imaging",)
-    path_fields = ("image_catalog.image_dir", "image_catalog.candidate_catalog_path", "truth.kappa_true_fits")
+    path_fields = ("rgb.image_dir", "rgb.candidate_catalog_path", "truth.kappa_true_fits")
 
     def active(self, ctx: OutputContext) -> str | None:
-        if not ctx.config.image_catalog.image_dir:
-            return "no imaging (image_catalog.image_dir)"
+        if not ctx.settings.image_dir:
+            return "no imaging (outputs.rgb.image_dir)"
         images = ctx.products.get("images")
         if images is not None and images["image_df"].empty:
             return "no observed image in the image recovery"
@@ -86,7 +86,7 @@ class RGBModule(OutputModule):
 
     def compute(self, ctx: OutputContext) -> None:
         from ..diagnostics.position_contours import load_or_compute_contours
-        from ..imaging.cutouts import imaging_variants
+        from ..imaging.cutouts import imaging_variants, variant_config
         from ..plotting.covariance_cutouts import save_covariance_cutouts
         from ..plotting.fold_pairs import compute_fold_diagnostics, save_fold_data
         from ..plotting.jwst_rgb import save_rgb_critical
@@ -95,7 +95,7 @@ class RGBModule(OutputModule):
         from ..plotting.small_lambda_jwst import save_small_lambda_jwst
         config, state, paths, tables, log = ctx.config, ctx.state, ctx.paths, ctx.tables, ctx.log
         image_df, extra = image_tables(ctx)
-        z_crit = float(config.truth.caustic_source_redshift)
+        z_crit = float(config.outputs.caustic_source_redshift)
 
         def fold_data():
             save_fold_data(compute_fold_diagnostics(config, state, ctx.draws, tables, log=log), tables)
@@ -108,14 +108,14 @@ class RGBModule(OutputModule):
             imaging = ctx.step(f"imaging:{label}", ctx.imaging, image_config)
             if imaging is None:
                 continue
-            variant = replace(config, image_catalog=image_config)
+            variant = variant_config(config, image_config)
             ctx.step(f"covariance_cutouts:{label}", lambda: save_covariance_cutouts(
                 variant, state, ctx.draws, paths, imaging, intervals=fit_covariance_errors(ctx.stage), log=log))
             ctx.step(f"rgb_critical:{label}", lambda: save_rgb_critical(variant, state, ctx.draws, image_df, extra, imaging, tables, log=log))
             view = overview_variant(image_config, overview_configs)
             if view is None:
                 continue
-            label, variant, jwst = variant_label(view), replace(config, image_catalog=view), view.figure_suffix == '_jwst'
+            label, variant, jwst = variant_label(view), variant_config(config, view), view.figure_suffix == '_jwst'
             position_contours, contours_ready, small_lambda = None, True, None
             if jwst:
                 position_contours = ctx.step(f"position_contours:{label}", lambda: load_or_compute_contours(
@@ -128,7 +128,7 @@ class RGBModule(OutputModule):
                     ctx.skip_step(f"small_lambda:{label}", f"position_contours:{label} failed")
             if contours_ready:
                 ctx.step(f"cluster_mass:{label}", lambda: save_cluster_mass_figure(
-                    ctx.draws, image_df, extra, imaging, z_source=z_crit, kappa_true_fits=config.truth.kappa_true_fits,
+                    ctx.draws, image_df, extra, imaging, z_source=z_crit, kappa_true_fits=config.outputs.truth.kappa_true_fits,
                     tables_dir=tables, fits_dir=paths.fits, artifact_suffix=view.figure_suffix,
                     position_contours=position_contours, log=log))
             else:
@@ -151,7 +151,7 @@ class RGBModule(OutputModule):
     def render(self, ctx: OutputContext) -> None:
         from functools import cache
         from ..diagnostics.position_contours import load_position_contours
-        from ..imaging.cutouts import imaging_variants
+        from ..imaging.cutouts import imaging_variants, variant_config
         from ..io import store
         from ..plotting import plots
         from ..plotting.apj_fold_cutouts import render_apj_fold_cutouts
@@ -172,7 +172,7 @@ class RGBModule(OutputModule):
             imaging = ctx.render_step(f"imaging:{label}", ctx.imaging, image_config, required=True)
             if imaging is None:
                 continue
-            variant = replace(config, image_catalog=image_config)
+            variant = variant_config(config, image_config)
             ctx.render_step(f"covariance_cutouts:{label}", render_covariance_cutouts, variant, state, paths, imaging, log=log)
             ctx.render_step(f"rgb_critical:{label}", lambda: render_saved_rgb_critical(
                 variant, state, image_df, extra, imaging,
@@ -180,7 +180,7 @@ class RGBModule(OutputModule):
             view = overview_variant(image_config, overview_configs)
             if view is None:
                 continue
-            label, variant, jwst = variant_label(view), replace(config, image_catalog=view), view.figure_suffix == '_jwst'
+            label, variant, jwst = variant_label(view), variant_config(config, view), view.figure_suffix == '_jwst'
             if jwst:
                 ctx.render_step(f"small_lambda:{label}", render_small_lambda_jwst, variant, state, paths, imaging, log=log)
             ctx.render_step(f"cluster_mass:{label}", lambda: self._cluster_mass(ctx, image_df, extra, imaging, view,

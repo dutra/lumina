@@ -110,29 +110,18 @@ def remap_paths(config, remaps, *, log=print):
     return LensClusterSolverConfig.from_json_dict(payload)
 
 
-def report_settings() -> dict[str, tuple[str, ...] | None]:
-    """The settings ``kappaccino outputs --set`` may change, by section: the whole section (None) for
-    ``config.REPORT_ONLY_SECTIONS`` (``outputs``), else the fields of ``config.REPORT_ONLY_FIELDS`` and
-    ``config.PERFORMANCE_FIELDS``.  Everything else describes the saved fit or where its products go (``paths``, which
-    the run hash leaves out but which names the run folder, the figure prefix and the imaging variants), and the WBIC
-    settings change nothing the outputs stage reads."""
-    from .. import config as _config
-    allowed: dict[str, tuple[str, ...] | None] = {section: None for section in _config.REPORT_ONLY_SECTIONS}
-    for fields in (_config.REPORT_ONLY_FIELDS, _config.PERFORMANCE_FIELDS):
-        for section, names in fields.items():
-            allowed[section] = tuple(allowed.get(section) or ()) + tuple(names)
-    return allowed
-
-
 def apply_overrides(config, overrides):
     """``config`` with the ``section.field=value`` assignments ``overrides`` (the syntax of ``kappaccino --set``,
-    ``run_files.read_run``), each of which must name a report setting (:func:`report_settings`).
+    ``run_files.read_run``), each of which must name a field of the ``outputs`` section
+    (``config.REPORT_ONLY_SECTIONS``): ``outputs.FIELD`` or ``outputs.MODULE.FIELD``.  Everything else describes the
+    saved fit or where its products go (``paths``, which the run hash leaves out but which names the run folder and the
+    figure prefix).
 
     Raises
     ------
     ValueError
-        For a malformed assignment, an unknown section or field, a setting that is not a report setting, or a value
-        the configuration refuses (``config.validate_report_settings``).
+        For a malformed assignment, an unknown field, a setting outside ``outputs``, or a value the configuration
+        refuses (``config.validate_outputs``).
     """
     from .. import config as _config
     from ..run_files import _dotted, _merge, parse_value
@@ -140,30 +129,16 @@ def apply_overrides(config, overrides):
     if not overrides:
         return config
     overlay = _dotted(overrides)
-    from dataclasses import fields
-    sections = {f.name for f in fields(_config.LensClusterSolverConfig)}
-    unknown = sorted(set(overlay) - sections)
-    if unknown:
-        raise ValueError(f"--set: unknown configuration sections {unknown}")
-    allowed = report_settings()
-    refused = []
-    for section, value in overlay.items():
-        if section in allowed and allowed[section] is None:
-            continue
-        if not isinstance(value, dict):
-            refused.append(section)
-            continue
-        refused += [f"{section}.{name}" for name in value if name not in (allowed.get(section) or ())]
+    refused = sorted(section for section in overlay if section not in _config.REPORT_ONLY_SECTIONS)
     if refused:
-        accepted = ", ".join(f"{section}.*" if names is None else ", ".join(f"{section}.{n}" for n in names)
-                             for section, names in allowed.items())
-        raise ValueError(f"--set may change only report settings ({accepted}); refused: {', '.join(sorted(refused))}")
+        allowed = ", ".join(f"{section}.*" for section in _config.REPORT_ONLY_SECTIONS)
+        raise ValueError(f"--set may change only the outputs section ({allowed}); refused: {', '.join(refused)}")
     try:
         changed = _config.LensClusterSolverConfig.from_json_dict(_merge(config.to_json_dict(), _config._jsonable(parse_value(overlay))))
     except (TypeError, AttributeError) as error:
         raise ValueError(f"--set: {error}") from None
     try:
-        _config.validate_report_settings(changed)
+        _config.validate_outputs(changed)
     except ValueError as error:
         raise ValueError(f"--set: {error}") from None
     return changed
@@ -192,8 +167,8 @@ def load_saved_run(run_directory, *, remap=(), overrides=(), transform=None, log
     evaluates no lens and compiles nothing, so this is what a render pass loads (:func:`load_run` adds the evaluator).
 
     The saved paths are as the run wrote them: relative to the folder it was started from, or absolute.  ``remap``
-    (``(OLD, NEW)`` pairs, :func:`remap_paths`) relocates them, ``overrides`` (``section.field=value``,
-    :func:`apply_overrides`) changes report settings, and ``transform`` (a function of the configuration) is applied
+    (``(OLD, NEW)`` pairs, :func:`remap_paths`) relocates them, ``overrides`` (``outputs.field=value``,
+    :func:`apply_overrides`) changes the outputs settings, and ``transform`` (a function of the configuration) is applied
     last, before the model is built.
 
     Raises

@@ -313,12 +313,13 @@ def init_signature(config: LensClusterSolverConfig) -> dict[str, Any]:
     Returns
     -------
     dict
-        ``config.to_json_dict()`` without the ``sampling``, ``image_diagnostics``, ``truth``, ``image_catalog``,
-        ``paths`` and ``partition`` sections (the uncertain images enter in the final stage only), and with ``runtime``
-        reduced to ``{"seed": ...}``.
+        ``config.to_json_dict()`` without the ``sampling``, ``outputs`` (``config.REPORT_ONLY_SECTIONS``), ``paths``
+        and ``partition`` sections (the uncertain images enter in the final stage only), and with ``runtime`` reduced to
+        ``{"seed": ...}``.
     """
+    from ..config import REPORT_ONLY_SECTIONS
     payload = config.to_json_dict()
-    for key in ("sampling", "image_diagnostics", "truth", "image_catalog", "paths", "partition"):
+    for key in ("sampling", *REPORT_ONLY_SECTIONS, "paths", "partition"):
         payload.pop(key, None)
     payload["runtime"] = {"seed": config.runtime.seed}
     return payload

@@ -16,7 +16,7 @@ def main():
     from _covariance_plot_cli import add_catalogs_argument, redirect
     add_catalogs_argument(parser)
     args = parser.parse_args()
-    from kappaccino.imaging.cutouts import imaging_variants, load_cluster_imaging
+    from kappaccino.imaging.cutouts import imaging_variants, load_cluster_imaging, variant_config
     from kappaccino.plotting.fold_pairs import (
         compute_fold_diagnostics, save_fold_data, render_fold_diagnostics, load_fold_data,
     )
@@ -38,7 +38,7 @@ def main():
         config, state, evaluator, posterior, paths = load_run(args.run_directory, transform=redirect(args.catalogs, args.ffsims_dir))
         from kappaccino.reporting.draws import reporting_draws
         if args.draws is not None:
-            config = replace(config, reporting=replace(config.reporting, draws=args.draws))
+            config = replace(config, outputs=replace(config.outputs, draws=args.draws))
         data = compute_fold_diagnostics(config, state, reporting_draws(config, evaluator, posterior), paths.tables, log=log)
         save_fold_data(data, paths.tables)
     for image_config in imaging_variants(config, overview_only=True):
@@ -49,7 +49,7 @@ def main():
         except FileNotFoundError as error:
             print(f'[outputs] fold RGB skipped: {error}')
             continue
-        render_fold_diagnostics(replace(config, image_catalog=image_config), state, data, paths, imaging)
+        render_fold_diagnostics(variant_config(config, image_config), state, data, paths, imaging)
 
 
 if __name__ == '__main__':

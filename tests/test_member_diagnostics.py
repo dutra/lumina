@@ -79,7 +79,7 @@ def test_exact_reporting_preserves_sampled_sources(synthetic_config):
 
 
 def test_suite_with_one_reporting_draw(synthetic_config, tmp_path):
-    config = replace(synthetic_config, reporting=replace(synthetic_config.reporting, draws=1))
+    config = replace(synthetic_config, outputs=replace(synthetic_config.outputs, draws=1))
     state = build_state(config)
     evaluator = Evaluator(state)
     posterior = posterior_for(state, evaluator)
@@ -105,8 +105,8 @@ def test_suite_with_one_reporting_draw(synthetic_config, tmp_path):
 
 @pytest.mark.parametrize('count', [0, -1, True, 1.5])
 def test_reporting_draw_count_validation(synthetic_config, count):
-    config = replace(synthetic_config, reporting=replace(synthetic_config.reporting, draws=count))
-    with pytest.raises(ValueError, match='reporting.draws'):
+    config = replace(synthetic_config, outputs=replace(synthetic_config.outputs, draws=count))
+    with pytest.raises(ValueError, match='outputs.draws'):
         config.validate()
 
 
@@ -152,7 +152,7 @@ def test_multiple_populations_without_large_halo(synthetic_config):
     model = replace(synthetic_config.model, large_halos=(ShearHaloConfig('shear', .03, 0., .3),),
                     member_populations=(first, replace(first, id='second')))
     config = replace(synthetic_config, model=model,
-                     reporting=replace(synthetic_config.reporting, draws=1))
+                     outputs=replace(synthetic_config.outputs, draws=1))
     state = build_state(config)
     evaluator = Evaluator(state)
     data = compute_member_diagnostics(state, evaluator, posterior_for(state, evaluator), config)
@@ -164,7 +164,7 @@ def test_multiple_populations_without_large_halo(synthetic_config):
 
 def test_failed_budget_is_saved_without_changing_classes(synthetic_config, tmp_path):
     config = replace(synthetic_config, members=replace(synthetic_config.members, template_tolerance=1e-14),
-                     reporting=replace(synthetic_config.reporting, draws=1))
+                     outputs=replace(synthetic_config.outputs, draws=1))
     state = with_member_classes(build_state(config), np.array([0, 1]))
     before = state.members.exact_positions.copy()
     evaluator = Evaluator(state)

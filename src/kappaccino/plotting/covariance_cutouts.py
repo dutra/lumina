@@ -80,7 +80,7 @@ def median_geometry(state, draws):
 
 
 def covariance_cutouts_stem(config):
-    return f'small_lambda_covariance_cutouts{config.image_catalog.figure_suffix}'
+    return f'small_lambda_covariance_cutouts{config.outputs.rgb.figure_suffix}'
 
 
 def save_covariance_cutouts(config, state, draws, paths, imaging, *, intervals=None, log=print):
@@ -103,7 +103,7 @@ def save_covariance_cutouts(config, state, draws, paths, imaging, *, intervals=N
         store.write_record(paths.tables, stem, {'skipped': 'No finite nonsingular image-plane covariance'})
         return None
     images = imaging[0]
-    solver = ExactImageSolver(evaluator, config.image_diagnostics)
+    solver = ExactImageSolver(evaluator, config.outputs.image_solver)
     families = {str(f.family_id): f for f in state.family_data}
     records, contours = [], {}
     for i in order:

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.config import ReportingConfig, ImageDiagnosticsConfig, LensClusterSolverConfig, RuntimeConfig, SamplingConfig, ScalingModelConfig, SearchConfig, TruthRecoveryConfig
+from kappaccino.config import LensClusterSolverConfig, OutputsConfig, RuntimeConfig, SamplingConfig, ScalingModelConfig, SearchConfig
 from kappaccino.mock_validation import (MockConfig, MockValidationConfig, MockValidationPathsConfig, MockValidationRuntimeConfig, draw_truth,
                                          generate_images, generate_mock, parameter_truth, run_mock_validation, solver_config_for_mock, write_aggregate_plots)
 from kappaccino.mock_validation.aperture import APERTURE_RADII_KPC, aperture_profiles, truth_groups
@@ -93,7 +93,7 @@ def test_campaign_end_to_end_scores_only_parameters_with_a_truth(tmp_path):
     solver = LensClusterSolverConfig(runtime=RuntimeConfig(seed=11, chains=1, resume=True, nuts_chain_method="sequential"),
                                      search=SearchConfig(n_starts=2, lbfgs_max_iter=20, polish_max_iter=5),
                                      sampling=SamplingConfig(warmup=8, samples=8, max_tree_depth=3),
-                                     reporting=ReportingConfig(draws=2))
+                                     outputs=OutputsConfig(draws=2))
     campaign = MockValidationConfig(mock=config, paths=MockValidationPathsConfig(output_dir=tmp_path, campaign_name="c", run_name="r"),
                                     runtime=MockValidationRuntimeConfig(realizations=1, seed=11), solver=solver).validate()
     recovery_dirs = run_mock_validation(campaign, log=lambda *a, **k: None)
@@ -232,10 +232,10 @@ def test_fisher_precheck_matches_the_white_noise_closed_form(tmp_path):
 
 def test_mock_command_line(capsys):
     from kappaccino.mock_validation import cli
-    config = cli.build_config("production", campaign="c", fast=True, overrides=["sampling.warmup=7", "reporting.draws=4",
-                                                                                  "reporting.image_draws=4"])
+    config = cli.build_config("production", campaign="c", fast=True, overrides=["sampling.warmup=7", "outputs.draws=4",
+                                                                                  "outputs.image_draws=4"])
     assert config.paths.run_name == "analytic_production_production_fast" and config.solver.sampling.warmup == 7
-    assert config.solver.reporting.draws == 4 and config.solver.likelihood.gp_blocks == "system" and config.mock.n_members == 150
+    assert config.solver.outputs.draws == 4 and config.solver.likelihood.gp_blocks == "system" and config.mock.n_members == 150
     assert cli.main(["--campaign", "c", "--chains", "2", "--warmup", "9", "--draws", "3", "--dry-run"]) == 0
     printed = capsys.readouterr().out
     assert '"dry_run": true' in printed and '"warmup": 9' in printed and '"chains": 2' in printed

@@ -32,7 +32,7 @@ def main():
     config = artifacts.load_config(final / 'artifacts')
     saved = json.loads((init / artifacts.STATE_FILE).read_text())
     if args.draws is not None:
-        config = replace(config, reporting=replace(config.reporting, draws=args.draws))
+        config = replace(config, outputs=replace(config.outputs, draws=args.draws))
     state = build_state(config)
     classes = json.loads((init / artifacts.CLASSIFICATION_FILE).read_text())
     centered = set(classes.get('centered_members', []))

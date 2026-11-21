@@ -50,7 +50,7 @@ def test_system_blocks_render_through_the_shared_twin(monkeypatch):
         raise RuntimeError('stop after the swap')
     monkeypatch.setattr(fields, 'compute_fields', compute)
     config = SimpleNamespace(likelihood=SimpleNamespace(gp_blocks='system'), paths=SimpleNamespace(figure_prefix='x'),
-                             reporting=SimpleNamespace(draws=8), runtime=SimpleNamespace(seed=3))
+                             outputs=SimpleNamespace(draws=8, image_draws=8, workers=1), runtime=SimpleNamespace(seed=3))
     posterior = SimpleNamespace(samples=np.arange(20.)[:, None], physical=np.arange(20.)[:, None])
     messages = []
     with pytest.raises(RuntimeError):

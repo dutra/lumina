@@ -1,4 +1,4 @@
-"""Image-position residuals of the true lens of a simulated cluster (``truth.deflection_true_fits``).
+"""Image-position residuals of the true lens of a simulated cluster (``outputs.truth.deflection_true_fits``).
 
 The true-lens RMS is the rms over catalog images of the separation between each observed image and the image the
 simulation's true deflection map gives, with a free source per family and one free amplitude on the deflection.  It

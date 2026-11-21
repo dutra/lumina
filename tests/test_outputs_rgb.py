@@ -67,7 +67,7 @@ def rgb_pass(monkeypatch, synthetic_config, tmp_path):
             (paper_cutouts, "prepare_paper_cutouts", ["fold_cutouts"]), (paper_cutouts, "render_paper_cutouts", None)):
         monkeypatch.setattr(module, name, record(name, result))
     config = replace(synthetic_config, paths=replace(synthetic_config.paths, run_name="m0416"),
-                     image_catalog=replace(synthetic_config.image_catalog, image_dir="hst"))
+                     outputs=replace(synthetic_config.outputs, rgb=replace(synthetic_config.outputs.rgb, image_dir="hst")))
     paths = SimpleNamespace(tables=tmp_path / "tables", figures=tmp_path / "figures", fits=tmp_path / "fits", root=tmp_path)
 
     def run(mode="full", missing=()):
@@ -114,7 +114,7 @@ def test_a_render_pass_without_the_imaging_of_a_computed_variant_fails_it(rgb_pa
     assert record["status"] == "failed" and record["mode"] == "render"
     assert not any(e.startswith(("save", "compute", "load_or", "prepare")) for e in rgb_pass.events)
     failed = record["render_steps"]["imaging:primary"]
-    assert failed["status"] == "failed" and "image_catalog.image_dir = hst" in failed["error"] and "--remap" in failed["error"]
+    assert failed["status"] == "failed" and "outputs.rgb.image_dir = hst" in failed["error"] and "--remap" in failed["error"]
     assert not any("skipped: no imaging" in line for line in rgb_pass.lines)
     assert [step for step in record["render_steps"] if step.endswith(":primary")] == ["imaging:primary"]
     assert rgb_pass.events.count("render_saved_rgb_critical") == 1 and "render_paper_cutouts" in rgb_pass.events
@@ -327,13 +327,12 @@ def _forbid_evaluation(monkeypatch):
 def test_the_real_rgb_module_renders_its_figures_again_from_the_store(synthetic_config, tmp_path, monkeypatch):
     import jax
     import jax.numpy as jnp
-    from kappaccino.config import ReportingConfig
     from kappaccino.core.state import build_state
     from kappaccino.likelihood.evaluator import Evaluator
     from kappaccino.pipeline import StagePaths
-    config = replace(synthetic_config, image_catalog=replace(synthetic_config.image_catalog, image_dir=str(tmp_path / "toy_imaging"),
-                                                                         bands=("F435W", "F606W", "F814W")),
-                     reporting=ReportingConfig(draws=2))
+    outputs = synthetic_config.outputs
+    config = replace(synthetic_config, outputs=replace(outputs, draws=2, rgb=replace(outputs.rgb, image_dir=str(tmp_path / "toy_imaging"),
+                                                                                     bands=("F435W", "F606W", "F814W"))))
     state = build_state(config)
     _toy_imaging(tmp_path / "toy_imaging", state.reference)
     evaluator = Evaluator(state)

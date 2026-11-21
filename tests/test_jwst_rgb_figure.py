@@ -124,14 +124,14 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
     monkeypatch.setattr(image_position_contours, 'load_position_contours', lambda tables: {'curves': []})
     catalog=_overview_catalog()
     extra=pd.DataFrame(dict(family_id=['1'],x_model_arcsec=[.1],y_model_arcsec=[-.2]))
-    config=NS(paths=NS(run_name=cluster),image_catalog=NS(candidate_catalog_path='must-not-read.json'))
+    config=NS(paths=NS(run_name=cluster),outputs=NS(rgb=NS(candidate_catalog_path='must-not-read.json')))
     if cluster == 'm0416':
         import json
         candidate_path = tmp_path/'candidates.json'
         candidate_path.write_text(json.dumps({'candidates':[
             dict(id='K66.c1',system='K66',kind='counterimage',ra=64.,dec=-24.),
             dict(id='A.1',system='A',kind='new_family',ra=64.,dec=-24.)]}))
-        config.image_catalog.candidate_catalog_path = candidate_path
+        config.outputs.rgb.candidate_catalog_path = candidate_path
         catalog['family_id'] = ['K66','K67']
     state=NS(reference=(3,64.,-24.))
     output=tmp_path/f'{cluster}_hst_rgb_critical_z9.pdf'
@@ -269,7 +269,7 @@ def _saved_run(tmp_path, *, shape=32, likelihood=KNEE_LIKELIHOOD):
 def _redraw_config(run):
     from types import SimpleNamespace as NS
     image_config=NS(bands=('F814W',),image_dir='fake',figure_suffix='',candidate_catalog_path=None)
-    return NS(paths=NS(run_name=run.name,figure_prefix='hera'),image_catalog=image_config,
+    return NS(paths=NS(run_name=run.name,figure_prefix='hera'),outputs=NS(rgb=image_config),
               model=NS(reference=NS(reference=3,ra0_deg=64.,dec0_deg=-24.),image_constraints=None))
 
 
@@ -283,7 +283,7 @@ def _patch_redraw(monkeypatch, run, config=None):
     _fake_overview(monkeypatch)
     config=_redraw_config(run) if config is None else config
     monkeypatch.setattr(rgb,'rebuild_run_config',lambda run_dir:config)
-    monkeypatch.setattr(cutouts,'imaging_variants',lambda config:[config.image_catalog])
+    monkeypatch.setattr(cutouts,'imaging_variants',lambda config:[config.outputs.rgb])
     monkeypatch.setattr(cutouts,'load_cluster_imaging',lambda image_config,model,run_name:FAKE_IMAGING)
     import dataclasses
     monkeypatch.setattr(dataclasses,'replace',lambda obj,**changes:NS(**{**vars(obj),**changes}))
@@ -521,9 +521,9 @@ def test_rebuilt_run_config_must_match_the_saved_picture_inputs(tmp_path, monkey
         'shared field rebuilt from a system-block run (all-block twin, projected)'}
     assert shared==(label!='none: no knee mass field')
     altered=json.loads(json.dumps(saved))
-    altered['image_catalog']['bands']=['F105W','F125W','F160W']
+    altered['outputs']['rgb']['bands']=['F105W','F125W','F160W']
     (run/'final'/'artifacts'/'config.json').write_text(json.dumps(altered))
-    with pytest.raises(ValueError, match='image_catalog'):
+    with pytest.raises(ValueError, match='outputs.rgb'):
         rebuild_run_config(run)
     altered=json.loads(json.dumps(saved))
     del altered['model']['image_constraints']
