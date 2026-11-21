@@ -16,9 +16,10 @@ step ends as "failed" but keeps its product; a module that cannot give its depen
 (:class:`ModuleUnavailable` after its failed steps), and is then failed with no product.
 
 At the start of its compute a module's completeness record ``output_module_<name>`` (in ``results.h5``) is set to
-incomplete, and at the end it says whether every compute step ran (``complete``), with the step statuses and the
-reporting draws the compute used.  A render pass renders only modules whose record is complete; any other module is
-failed with :class:`ModuleUnavailable` and the hint to run its compute first.
+incomplete, and at the end it says whether every compute step ran (``complete``: none failed or was skipped), with the
+step statuses and the reporting draws the compute used.  A render pass renders only modules whose record is complete;
+any other module is failed with :class:`ModuleUnavailable` and the hint to run its compute first.  At the end of every
+pass the saved records are checked for modules computed over different draws (:func:`check_draws`).
 
 The runner (:func:`run_modules`) orders the modules by what they need (``requires``, hard: the module reads
 ``ctx.products`` of those) and by what they should follow (``after``, ordering only), stably with respect to the
@@ -114,10 +115,6 @@ class OutputContext:
         """The stage folder, whose ``results.h5`` and ``cache.h5`` receive the products."""
         from ..io import store
         return store.stage_dir(self.paths.tables)
-
-    @property
-    def draws_built(self) -> bool:
-        return self._draws is not None
 
     def _compute_only(self, what: str) -> None:
         """Raise :class:`ComputeOnly` unless the lens may be evaluated here: in a module's compute, or outside the
@@ -242,7 +239,11 @@ class OutputContext:
         return self._records().get(name, {}).get("status") == "done"
 
     def skip_step(self, name: str, reason: str) -> None:
-        """Record the step ``name`` of the current module's phase as skipped, with the reason (logged)."""
+        """Record the step ``name`` of the current module's phase as skipped, with the reason (logged).  Only for a
+        step that cannot run because another one failed: in a compute, a skipped step makes the compute incomplete
+        (so its module cannot be rendered until it is computed again).  A step that does not apply to this run runs
+        and returns None instead (``wrote`` false), and render leaves its figure out."""
+        self._check_declared(name, self._phase)
         self._records()[name] = {"status": "skipped", "seconds": 0.0, "reason": reason}
         self.log(f"[outputs] {self._label(name)}: skipped ({reason})")
 
@@ -263,8 +264,20 @@ class OutputContext:
     def render_step(self, name: str, fn: Callable, *args, needs: str | Sequence[str] | None = None, **kwargs):
         """:meth:`step` for a render step that draws what the compute steps ``needs`` (default: the compute step of the
         same name) saved.  When one of them failed or was skipped, the step is skipped with the reason; when one ran
-        but wrote nothing (it did not apply), the step is left out silently; otherwise it runs."""
+        but wrote nothing (it did not apply), the step is left out silently; otherwise it runs.
+
+        Raises
+        ------
+        RuntimeError
+            Outside a module's render, for a ``name`` not in ``render_steps`` or a ``needs`` not in ``compute_steps``
+            (each by its part before any ``:``): a misdeclared step is an error, never a silent skip.
+        """
         needs = (name,) if needs is None else ((needs,) if isinstance(needs, str) else tuple(needs))
+        if self._module is None or self._phase != "render":
+            raise RuntimeError("OutputContext.render_step called outside a module's render")
+        self._check_declared(name, "render")
+        for need in needs:
+            self._check_declared(need, "compute")
         steps = self.completion.get("steps", {})
         for need in needs:
             status = steps.get(need, {}).get("status", "not run")
@@ -313,7 +326,7 @@ class OutputModule:
 
     def product(self, ctx: OutputContext) -> Any:
         """``ctx.products[self.name]``, loaded from the store (never passed in memory from :meth:`compute`); None by
-        default.  A missing store entry (``store.MissingEntry``) makes the module unavailable."""
+        default.  A missing store entry (``store.MissingEntry``) fails the module with :class:`ModuleUnavailable`."""
         return None
 
     def render(self, ctx: OutputContext) -> None:
@@ -419,9 +432,13 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
             continue
         missing = next((r for r in module.requires if r not in ctx.products), None)
         if missing is not None:
-            status = records.get(missing, {}).get("status")
+            required = records.get(missing, {})
+            status = required.get("status")
             reason = f"requires {missing}, which was {status}" if status != "failed" else f"requires {missing}, which failed without a product"
-            records[name] = {"status": "skipped", "seconds": 0.0, "reason": reason}
+            records[name] = {"status": "skipped", "mode": ctx.mode, "seconds": 0.0, "reason": reason}
+            if status == "failed" or "failed_requirement" in required:
+                # Not the user's choice: what this module would have computed from is gone (merged_summary).
+                records[name]["failed_requirement"] = required.get("failed_requirement", missing)
             log(f"[outputs] {name}: skipped ({reason})")
             continue
         started = time.perf_counter()
@@ -467,10 +484,58 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
         if error_text:
             records[name]["error"] = error_text
         log(f"[outputs] {name}: {'FAILED (' + error_text + ')' if error_text else 'done'} in {seconds:.1f}s")
+    check_draws(ctx, modules)
+    if ctx.mode == "render" and not rendered_anything(records):
+        log("[outputs] WARNING: this render pass drew nothing: no selected module has a completed compute to render "
+            "(run a full or --compute pass first)")
     failed = [name for name, record in records.items() if record["status"] == "failed"]
     if failed:
         log(f"[outputs] failed modules: {', '.join(failed)} (tracebacks above)")
     return records
+
+
+def rendered_anything(records: dict[str, dict]) -> bool:
+    """Whether any module of a pass's ``records`` ran a render step without failing."""
+    return any(step.get("status") == "done" for record in records.values()
+               for step in (record.get("render_steps") or {}).values())
+
+
+DRAWS_WARNING = "modules computed over different reporting draws"
+
+
+def check_draws(ctx: OutputContext, modules: Sequence[OutputModule]) -> str | None:
+    """Warn when the saved results of ``modules`` come from different reporting draws: from their completeness records
+    in ``ctx.stage``, the modules whose compute used the draws, grouped by ``draws_key``.  A module whose required
+    module was computed later with other draws is named as stale.  The warning (logged as ``[outputs] WARNING`` and
+    added to ``ctx.summary["warnings"]``) never blocks the pass; returns it, or None when the draws agree."""
+    from ..io import store
+    saved = {}
+    for module in modules:
+        try:
+            record = store.read_record(ctx.stage, completion_name(module.name))
+        except (store.MissingEntry, store.DamagedEntry, store.StoreError):
+            continue
+        if isinstance(record, dict) and isinstance(record.get("draws_key"), str):
+            saved[module.name] = record
+    if len({record["draws_key"] for record in saved.values()}) < 2:
+        return None
+    groups: dict[str, list[str]] = {}
+    for name, record in saved.items():
+        groups.setdefault(record["draws_key"], []).append(name)
+    described = "; ".join(", ".join(names) + f" ({saved[names[0]].get('reporting_draws', '?')} draws, seed "
+                          f"{saved[names[0]].get('draws_seed', '?')}, key {key[:8]})" for key, names in groups.items())
+    stale = [f"{module.name} (requires {required})" for module in modules if module.name in saved
+             for required in module.requires
+             if required in saved and saved[required]["draws_key"] != saved[module.name]["draws_key"]
+             and str(saved[required].get("computed_at", "")) > str(saved[module.name].get("computed_at", ""))]
+    warning = f"{DRAWS_WARNING}: {described}"
+    if stale:
+        warning += (f". Stale, because a module they require was computed again with other draws since: "
+                    f"{', '.join(stale)}")
+    warning += ". Compute them together (one pass over the same draws) for consistent numbers and figures"
+    ctx.summary.setdefault("warnings", []).append(warning)
+    ctx.log(f"[outputs] WARNING: {warning}")
+    return warning
 
 
 def _run_phases(ctx: OutputContext, module: OutputModule, *, product_only: bool) -> None:

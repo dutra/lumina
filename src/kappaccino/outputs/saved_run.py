@@ -5,7 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-REMAP_HINT = "for a run made on another machine or moved, give --remap OLD=NEW (a prefix of the saved paths and its replacement)"
+REMAP_HINT = ("for a run made on another machine or moved, give --remap OLD=NEW (OLD an absolute prefix of the saved "
+              "paths, NEW its replacement)")
 
 
 def _flatten(payload, prefix=""):
@@ -23,39 +24,85 @@ def _flatten(payload, prefix=""):
     return {prefix: payload}
 
 
-def _replace_prefix(value: str, remaps) -> str:
-    for old, new in remaps:
-        old, new = old.rstrip("/"), new.rstrip("/")
-        if old and (value == old or value.startswith(old + "/")):
-            return new + value[len(old):]
-    return value
+def path_fields(config) -> list[str]:
+    """The dotted names (``section.field``, ``model.member_populations[i].catalog_path``, as :func:`_flatten` names
+    them) of every path-valued field of ``config``: the fields of its dataclasses whose type admits a ``Path``, found
+    by walking the configuration, so a new path field is covered without a list to keep."""
+    from dataclasses import fields, is_dataclass
+    names = []
+
+    def walk(node, where):
+        for field in fields(node):
+            value, name = getattr(node, field.name), f"{where}.{field.name}" if where else field.name
+            if is_dataclass(value):
+                walk(value, name)
+            elif isinstance(value, (tuple, list)) and value and all(is_dataclass(item) for item in value):
+                for index, item in enumerate(value):
+                    walk(item, f"{name}[{index}]")
+            elif "Path" in (field.type if isinstance(field.type, str) else repr(field.type)):
+                names.append(name)
+    walk(config, "")
+    return names
+
+
+def _set(payload, dotted: str, value) -> None:
+    """Set the leaf ``dotted`` (a :func:`_flatten` name) of the configuration dictionary ``payload``."""
+    import re
+    parts = [(key, None if index is None else int(index)) for key, index in
+             ((m.group(1), m.group(2)) for m in re.finditer(r"([^.\[\]]+)(?:\[(\d+)\])?", dotted))]
+    node = payload
+    for position, (key, index) in enumerate(parts):
+        last = position == len(parts) - 1
+        if index is None:
+            if last:
+                node[key] = value
+            else:
+                node = node[key]
+        elif last:
+            node[key][index] = value
+        else:
+            node = node[key][index]
 
 
 def remap_paths(config, remaps, *, log=print):
-    """``config`` with each saved path that starts with ``OLD`` (a whole path prefix) starting with ``NEW`` instead,
-    for every ``(OLD, NEW)`` of ``remaps`` (the first that matches wins).  Every string field of the configuration is
-    considered, so catalog paths, imaging folders, truth and deflection maps and candidate catalogs are all covered;
-    each field changed is logged."""
+    """``config`` with each saved path under ``OLD`` (a whole path prefix) moved under ``NEW`` instead, for every
+    ``(OLD, NEW)`` of ``remaps`` (the first that matches wins).  Only path-valued fields (:func:`path_fields`) are
+    considered: catalogs, imaging folders, truth and deflection maps, candidate catalogs; never a name such as
+    ``paths.run_name`` or ``paths.figure_prefix``.  A relative saved path is taken relative to the working directory
+    (as the command reads it) and compared as that absolute path.  Each field changed is logged.
+
+    Raises
+    ------
+    ValueError
+        When an ``OLD`` is not an absolute path, or is the root ``/``.
+    """
+    import os
     from ..config import LensClusterSolverConfig
     remaps = [(str(old), str(new)) for old, new in remaps]
     if not remaps:
         return config
+    for old, _ in remaps:
+        if not os.path.isabs(old):
+            raise ValueError(f"--remap {old}=...: OLD must be an absolute path (a prefix of the saved paths, as "
+                             "printed by the error that named the missing file)")
+        if not old.rstrip("/"):
+            raise ValueError("--remap /=...: OLD is the root, which would move every absolute path; give the saved "
+                             "folder that moved")
     payload = config.to_json_dict()
+    flat = _flatten(payload)
     changed = []
-
-    def walk(value, where):
-        if isinstance(value, dict):
-            return {key: walk(item, f"{where}.{key}" if where else key) for key, item in value.items()}
-        if isinstance(value, list):
-            return [walk(item, f"{where}[{index}]") for index, item in enumerate(value)]
-        if isinstance(value, str):
-            moved = _replace_prefix(value, remaps)
-            if moved != value:
-                changed.append((where, value, moved))
-            return moved
-        return value
-
-    payload = walk(payload, "")
+    for name in path_fields(config):
+        value = flat.get(name)
+        if not isinstance(value, str) or not value:
+            continue
+        absolute = value if os.path.isabs(value) else os.path.normpath(os.path.join(os.getcwd(), value))
+        for old, new in remaps:
+            old, new = os.path.normpath(old), new.rstrip("/") or "/"
+            if absolute == old or absolute.startswith(old + "/"):
+                moved = new + absolute[len(old):]
+                _set(payload, name, moved)
+                changed.append((name, value, moved))
+                break
     for where, old, new in changed:
         log(f"[outputs] remap {where}: {old} -> {new}")
     if not changed:
@@ -63,19 +110,30 @@ def remap_paths(config, remaps, *, log=print):
     return LensClusterSolverConfig.from_json_dict(payload)
 
 
+def report_settings() -> dict[str, tuple[str, ...] | None]:
+    """The settings ``kappaccino outputs --set`` may change, by section: the whole section (None) for
+    ``config.REPORT_ONLY_SECTIONS`` (``outputs``), else the fields of ``config.REPORT_ONLY_FIELDS`` and
+    ``config.PERFORMANCE_FIELDS``.  Everything else describes the saved fit or where its products go (``paths``, which
+    the run hash leaves out but which names the run folder, the figure prefix and the imaging variants), and the WBIC
+    settings change nothing the outputs stage reads."""
+    from .. import config as _config
+    allowed: dict[str, tuple[str, ...] | None] = {section: None for section in _config.REPORT_ONLY_SECTIONS}
+    for fields in (_config.REPORT_ONLY_FIELDS, _config.PERFORMANCE_FIELDS):
+        for section, names in fields.items():
+            allowed[section] = tuple(allowed.get(section) or ()) + tuple(names)
+    return allowed
+
+
 def apply_overrides(config, overrides):
     """``config`` with the ``section.field=value`` assignments ``overrides`` (the syntax of ``kappaccino --set``,
-    ``run_files.read_run``).  Only settings outside the run hash may change (``pipeline.resume_payload`` leaves them
-    out: the ``outputs`` section, ``config.REPORT_ONLY_FIELDS``, ``config.PERFORMANCE_FIELDS``, the WBIC settings) and
-    the ``paths`` section, which the hash leaves out too: anything else would no longer describe the saved fit.
+    ``run_files.read_run``), each of which must name a report setting (:func:`report_settings`).
 
     Raises
     ------
     ValueError
-        For a malformed assignment, an unknown section or field, or a field that is part of the run hash.
+        For a malformed assignment, an unknown section or field, or a setting that is not a report setting.
     """
     from .. import config as _config
-    from ..pipeline import resume_payload
     from ..run_files import _dotted, _merge, parse_value
     overrides = tuple(overrides)
     if not overrides:
@@ -86,30 +144,23 @@ def apply_overrides(config, overrides):
     unknown = sorted(set(overlay) - sections)
     if unknown:
         raise ValueError(f"--set: unknown configuration sections {unknown}")
-    before = config.to_json_dict()
-    after = _merge(before, _config._jsonable(parse_value(overlay)))
+    allowed = report_settings()
+    refused = []
+    for section, value in overlay.items():
+        if section in allowed and allowed[section] is None:
+            continue
+        if not isinstance(value, dict):
+            refused.append(section)
+            continue
+        refused += [f"{section}.{name}" for name in value if name not in (allowed.get(section) or ())]
+    if refused:
+        accepted = ", ".join(f"{section}.*" if names is None else ", ".join(f"{section}.{n}" for n in names)
+                             for section, names in allowed.items())
+        raise ValueError(f"--set may change only report settings ({accepted}); refused: {', '.join(sorted(refused))}")
     try:
-        updated = _config.LensClusterSolverConfig.from_json_dict(after)
+        return _config.LensClusterSolverConfig.from_json_dict(_merge(config.to_json_dict(), _config._jsonable(parse_value(overlay))))
     except TypeError as error:
         raise ValueError(f"--set: {error}") from None
-
-    def fit_part(payload):
-        return _flatten({key: value for key, value in resume_payload(payload).items() if key != "paths"})
-
-    old, new = fit_part(before), fit_part(updated.to_json_dict())
-    fit_fields = sorted(key for key in set(old) | set(new) if old.get(key) != new.get(key))
-    if fit_fields:
-        raise ValueError(f"--set may change only report settings (outside the run hash); {', '.join(fit_fields)} "
-                         "would change the saved fit's configuration")
-    return updated
-
-
-def config_value(config, field: str):
-    """The value of the dotted field ``section.field`` of ``config`` (None when a section is None)."""
-    value = config
-    for part in field.split("."):
-        value = getattr(value, part) if value is not None else None
-    return value
 
 
 def missing_paths(config, fields) -> list[str]:

@@ -60,25 +60,33 @@ def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator:
 def merged_summary(saved: dict[str, Any], summary: dict[str, Any], modules) -> dict[str, Any]:
     """The record ``run_summary`` after a pass that did not run every module: ``summary`` (this pass) over ``saved``
     (the record before it).  For each module that ran in this pass (done or failed), its ``summary_keys`` are dropped
-    from ``saved`` first, so a failed module leaves no old numbers; a module that did not run (not selected, skipped or
-    inactive) keeps its saved keys and its saved module record.  A module that ran in a render pass (``mode``
-    "render") gets this pass's record but keeps its saved keys, which come from its last compute.  ``warnings`` belong
-    to the reporting draws and are replaced when this pass built them; ``reporting_draws`` is that of the last pass
-    that built draws.  The module records are in the order of ``modules`` (the registry), then any other saved ones."""
+    from ``saved`` first, so a failed module leaves no old numbers.  So are those of a module skipped because a module
+    it requires failed in this pass (its record has ``failed_requirement``): what its numbers came from was computed
+    again and failed, and its record is this pass's.  A module that did not run otherwise (not selected, in the skip
+    list or requiring one that is, or inactive) keeps its saved keys and its saved module record.  In a render pass
+    (``mode`` "render") the modules get this pass's records but keep their saved keys, which come from their last
+    compute.  ``warnings`` belong to the reporting draws and are replaced when this pass built them; the warning of
+    ``outputs.base.check_draws`` is that of this pass in any case.  ``reporting_draws`` is that of the last pass that
+    built draws.  The module records are in the order of ``modules`` (the registry), then any other saved ones."""
+    from ..outputs.base import DRAWS_WARNING
     records = summary.get("modules", {})
-    ran = {name for name, record in records.items() if record["status"] in ("done", "failed")}
+    blocked = {name for name, record in records.items() if record["status"] == "skipped" and "failed_requirement" in record}
+    ran = {name for name, record in records.items() if record["status"] in ("done", "failed")} | blocked
     computed = {name for name in ran if records[name].get("mode") != "render"}
     base = {key: value for key, value in saved.items() if key != "modules"}
     for module in modules:
         if module.name in computed:
             for key in module.summary_keys:
                 base.pop(key, None)
-    if "reporting_draws" in summary:
-        base.pop("warnings", None)
+    kept = [] if "reporting_draws" in summary else [w for w in base.get("warnings", []) if not str(w).startswith(DRAWS_WARNING)]
+    warnings = list(dict.fromkeys(kept + list(summary.get("warnings", []))))
+    base.pop("warnings", None)
+    if warnings:
+        base["warnings"] = warnings
     saved_records = saved.get("modules", {}) if isinstance(saved.get("modules"), dict) else {}
     chosen = {**saved_records, **{name: record for name, record in records.items() if name in ran or name not in saved_records}}
     order = [m.name for m in modules] + [name for name in chosen if name not in {m.name for m in modules}]
-    return {**base, **{key: value for key, value in summary.items() if key != "modules"},
+    return {**base, **{key: value for key, value in summary.items() if key not in ("modules", "warnings")},
             "modules": {name: chosen[name] for name in order if name in chosen}}
 
 

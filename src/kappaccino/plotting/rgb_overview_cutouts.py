@@ -11,12 +11,14 @@ from ..io import store
 
 
 
-def overview_cutout_data(tables, prefix, *, image_labels=(), system_ids=(), draws=None, neighbors=False, log=print):
+def overview_cutout_data(tables, prefix, *, image_labels=(), system_ids=(), draws=None, neighbors=False, group=None,
+                         log=print):
     """Reuse saved image draws and fold geometry, never run an image search.  ``neighbors`` adds to each image panel
     the other catalog images inside its field (``item['neighbors']``: label, family, observed position, density grid
     or None), which :func:`render_overview_cutouts` then draws and labels.  An image panel whose median det A the
-    small-lambda figure did not save gets it from the reporting ``draws`` (saved as ``<prefix>_rgb_inset_critical``),
-    or without draws from that saved entry, which must hold exactly these panels."""
+    small-lambda figure did not save gets it from the reporting ``draws`` (saved as ``<prefix>_rgb_inset_critical``,
+    with ``_<group>`` appended for a named group of panels so that each group keeps its own), or without draws from
+    that saved entry, which must hold exactly these panels."""
     image_labels,system_ids=tuple(image_labels),tuple(system_ids)
     if not image_labels and not system_ids:
         return None
@@ -80,7 +82,7 @@ def overview_cutout_data(tables, prefix, *, image_labels=(), system_ids=(), draw
                 item['critical']={key:critical[key][matches[0]] for key in ('median_determinant','lower','upper')}
         images.append(item)
     if any('critical' not in item for item in images):
-        inset=f'{prefix}_rgb_inset_critical'
+        inset=f'{prefix}_rgb_inset_critical'+(f'_{group}' if group else '')
         if draws is None:
             # Without the draws: the fields an earlier call with them saved for exactly these panels.
             saved=store.read_arrays(tables,inset) if store.has_arrays(tables,inset) else None

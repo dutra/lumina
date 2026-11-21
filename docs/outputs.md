@@ -242,7 +242,8 @@ corner read only the posterior (`chain_traces` recomputes its diagnostics from t
 did). The covariance errors are drawn from their table, the GP figures from `gp_diagnostics` and the posterior, the
 field figures from `conditional_field_maps` (only when `gp_diagnostics` says this compute wrote them), the member
 figures from the member entries above and the scaling relation from `member_scaling_relation` and the posterior. A
-render pass of `fit` on Hera takes 46 s, 21 s of them for the global corner; the full pass that computed it took 1 min 41 s.
+render pass of `fit` alone on Hera took 46 s, 21 s of them for the global corner; the full pass that computed it took
+1 min 41 s.
 
 ### The rgb module
 
@@ -270,10 +271,10 @@ left out is left out of the render too.
 | `small_lambda:<variant>` | table and arrays `<prefix>_small_lambda_a_image_posteriors_jwst` (the ranking, with the panels shown and their fields), arrays and record `..._critical`, new record `..._selection` (the figure's settings) | those, `posterior_overview_positions`; writes the record `<prefix>_small_lambda_a_image_posteriors_jwst` |
 | `cluster_mass:<variant>` | tables `image_catalog_arc_directions<suffix>`, `..._extra_arc_directions`, `image_catalog_mass_profile<suffix>` and `..._y`, the covariance ellipses table, record `image_catalog_mass_provenance<suffix>`, the FITS, new arrays `image_catalog_family_cluster_mass<suffix>` (the median maps `model`, `model_grf`, `grf`, the resampled `truth` and the covariance curves) | those and, for the JWST overview, the position contours |
 | `fold_data` | arrays and record `fold_pairs_source_caustics` | `fold_cutouts`, `apj_fold_cutouts` read them |
-| `paper_cutouts:<variant>` | arrays and record `<prefix>_rgb_inset_critical` when a selected image panel is not in the small-lambda figure | those, the small-lambda ranking, the positions and the fold data |
+| `paper_cutouts:<variant>` | arrays and record `<prefix>_rgb_inset_critical_<figure>` (`<figure>` is `small_lambda_posteriors` or `fold_cutouts`) when a selected image panel of that figure is not in the small-lambda figure | those, the small-lambda ranking, the positions and the fold data |
 
-The render of the paper cutouts takes the inset critical fields only when the saved entry holds exactly the panels of
-the figure (same centres, fields and redshifts), and fails the step otherwise.
+Each paper-cutout figure saves its own inset critical fields, and its render takes them only when the saved entry
+holds exactly the panels of the figure (same centres, fields and redshifts), and fails the step otherwise.
 
 ### Pass modes
 
@@ -289,29 +290,36 @@ the figure (same centres, fields and redshifts), and fails the step otherwise.
   what the last compute saved. The run is loaded without its evaluator (`saved_run.load_saved_run`: configuration,
   state and posterior; on Hera 3 s, of which 0.8 s go to about 40 one-operation JAX kernels the state's arrays need,
   and no model function is compiled), the reporting draws are never built, and the files the computes read (truth
-  maps, imaging) are not checked. A render pass of `mass` and `truth` on Hera takes 5 s; the full pass that computed
-  them took 3 min 40 s. `rgb` renders in 6 s on Hera (26 s in a full pass) and in 49 s on M0416 (2 min in a full
-  pass), most of it building the RGB cutouts from the JWST mosaics.
+  maps, imaging) are not checked. A render pass of `mass` and `truth` on Hera took about 16 s of wall time, including
+  loading the run, against 3 min 40 s for the full pass that computed them; `fit` alone renders in 46 s. `rgb` renders
+  in 6 s on Hera (26 s in a full pass) and in 49 s on M0416 (2 min in a full pass), most of it building the RGB
+  cutouts from the JWST mosaics. A render pass in which no selected module draws anything (none has a completed
+  compute) says so in the log and the command exits with 1.
 
 In a render pass (and in the product and render phases of any pass) `ctx.draws` and `ctx.evaluator` raise
 `ComputeOnly`, which names the module and step that asked, so a figure that still needs the lens fails its step
-instead of being computed again in secret.
+instead of being computed again in secret. The guard covers these two only: nothing stops a render step from
+evaluating a lens it builds itself (from `ctx.state`, for example), so a render step must read everything it draws
+from the store.
 
 ### The completeness record
 
 When a module's compute starts, its record `output_module_<name>` in `results.h5` is set to
 `{"complete": false, "started_at": ...}`; when the compute ends it holds `complete` (true only when every compute step
-ran without failing), `computed_at`, the compute steps (`status`, `seconds`, `wrote`, and `error` or `reason`), and
+ran without failing: a failed or a skipped step makes it false), `computed_at`, the compute steps (`status`, `seconds`, `wrote`, and `error` or `reason`), and
 when the compute used the reporting draws `reporting_draws`, `image_draws`, `draws_seed` and `draws_key`. A compute
 that fails, raises or is interrupted therefore never leaves a record that claims completeness. A render pass renders a
 module only when its record is complete; otherwise the module fails with `ModuleUnavailable` and a message that says
 to run its compute first (`kappaccino outputs RUN --only <module>`, or `--compute --only <module>`). A module pulled
 into a render pass by `--only` (because a selected module requires it) gives only its product.
 
-A compute step that returns None wrote nothing (it did not apply, for example the magnification figures without shear
-truth) and is recorded with `wrote` false. Render steps are declared against the compute steps they draw
-(`ctx.render_step`): a render step whose compute step failed is skipped with the reason, and one whose compute step
-wrote nothing is left out.
+A compute step is skipped (`ctx.skip_step`) only when it cannot run because another step failed, so a skipped step
+makes the compute incomplete and the module cannot be rendered until it is computed again. A step that does not
+apply to the run (for example the magnification figures without shear truth) runs and returns None: it wrote
+nothing and is recorded with `wrote` false, which leaves the compute complete. Render steps are declared against the
+compute steps they draw (`ctx.render_step`): a render step whose compute step failed is skipped with the reason, and
+one whose compute step wrote nothing is left out. A render step whose name is not in `render_steps`, or that needs a
+step not in `compute_steps`, is an error that fails the module.
 
 ### Steps, failures and the run summary
 
@@ -326,7 +334,8 @@ successful image recovery. The log ends with the list of failed modules. `run_su
 `modules`, in run order: `status` (`done`, `inactive`, `skipped` or `failed`), `mode` (the pass mode),
 `seconds`, `steps` (each compute step's `status`, `seconds`, `wrote` and `error` or `reason`; in a render pass those of
 the completeness record), `render_steps` when the module rendered, `reporting_draws` and `image_draws` when its
-compute used the draws, and the module's `reason` or `error`.
+compute used the draws, the module's `reason` or `error`, and `failed_requirement` (the module whose failure it
+follows) when it was skipped because a module it requires failed in this pass.
 
 The reporting draws are built the first time a step needs them (the `covariance` step of `fit`); if building them
 fails, every later step that needs them fails with the same error. The summary and the results macros are written
@@ -334,10 +343,18 @@ before `rgb` and again at the end. A pass that runs only part of the modules, a 
 module failed or was skipped, merges its summary into the saved `run_summary`. Each module owns some top-level keys,
 written by its compute (`images` owns `fit`, `truth` owns `truth`): for every module that computed in this pass, done
 or failed, its keys and its record are this pass's, so a failed module leaves no old numbers (the macros then say "not
-available"). A module that did not run keeps its saved keys and its saved record, and a module that ran in a render
-pass gets this pass's record but keeps the keys of its last compute, so a render pass leaves the numbers and the
-macros as the last compute wrote them. The top-level `reporting_draws` and `warnings` are those of the last pass that
-built the draws; the module records say which draws each module used, so a mixed record shows.
+available"). The same holds for a module skipped because a module it requires failed in this pass (`truth` after a
+failed `images`): it is recorded as skipped with the reason and its keys are dropped. A module that did not run for
+any other reason (not selected, in the skip list or requiring a module that is, inactive) keeps its saved keys and
+its saved record, and a module that ran in a render pass gets this pass's record but keeps the keys of its last
+compute, so a render pass leaves the numbers and the macros as the last compute wrote them. The top-level
+`reporting_draws` and `warnings` are those of the last pass that built the draws.
+
+At the end of every pass the completeness records of all modules are compared: when the saved results of some modules
+were computed over other reporting draws than others (a pass with `--only` and another `--draws`, for example), the
+log has one `[outputs] WARNING` that names the modules with their draw counts and seeds, and the warning goes to
+`warnings` in `run_summary`. A module whose required module was computed again with other draws after it is named
+as stale. The warning never blocks a pass; computing the modules together over the same draws clears it.
 
 ### Choosing modules
 
@@ -370,7 +387,11 @@ The command loads the saved run ({mod}`kappaccino.outputs.saved_run`) and runs t
 without fitting. The saved paths are as the run wrote them: relative to the folder the run was started from (run the
 command from the same folder, usually the repository root) or absolute, as in a run made on another machine.
 `--remap OLD=NEW` (repeatable) replaces the prefix `OLD` of every saved path, catalogs, imaging folders and truth and
-deflection maps included, and logs each field it changes. Before a full or compute pass, the command checks that the
+deflection maps included, and logs each field it changes. Only path-valued fields of the configuration are changed
+(the fields whose type is a path), never a name such as `paths.run_name` or `paths.figure_prefix`. `OLD` must be an
+absolute path other than `/`; a relative saved path is compared as the absolute path it names from the folder the
+command runs in, so `--remap $PWD/data/imaging/m0416/buffalo=/elsewhere` also moves a saved
+`data/imaging/m0416/buffalo`. Before a full or compute pass, the command checks that the
 files the selected modules read exist; a missing one is named by its field, with the hint to use `--remap`. A render
 pass needs only the catalogs (the state is built from them).
 
@@ -378,15 +399,18 @@ pass needs only the catalogs (the state is built from them).
 `--draws` cannot go with `--render`. `--only` and `--skip` replace the run's saved `outputs.only` and `outputs.skip`
 together (the one not given is empty), `--all` runs every module whatever the saved selection, and with none of them
 the saved selection applies. `--set SECTION.FIELD=VALUE` (repeatable, the syntax of the run command) changes a report
-setting before the pass: only settings that the run hash leaves out are accepted (the `outputs` section,
-`truth.deflection_true_fits`, `runtime.output_workers`, the WBIC settings and the `paths` section), because any other
-change would no longer describe the saved fit. `--draws N` sets `reporting.draws` and `reporting.image_draws` to N, as
+setting before the pass. Only report settings are accepted: the `outputs` section, `truth.deflection_true_fits`
+(`config.REPORT_ONLY_FIELDS`) and `runtime.output_workers` (`config.PERFORMANCE_FIELDS`). Anything else is refused:
+settings in the run hash would no longer describe the saved fit, and the `paths` section, which the hash leaves out,
+names the run, the figure prefix and the imaging variants (`paths.figure_prefix=../../X` would write figures
+outside the run folder). The WBIC settings change nothing the outputs stage reads. `--draws N` sets `reporting.draws` and `reporting.image_draws` to N, as
 the run command's `--draws` does; both are in the run hash, and this is the one change of that kind a rerun allows.
 `--list` prints the modules with their `requires`, `after` and compute and render steps; given a run, it also says
 whether each applies to it, judged from the configuration alone. At the end the command prints the fit numbers of the
-saved `run_summary`. The exit code is 1 when a module failed or
-`--fail-fast` stopped the pass (one line names the error; the step logged its traceback), and 2 for a usage error, a
-missing file or a refused `--set`.
+saved `run_summary`. The exit code is 1 when a module failed, `--fail-fast`
+stopped the pass (one line names the error; the step logged its traceback), the pass failed outside the modules
+(writing the run summary, for example; the traceback is printed) or a render pass drew nothing, and 2 for a usage
+error, a missing file or a refused `--set` or `--remap`.
 
 ### Comparing the outputs of two runs
 
@@ -400,9 +424,11 @@ record, array bundle and figure record of `results.h5` and every entry of `cache
 side, and for differing entries what differs and the largest absolute difference), the file lists, text files
 (`*_results.tex` and the like) line by line, FITS files by data and header, other files byte by byte, and every
 figure PDF rasterized with `pdftoppm` at `--dpi` (default 100) and compared as pixels (the largest and mean absolute
-difference per figure). `--ignore-entry`, `--ignore-key` (record keys, table columns, array keys, FITS cards) and
-`--ignore-file` take shell patterns; the timing keys `seconds`, `*_seconds`, `started_at` and `computed_at` are
-ignored unless `--no-default-ignores`. It exits with 1 on any other difference.
+difference per figure). Table columns and indexes, array keys and JSON values are compared with their types (`true` is
+not `1`). `--ignore-entry`, `--ignore-key` (record keys, table columns, array keys, FITS cards) and `--ignore-file`
+take shell patterns; the record keys named exactly `seconds`, `elapsed_seconds`, `started_at` and `computed_at`
+(wall times, at any depth of a record) are ignored unless `--no-default-ignores`, and nothing else is, so a table
+column such as `exposure_seconds` is always compared. It exits with 1 on any other difference.
 
 ### Writing a new module with compute, product and render
 
@@ -454,12 +480,15 @@ once per pass, and for compute steps only `evaluator` and the reporting draws `d
 `ctx.config` and the products of the modules it requires: `--list` calls it with only the saved configuration (no
 state, no products). Keep the imports of JAX and the plotting code inside the methods: the configuration imports the
 registry to check module names. Set `checkpoint = True` on a slow imaging module so that the run summary is written
-before it.
+before it. The instances in `MODULES` are process-wide singletons, shared by every pass of the process: keep no state
+on `self` between compute and render (or between passes); what render needs goes through the store.
 
 1. **Steps.** A step is one product or a closely tied set of products, and every step name (its part before any `:`,
-   for steps named per variant) is declared in `compute_steps` or `render_steps`. `ctx.ok(step)` tells whether a step
-   of the current phase ran without an error (a step may return None on success), and `ctx.computed(step)` whether a
-   compute step ran and wrote something.
+   for steps named per variant) is declared in `compute_steps` or `render_steps`; an undeclared name is an error.
+   `ctx.ok(step)` tells whether a step of the current phase ran without an error (a step may return None on success),
+   and `ctx.computed(step)` whether a compute step ran and wrote something. A step that does not apply to the run
+   returns None (`wrote` false); `ctx.skip_step` is only for a step that cannot run because another failed, and it
+   makes the compute incomplete, so the module cannot be rendered until it is computed again.
 2. **Split the computation from the drawing.** Keep the computation in a function that writes to the store and
    returns something that is not None when it wrote (`save_magnification_recovery`, `save_zeta_masses`,
    `critical_curve_maps` plus one `store.write_arrays`), and the drawing in one that takes the stage and the figure
@@ -496,8 +525,9 @@ before it.
    another, then `scripts/compare_outputs.py` the two: every old entry, every FITS and text file and every figure must
    be identical, with only new entries and the module records of `run_summary` added. Then copy the new run, delete
    its figures, run `--render` on the copy and compare again: the figures must come back pixel-identical. Do the
-   render pass with `Evaluator.__init__`, `reporting.draws.reporting_draws` and `saved_run.load_run` patched to
-   raise, to prove it evaluates nothing.
+   render pass with `Evaluator.__init__`, `reporting.draws.reporting_draws`, `ReportingDraws.__init__` and
+   `saved_run.load_run` patched to raise, to prove it evaluates nothing. `tests/test_pipeline.py` does the same on
+   the toy run (where `truth` and `rgb` are inactive).
 
 Pitfalls:
 

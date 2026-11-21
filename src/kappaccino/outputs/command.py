@@ -1,7 +1,8 @@
 """``kappaccino outputs RUN_DIR``: rerun the outputs stage of a finished run, without any fitting.
 
 Run it from the folder the run was started from (usually the repository root): the run's saved paths are relative to
-it, or absolute.  ``--remap OLD=NEW`` relocates the saved paths of a run made on another machine::
+it, or absolute.  ``--remap OLD=NEW`` relocates the saved paths of a run made on another machine (OLD absolute; a
+relative saved path is compared as the absolute path it names from here)::
 
     kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c
     kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --only truth,mass
@@ -16,8 +17,12 @@ applies.  The products go to the run's ``final/`` folder, as after the fit.
 
 Pass mode: by default each module computes its results into the store and draws its figures from the store.
 ``--render`` only draws the figures again from what an earlier pass saved, without building the evaluator or the
-reporting draws (a module whose compute never completed is reported unavailable); ``--compute`` writes the results
-and no figures.
+reporting draws (a module whose compute never completed fails, with the hint to compute it first, and a render pass
+that draws nothing at all exits with 1); ``--compute`` writes the results and no figures (on a machine without the
+imaging: ``--compute --skip rgb``).
+
+``--set`` changes only report settings: the ``outputs`` section, ``truth.deflection_true_fits`` and
+``runtime.output_workers`` (``saved_run.report_settings``).
 """
 from __future__ import annotations
 
@@ -67,9 +72,11 @@ def parser() -> argparse.ArgumentParser:
                    help="reporting draws (reporting.draws and reporting.image_draws, as the run command's --draws).  "
                         "Default: the run's")
     p.add_argument("--remap", type=_remap, action="append", default=[], metavar="OLD=NEW",
-                   help="replace the prefix OLD of every saved path (catalogs, imaging, truth maps) by NEW; repeatable")
+                   help="replace the absolute prefix OLD of every saved path (catalogs, imaging, truth maps) by NEW; "
+                        "repeatable")
     p.add_argument("--set", action="append", default=[], dest="overrides", metavar="SECTION.FIELD=VALUE",
-                   help="override a report setting outside the run hash, e.g. truth.deflection_true_fits=FILE; repeatable")
+                   help="override a report setting (outputs.*, truth.deflection_true_fits, runtime.output_workers); "
+                        "repeatable")
     p.add_argument("--list", action="store_true", help="list the modules in run order; with a run, whether each is active")
     return p
 
@@ -188,8 +195,8 @@ def rerun_outputs(run_directory, *, log=print, mode="full", **options) -> dict:
 
 
 def main(argv=None) -> int:
-    """``kappaccino outputs``; returns the exit code: 1 when a module failed or the pass stopped (``--fail-fast``),
-    2 for a usage error, a missing file or a refused override."""
+    """``kappaccino outputs``; returns the exit code: 1 when a module failed, the pass stopped (``--fail-fast``) or
+    raised, or a render pass drew nothing; 2 for a usage error, a missing file, a refused override or remap."""
     p = parser()
     args = p.parse_args(argv)
     if args.list:
@@ -223,8 +230,13 @@ def main(argv=None) -> int:
     from ..reporting.outputs import write_outputs
     try:
         summary = write_outputs(*prepared, log=log, mode=mode)
-    except Exception as error:          # --fail-fast: the step logged its traceback; one line here
-        print(f"kappaccino outputs: stopped at the first error ({type(error).__name__}: {error})", flush=True)
+    except Exception as error:
+        if prepared[0].outputs.fail_fast:       # the step logged its traceback; one line here
+            print(f"kappaccino outputs: stopped at the first error (fail_fast: {type(error).__name__}: {error})", flush=True)
+        else:                                   # outside the modules (the run summary, the store): nothing logged it
+            import traceback
+            print(f"kappaccino outputs: the pass failed outside the modules ({type(error).__name__}: {error})\n"
+                  f"{traceback.format_exc().rstrip()}", flush=True)
         return 1
     from ..io import store
     try:
@@ -232,5 +244,9 @@ def main(argv=None) -> int:
     except (store.MissingEntry, store.DamagedEntry, store.StoreError):
         saved = {}
     print(json.dumps(saved.get("fit", {}), indent=2, default=float), flush=True)
+    from .base import rendered_anything
+    if mode == "render" and not rendered_anything(summary.get("modules", {})):
+        print("kappaccino outputs: the render pass drew nothing (no selected module has a completed compute)", flush=True)
+        return 1
     failed = [name for name, record in summary.get("modules", {}).items() if record["status"] == "failed"]
     return 1 if failed else 0

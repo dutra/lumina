@@ -7,8 +7,8 @@
 RUN_A and RUN_B are run folders (their ``final`` stage is compared, or ``--stage init``) or stage folders.  Compared:
 
 * every table, record, array bundle and figure record of ``results.h5`` and every entry of ``cache.h5``, by content:
-  entries only on one side, and for differing entries what differs (columns, keys, shapes, dtypes) and the largest
-  absolute difference of the numbers;
+  entries only on one side, and for differing entries what differs (columns, index, keys, shapes, dtypes, JSON value
+  types: ``true`` is not ``1``, nor ``1`` ``1.0``) and the largest absolute difference of the numbers;
 * the list of files under the stage (``results.h5``, ``cache.h5``, their locks, ``logs/`` and the files matching
   ``--ignore-file`` aside);
 * text files (``*.tex``, ``*.txt``, ``*.json``, ``*.csv``) line by line, FITS files by their data and header cards,
@@ -16,8 +16,10 @@ RUN_A and RUN_B are run folders (their ``final`` stage is compared, or ``--stage
 * every figure PDF rasterized with ``pdftoppm`` at ``--dpi`` and compared as pixel arrays (max and mean absolute
   difference per figure, in 8-bit levels).
 
-Keys matching ``--ignore-key`` (shell patterns, at any depth of a record and as table columns) are left out; by default
-the timing fields ``seconds``, ``*_seconds``, ``started_at`` and ``computed_at`` (``--no-default-ignores`` keeps them).
+Keys matching ``--ignore-key`` (shell patterns, at any depth of a record, as table columns, array keys and FITS cards)
+are left out.  By default so are the record keys named exactly ``seconds``, ``elapsed_seconds``, ``started_at`` and
+``computed_at``, at any depth of a record or figure record and nowhere else, so a table column or an array such as
+``exposure_seconds`` is always compared (``--no-default-ignores`` keeps them too).
 The exit code is 1 when anything differs beyond the ignored entries and keys, 0 otherwise.  Uses only the
 environment's packages (numpy, pandas, h5py, astropy) and ``pdftoppm``.
 """
@@ -33,7 +35,7 @@ from pathlib import Path
 
 import numpy as np
 
-DEFAULT_IGNORED_KEYS = ("seconds", "*_seconds", "started_at", "computed_at")
+DEFAULT_IGNORED_KEYS = ("seconds", "elapsed_seconds", "started_at", "computed_at")    # exact record keys: wall times
 SKIPPED_FILES = ("results.h5", "cache.h5", "*.lock", "*.tmp-*", "*.unreadable-*", "logs/*")
 TEXT_SUFFIXES = {".tex", ".txt", ".json", ".csv", ".md", ".yaml"}
 
@@ -96,28 +98,30 @@ def arrays_differ(a, b) -> str | None:
     return None if equal.all() else f"{int((~equal).sum())} of {a.size} values differ"
 
 
-def compare_json(a, b, path: str, patterns, out: list[str]) -> None:
-    """Append to ``out`` every place where the JSON values ``a`` and ``b`` differ, keys matching ``patterns`` left
-    out."""
+def compare_json(a, b, path: str, patterns, out: list[str], exact=()) -> None:
+    """Append to ``out`` every place where the JSON values ``a`` and ``b`` differ, type included (``True`` is not
+    ``1``, nor ``1`` ``1.0``); keys matching ``patterns`` or equal to one of ``exact`` are left out."""
     if isinstance(a, dict) and isinstance(b, dict):
         for key in sorted(set(a) | set(b), key=str):
-            if ignored(key, patterns):
+            if ignored(key, patterns) or str(key) in exact:
                 continue
             where = f"{path}.{key}" if path else str(key)
             if key not in a or key not in b:
                 out.append(f"{where} only in {'B' if key not in a else 'A'}")
             else:
-                compare_json(a[key], b[key], where, patterns, out)
+                compare_json(a[key], b[key], where, patterns, out, exact)
         return
     if isinstance(a, list) and isinstance(b, list):
         if len(a) != len(b):
             out.append(f"{path}: {len(a)} != {len(b)} items")
             return
         for index, (x, y) in enumerate(zip(a, b)):
-            compare_json(x, y, f"{path}[{index}]", patterns, out)
+            compare_json(x, y, f"{path}[{index}]", patterns, out, exact)
         return
-    numbers = (int, float)
-    if isinstance(a, numbers) and isinstance(b, numbers) and not isinstance(a, bool) and not isinstance(b, bool):
+    if type(a) is not type(b):
+        out.append(f"{path}: {type(a).__name__} {str(a)[:60]!r} != {type(b).__name__} {str(b)[:60]!r}")
+        return
+    if isinstance(a, (int, float)) and not isinstance(a, bool):
         if a != b and not (a != a and b != b):
             out.append(f"{path}: {a!r} != {b!r} (abs {abs(a - b):.3g})")
         return
@@ -135,6 +139,14 @@ def compare_tables(a, b, patterns) -> list[str]:
                    f"order {'differs' if not (only_a or only_b) else 'n/a'})")
     if len(a) != len(b):
         return out + [f"{len(a)} != {len(b)} rows"]
+    if list(a.index.names) != list(b.index.names):
+        out.append(f"index names {list(a.index.names)} != {list(b.index.names)}")
+    if type(a.index) is not type(b.index) or a.index.dtype != b.index.dtype:
+        out.append(f"index {type(a.index).__name__} ({a.index.dtype}) != {type(b.index).__name__} ({b.index.dtype})")
+    else:
+        text = arrays_differ(a.index.to_numpy(), b.index.to_numpy())
+        if text is not None:
+            out.append(f"index: {text}")
     for column in (c for c in columns_a if c in set(columns_b)):
         x, y = a[column], b[column]
         if x.dtype != y.dtype:
@@ -159,8 +171,9 @@ def compare_arrays(a: dict, b: dict, patterns) -> list[str]:
     return out
 
 
-def compare_store(stage_a: Path, stage_b: Path, report: Report, *, entry_patterns, key_patterns) -> int:
-    """Compare every entry of ``results.h5`` and ``cache.h5``; returns the number of entries compared."""
+def compare_store(stage_a: Path, stage_b: Path, report: Report, *, entry_patterns, key_patterns, record_keys=()) -> int:
+    """Compare every entry of ``results.h5`` and ``cache.h5``; returns the number of entries compared.  ``key_patterns``
+    apply to every kind of entry, ``record_keys`` (exact names) to the keys of records and figure records only."""
     from kappaccino.io import store
     compared = 0
     for cache in (False, True):
@@ -189,7 +202,7 @@ def compare_store(stage_a: Path, stage_b: Path, report: Report, *, entry_pattern
                         else:
                             values = tuple(store.read_figure_record(stage / "figures" / f"{name}.pdf") for stage in (stage_a, stage_b))
                         problems = []
-                        compare_json(*values, "", key_patterns, problems)
+                        compare_json(*values, "", key_patterns, problems, record_keys)
                 except Exception as error:      # noqa: BLE001 - a damaged entry is a difference, not a crash
                     problems = [f"cannot be read: {type(error).__name__}: {error}"]
                 for problem in problems[:12]:
@@ -324,7 +337,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--ignore-key", action="append", default=[], metavar="GLOB",
                    help="record keys, table columns, array keys and FITS cards to leave out; repeatable")
     p.add_argument("--ignore-file", action="append", default=[], metavar="GLOB", help="stage files to leave out; repeatable")
-    p.add_argument("--no-default-ignores", action="store_true", help=f"compare the timing keys {DEFAULT_IGNORED_KEYS} too")
+    p.add_argument("--no-default-ignores", action="store_true",
+                   help=f"compare the record keys {', '.join(DEFAULT_IGNORED_KEYS)} too")
     p.add_argument("--dpi", type=int, default=100, help="resolution of the rasterized figures (default 100)")
     p.add_argument("--no-figures", action="store_true", help="do not rasterize the PDFs")
     p.add_argument("--no-store", action="store_true", help="do not compare results.h5 and cache.h5")
@@ -342,10 +356,12 @@ def main(argv=None) -> int:
     if not args.no_figures and shutil.which("pdftoppm") is None:
         print("compare_outputs: pdftoppm not found (or give --no-figures)", file=sys.stderr)
         return 2
-    keys = tuple(args.ignore_key) + (() if args.no_default_ignores else DEFAULT_IGNORED_KEYS)
+    keys = tuple(args.ignore_key)
+    record_keys = () if args.no_default_ignores else DEFAULT_IGNORED_KEYS
     report = Report()
     print(f"A: {stage_a}\nB: {stage_b}", flush=True)
-    compared = 0 if args.no_store else compare_store(stage_a, stage_b, report, entry_patterns=args.ignore_entry, key_patterns=keys)
+    compared = 0 if args.no_store else compare_store(stage_a, stage_b, report, entry_patterns=args.ignore_entry,
+                                                     key_patterns=keys, record_keys=record_keys)
     counts = compare_files(stage_a, stage_b, report, file_patterns=SKIPPED_FILES + tuple(args.ignore_file), key_patterns=keys,
                            dpi=args.dpi, figures=not args.no_figures, list_figures=args.list_figures)
     print(f"compared {compared} store entries, {counts['pdf']} figures, {counts['fits']} FITS, {counts['text']} text and "
