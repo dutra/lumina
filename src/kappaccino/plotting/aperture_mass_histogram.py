@@ -198,7 +198,7 @@ def write_aperture_mass_histogram(config,state,draws,paths,image_df,*,log=print)
     if bands and bands != {'F160W'}:
         log(f'[aperture] skipped: fixed size relation requires F160W, catalog uses {sorted(bands)}')
         return None
-    members=store.read_table(paths.tables,'member_diagnostics',legacy_csv=dict(dtype={'member_id':str,'catalog_id':str}))
+    members=store.read_table(paths.tables,'member_diagnostics')
     if members.member_id.tolist()!=list(state.members.member_ids):
         raise ValueError('Aperture catalog identities differ from saved model')
     evaluator=draws.evaluator

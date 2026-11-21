@@ -86,11 +86,8 @@ def _paper_panels(config, tables, draws, *, log=print):
             continue
         reduced = [dict(selector=selector, system=system['system_id'], reason=system['partial_reason'])
                    for selector, (_, _, system) in zip(selectors, resolved) if system is not None and 'partial_reason' in system]
-        for panel, (_, _, system) in zip(reduced, [r for r in resolved if r[2] is not None and 'partial_reason' in r[2]]):
+        for panel in reduced:
             log(f"[outputs] paper cutouts {stem}: {panel['selector']} drawn without its fold anchor ({panel['reason']})")
-            if 'critical_points' not in system:
-                log(f"[outputs] paper cutouts {stem}: {panel['selector']} drawn without a critical line (the saved fold "
-                    'record predates the critical-line position band)')
         data = overview_cutout_data(tables, config.paths.figure_prefix,
             image_labels=tuple(dict.fromkeys(identity for kind, identity, _ in resolved if kind == 'image')),
             system_ids=tuple(dict.fromkeys(identity for kind, identity, _ in resolved if kind != 'image')),

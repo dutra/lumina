@@ -164,9 +164,7 @@ def render_overview_cutouts(fig, data, imaging, frame, *, image_rects=None, syst
     for i,s in enumerate(data['systems']):
         rect = system_rects[i] if system_rects is not None else [.80,.61-i*.18,.18,.18]
         ax,pixels=panel(rect,s['center'],s['fov'],s.get('panel_label',f"System {s['system_id']}"),s['z_source'])
-        if 'partial_reason' in s and 'critical_points' not in s:
-            pass  # a fold record saved before the position band: no critical line (write_paper_cutouts logs it)
-        elif 'partial_reason' in s:  # no fold anchor: median det A = 0 line, band along its normal (median_critical_band)
+        if 'partial_reason' in s:  # no fold anchor: median det A = 0 line, band along its normal (median_critical_band)
             points,normals,band=(np.asarray(s[k]) for k in ('critical_points','critical_normals','critical_band'))
             for segment in np.unique(s['critical_segments']):
                 index=np.flatnonzero(np.asarray(s['critical_segments'])==segment)

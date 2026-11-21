@@ -172,7 +172,7 @@ def render_covariance_cutouts(config, state, paths, imaging, *, log=print):
     reference = images[rgb_reference_band(bands)]
     intervals = None
     if store.has_table(paths.tables, 'covariance_errors_both_planes') and store.has_record(paths.tables, 'covariance_errors_both_planes'):
-        intervals = store.read_table(paths.tables, 'covariance_errors_both_planes', legacy_csv=dict(dtype={'image_label': str})).query("plane == 'image' and direction == 'arc'").set_index('image_label')
+        intervals = store.read_table(paths.tables, 'covariance_errors_both_planes').query("plane == 'image' and direction == 'arc'").set_index('image_label')
     output = figure_path(paths.figures, f'{stem}.pdf', config.paths.figure_prefix)
     angle = np.linspace(0, 2*np.pi, 361)
     with plt.rc_context(fname=STYLE, rc={'font.size': 9, 'mathtext.fontset': 'dejavusans', 'mathtext.default': 'regular'}):

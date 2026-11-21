@@ -105,16 +105,3 @@ def test_partial_system_is_drawn_reduced_and_unknown_selector_skips_figure(tmp_p
     assert record['partial_critical_band']==pc.PARTIAL_CRITICAL_BAND
     with pytest.raises(ValueError, match='exactly one'):
         pc.resolve_panel('system:K6', [system(), system()])
-
-
-def test_partial_system_saved_before_the_position_band_is_logged(tmp_path, monkeypatch):
-    cfg = ImageCatalogCutoutConfig(paper_fold_cutouts=('system:K6','system:K8'))
-    config = NS(image_catalog=cfg, paths=NS(figure_prefix='test',run_name='test'))
-    monkeypatch.setattr(pc,'load_fold_data',lambda _:dict(systems=[system()],partial_systems=[dict(partial(),critical_x=np.zeros(4))]))
-    monkeypatch.setattr(pc,'overview_cutout_data',lambda *a, **k: dict(images=[],systems=[]))
-    monkeypatch.setattr(pc,'render_overview_cutouts',lambda fig,*a,**k: fig.add_axes(k['image_rects'][0]))
-    lines=[]
-    paths=pc.write_paper_cutouts(config,NS(reference=(3,0,0)),None,tmp_path,tmp_path,({},(),None,'m0416'),log=lines.append)
-    assert [path.name for path in paths]==['m0416_fold_cutouts.pdf']
-    assert ('[outputs] paper cutouts fold_cutouts: system:K8 drawn without a critical line (the saved fold record predates '
-            'the critical-line position band)') in lines

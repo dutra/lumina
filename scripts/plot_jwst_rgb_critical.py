@@ -69,9 +69,9 @@ def main():
         extra = pd.read_csv(final / "tables" / "image_recovery_extra_images.csv", dtype={"family_id": str})
     except pd.errors.EmptyDataError:
         extra = pd.DataFrame()  # No extra images were recovered in this saved run.
-    from kappaccino.plotting.jwst_rgb import render_jwst_rgb_critical, rgb_overview_stem
+    from kappaccino.plotting.jwst_rgb import render_rgb_critical, rgb_overview_stem
     imaging = load_cluster_imaging(config.image_catalog, config.model, config.paths.run_name)
-    render_jwst_rgb_critical(config,state,evaluator,theta,catalog,extra,imaging,
+    render_rgb_critical(config,state,evaluator,theta,catalog,extra,imaging,
         plots.figure_path(final/'figures',rgb_overview_stem(config.image_catalog, imaging[1]) + '.pdf',config.paths.figure_prefix),
         final/'tables',best_index=best_index,posterior=posterior)
 

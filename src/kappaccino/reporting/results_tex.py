@@ -53,11 +53,10 @@ def _record(final, name):
         return {}
 
 
-def _table(final, name, **legacy_csv):
-    """The table ``name`` of the stage ``final``, or None when missing; an old run's CSV is read with
-    ``pd.read_csv(path, **legacy_csv)``, as before the tables moved into ``results.h5``."""
+def _table(final, name):
+    """The table ``name`` of the stage ``final``, or None when missing."""
     try:
-        return store.read_table(final, name, legacy_csv=legacy_csv)
+        return store.read_table(final, name)
     except store.MissingEntry:
         return None
 
@@ -438,8 +437,7 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
     Files read (relative to the run root; all except the first are optional):
     ``final/artifacts/summary.json``, ``final/artifacts/config.json``,
     ``final/artifacts/posterior_diagnostics.json``,
-    and from ``final/results.h5`` (:mod:`kappaccino.io.store`; the loose
-    ``final/tables/<name>.csv`` and ``.json`` files of an old run) the records
+    and from ``final/results.h5`` (:mod:`kappaccino.io.store`) the records
     ``run_summary``, ``runtime`` and ``aperture_mass_histogram`` and the tables
     ``posterior_summary``, ``posterior_image_residual_draws*``,
     ``posterior_image_rms``, ``position_coverage`` and ``image_fit_quality``.
