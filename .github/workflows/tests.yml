@@ -41,7 +41,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e . pytest pytest-xdist
+          pip install -e ".[test]"
 
       # Compiled code is specific to the CPU, so the key carries the runner's CPU flags.
       - name: Key of the compilation cache
