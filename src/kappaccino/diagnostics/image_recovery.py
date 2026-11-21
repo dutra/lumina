@@ -21,7 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
-from ..config import ImageDiagnosticsConfig
+from ..config import ImageSolverConfig
 from ..likelihood.evaluator import Evaluator
 from .exact_images import ExactImageSolver
 from ..core.model import ModelState, PosteriorResults
@@ -131,7 +131,7 @@ def predictions_at(solver: ExactImageSolver, state: ModelState, evaluator: Evalu
         batched, adaptive = solver.predict_all_global(images, families, np.asarray(physical), np.asarray(sources), **extra_kwargs), False
     elif correction is not None:
         raise ValueError("only the global-jax and batched local image finders add a deflection field to the lens; "
-                         f"image_diagnostics.exact_image_finder is {solver.config.exact_image_finder!r}")
+                         f"outputs.image_solver.exact_image_finder is {solver.config.exact_image_finder!r}")
     rows, extra_rows, count_rows = [], [], []
     for family_index, family in enumerate(families):
         family_id = family.family_id
@@ -186,10 +186,10 @@ def _digest(*parts) -> str:
     return h.hexdigest()
 
 
-def recovery_fingerprint(state: ModelState, draws, config: ImageDiagnosticsConfig, *, extra_images: bool) -> dict[str, str]:
+def recovery_fingerprint(state: ModelState, draws, config: ImageSolverConfig, *, extra_images: bool) -> dict[str, str]:
     """What ``image_recovery_tables`` depends on, part by part: ``version`` (``IMAGE_RECOVERY_VERSION`` and the
     solver's ``shared_lattice`` switch), ``draws`` (seed, product and image draw indices and parameter vectors,
-    and the model they map to, ``ReportingDraws.image_key``), ``image_diagnostics`` (every setting of ``config``), ``extra_images`` and
+    and the model they map to, ``ReportingDraws.image_key``), ``image_diagnostics`` (every setting of ``config``, the ``outputs.image_solver`` section), ``extra_images`` and
     ``catalog`` (each family's id, redshift, labels, observed positions and search window, the image order and the
     parameter names)."""
     import dataclasses
@@ -239,7 +239,7 @@ def saved_image_recovery(stage, fingerprint: dict[str, str]) -> tuple[dict[str, 
     return tables, ""
 
 
-def image_recovery_with_reuse(stage, state: ModelState, evaluator: Evaluator, draws, config: ImageDiagnosticsConfig, *,
+def image_recovery_with_reuse(stage, state: ModelState, evaluator: Evaluator, draws, config: ImageSolverConfig, *,
                               extra_images: bool = True, compute=None, log=print) -> dict[str, pd.DataFrame]:
     """``image_recovery_tables``, or the tables an earlier pass saved in the stage's results.h5 when they were computed
     from the same draws, settings, catalog and code (``recovery_fingerprint``); ``compute`` replaces
@@ -344,7 +344,7 @@ def common_extra_images(extra: pd.DataFrame, n_draws: int) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def image_recovery_tables(state: ModelState, evaluator: Evaluator, draws, config: ImageDiagnosticsConfig, *,
+def image_recovery_tables(state: ModelState, evaluator: Evaluator, draws, config: ImageSolverConfig, *,
                           extra_images: bool = True, log=print) -> dict[str, pd.DataFrame]:
     """Image-recovery tables over the reporting draws (``reporting.draws.ReportingDraws``); nothing at a single sample.
 

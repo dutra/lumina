@@ -1,4 +1,5 @@
-"""The output modules of the stage, in their default order.  A new module is added here (see ``docs/outputs.md``)."""
+"""The output modules of the stage, in their default order.  A new module is added here, with its section in
+``config.OutputsConfig`` under the module's name (see ``docs/outputs.md``)."""
 from __future__ import annotations
 
 from .base import OutputModule

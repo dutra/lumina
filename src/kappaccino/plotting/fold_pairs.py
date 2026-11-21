@@ -258,7 +258,7 @@ def compute_fold_diagnostics(config, state, draws, tables, *, log=print):
                   'y: signed nearest distance to own caustic, positive toward the local fold pair',
                   image_contours='Conditional on verified local root recovery, not a global image-existence test',
                   draw_indices=np.asarray(draws.indices).tolist(),
-                  max_separation_arcsec=config.image_diagnostics.fold_pair_max_separation_arcsec,
+                  max_separation_arcsec=config.outputs.rgb.fold_pair_max_separation_arcsec,
                   image_finder='The image recovery of the reporting draws',
                   kernel='exact', angular_units='arcsec', contour_definition='Whitened Gaussian KDE; leave-one-out bandwidth with one-standard-error smoothing, Scott to 2*Scott; highest-density regions enclosing 68.2689492% and 95.4499736%')
     if not len(samples):
@@ -273,7 +273,7 @@ def compute_fold_diagnostics(config, state, draws, tables, *, log=print):
     fields, critical, relative_batch = _kernels(evaluator)
     jacobian_fn = jax.jit(lambda p: evaluator.fields(p, force_exact=True)['jacobian'])
     determinants = np.median([np.linalg.det(np.asarray(jacobian_fn(p))) for p in physical_all], axis=0)
-    pairs = candidate_pairs(xy, family_index, labels, determinants, config.image_diagnostics.fold_pair_max_separation_arcsec)
+    pairs = candidate_pairs(xy, family_index, labels, determinants, config.outputs.rgb.fold_pair_max_separation_arcsec)
     log(f"[outputs] fold search: {len(pairs)} candidates, {len(samples)} draws")
     recovered = position_draws(draws.indices, tables)
     order = {str(label): k for k, label in enumerate(recovered['image_labels'])}
@@ -988,7 +988,7 @@ def render_system_fold_diagnostics(config, state, data, paths, imaging, *, log=p
     reference = images[rgb_reference_band(bands)]
     prefix = f'{config.paths.figure_prefix}_' if config.paths.figure_prefix else ''
     paths.figures.mkdir(parents=True, exist_ok=True)
-    output = paths.figures / f'{prefix}fold_pairs_source_caustics{config.image_catalog.figure_suffix}.pdf'
+    output = paths.figures / f'{prefix}fold_pairs_source_caustics{config.outputs.rgb.figure_suffix}.pdf'
     palette = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#D55E00', '#56B4E9', '#F0E442', '#FFFFFF']
     with plt.rc_context(fname=STYLE, rc={'savefig.bbox': None}):
         with PdfPages(output) as pdf:
@@ -1134,7 +1134,7 @@ def render_fold_diagnostics(config, state, data, paths, imaging, *, log=print):
     images, bands, display, _ = imaging; reference = images[rgb_reference_band(bands)]
     paths.figures.mkdir(parents=True, exist_ok=True)
     prefix = f'{config.paths.figure_prefix}_' if config.paths.figure_prefix else ''
-    output = paths.figures / f'{prefix}fold_pairs_source_caustics{config.image_catalog.figure_suffix}.pdf'
+    output = paths.figures / f'{prefix}fold_pairs_source_caustics{config.outputs.rgb.figure_suffix}.pdf'
     with plt.rc_context(fname=STYLE, rc={'savefig.bbox': None}):
         with PdfPages(output) as pdf:
             for start in range(0, len(data['pairs']), 3):

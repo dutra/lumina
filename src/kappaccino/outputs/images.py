@@ -38,7 +38,7 @@ def write_true_lens_rms(stage: Path, image_df: pd.DataFrame, deflection_fits, co
 class ImagesModule(OutputModule):
     """Compute: the image recovery (``diagnostics.image_recovery.image_recovery_with_reuse``: its tables and the
     record ``image_recovery_fingerprint``, reused when saved for the same draws), the table ``position_coverage``,
-    ``fit`` in ``run_summary`` and, with ``truth.deflection_true_fits``, the true-lens RMS (``write_true_lens_rms``);
+    ``fit`` in ``run_summary`` and, with ``outputs.truth.deflection_true_fits``, the true-lens RMS (``write_true_lens_rms``);
     raises ModuleUnavailable when the recovery step failed, so the modules that need the recovery are skipped.
     Product, read from the store: ``{"image_df": the table image_fit_quality, "recovery": {name: table} for every
     table the fingerprint record lists plus position_coverage, "true_lens": the record true_lens_rms when the last
@@ -57,15 +57,16 @@ class ImagesModule(OutputModule):
         from ..diagnostics.image_recovery import fit_summary, image_recovery_tables, image_recovery_with_reuse
         from ..diagnostics.position_contours import position_coverage
         from ..io import store
-        config, state, stage, log = ctx.config, ctx.state, ctx.stage, ctx.log
+        config, settings, state, stage, log = ctx.config, ctx.settings, ctx.state, ctx.stage, ctx.log
+        deflection = config.outputs.truth.deflection_true_fits
 
         def recover():
             draws = ctx.draws
-            recovery = image_recovery_with_reuse(stage, state, ctx.evaluator, draws, config.image_diagnostics,
-                                                 extra_images=config.reporting.extra_images, compute=image_recovery_tables, log=log)
+            recovery = image_recovery_with_reuse(stage, state, ctx.evaluator, draws, config.outputs.image_solver,
+                                                 extra_images=settings.extra_images, compute=image_recovery_tables, log=log)
             recovery[COVERAGE_TABLE] = position_coverage(recovery["posterior_image_residual_draws"])
             store.write_table(stage, COVERAGE_TABLE, recovery[COVERAGE_TABLE])
-            ctx.summary["fit"] = fit_summary(state, recovery, extra_image_draws=len(draws) if config.reporting.extra_images else 0)
+            ctx.summary["fit"] = fit_summary(state, recovery, extra_image_draws=len(draws) if settings.extra_images else 0)
             fit = ctx.summary["fit"]
             if "recovered_image_count" in fit:
                 log(f"[outputs] recovered {fit['recovered_image_count']['median']:g}/{fit['observed_image_count']} images (median over "
@@ -77,8 +78,8 @@ class ImagesModule(OutputModule):
             ctx.skip_step("true_lens", "recovery failed")
             raise ModuleUnavailable("no image recovery (the recovery step failed)")
         image_df = recovery["image_fit_quality"]
-        if config.truth.deflection_true_fits and not image_df.empty:
-            ctx.step("true_lens", write_true_lens_rms, stage, image_df, config.truth.deflection_true_fits,
+        if deflection and not image_df.empty:
+            ctx.step("true_lens", write_true_lens_rms, stage, image_df, deflection,
                      state.cosmo_config, log=log)
 
     def product(self, ctx: OutputContext) -> dict:

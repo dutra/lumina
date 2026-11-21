@@ -85,7 +85,7 @@ python -m kappaccino.io.store results/<cluster>/<run> --export /tmp/<run>_loose 
 exported, and the command exits with status 1.
 
 Every reported product (figures, tables and results macros) is computed over one set of reporting draws:
-`reporting.draws` random posterior draws over all chains, chosen with `runtime.seed` (64 in a full run, 8 in the
+`outputs.draws` random posterior draws over all chains, chosen with `runtime.seed` (64 in a full run, 8 in the
 fast profile). Each draw is evaluated once and shared by every product. In runs with a shared GRF, each draw carries one
 conditional realization of the field: an unconditional draw of the field corrected to agree with the images (Matheron's
 rule), with a seed fixed by `runtime.seed` and the draw's posterior row. The median over the draws is close to the mean
@@ -149,7 +149,7 @@ digest does not see code changes elsewhere (the lens kernels, the image solver);
 bumped.
 
 - the image-recovery tables, read back from `results.h5` when the record `image_recovery_fingerprint` saved with them
-  matches: the draws (seed, indices, parameter values), every `image_diagnostics` setting, `reporting.extra_images`,
+  matches: the draws (seed, indices, parameter values), every `outputs.image_solver` setting, `outputs.images.extra_images`,
   the image catalog and the solver version (`IMAGE_RECOVERY_VERSION` in `diagnostics/image_recovery.py`, bumped
   whenever the solver can give other numbers). Any difference, or a missing table, recomputes them;
 - the lens maps of every grid, from `cache.h5`; at most `reporting.draws.GRID_MEMORY_BYTES` (1 GiB) of maps stay in
@@ -191,10 +191,10 @@ of a full pass and of a later render-only pass come from the same code and the s
 | module | compute steps | render steps | requires | runs when |
 |---|---|---|---|---|
 | `fit` | `tables` (`posterior_summary`, `member_classification`), `chain_traces` (`chain_convergence`, record `chain_traces`), `audit` (the record), `scaling_table` (`member_scaling_relation`), `covariance` (`covariance_errors_both_planes`), `fields` (`gp_diagnostics`, `conditional_field_maps`), `members` (`member_diagnostics` and its companions) | `chain_traces`, `potfiles`, `block_corner` (`corner_combined.pdf`), `cosmology_corner`, `covariance` (covariance corner and errors), `fields` (GP and GRF plots), `members` (the member plots), `scaling_plot`, `globals_corner` | | always |
-| `images` | `recovery` (the image-recovery tables, record `image_recovery_fingerprint`, `position_coverage`, `fit` in `run_summary`), `true_lens` (with `truth.deflection_true_fits` and observed images: `true_lens_residuals`, record `true_lens_rms`) | `residual_histogram`, `recovery_figure` (both with observed images) | | always |
+| `images` | `recovery` (the image-recovery tables, record `image_recovery_fingerprint`, `position_coverage`, `fit` in `run_summary`), `true_lens` (with `outputs.truth.deflection_true_fits` and observed images: `true_lens_residuals`, record `true_lens_rms`) | `residual_histogram`, `recovery_figure` (both with observed images) | | always |
 | `mass` | `critical_curves` (arrays `critical_curves`), `aperture_masses` (`member_aperture_masses`, record `aperture_mass_histogram`), `zeta_masses` (`member_zeta_masses`, record `zeta_masses`, arrays `subhalo_mass_concentration`) | `critical_curves`, `zeta_masses` (the figure and the table `zeta_mass_function`) | `images` | always; the masses with a truth convergence map |
-| `truth` | `relative_displacement` (with `truth.deflection_true_fits`, the true-lens record and a shared field: table and record `relative_displacement`), `truth_maps` (FITS, profile tables, record `truth_recovery`, arrays `truth_recovery_residuals`, the published ratios; with `truth.kappa_true_fits`), `magnification_recovery`, `cumulative_source_area`, `magnification_scatter` | `relative_displacement`, `magnification_recovery`, `cumulative_source_area`, `truth_residuals`, `mass_profile`, `kappa_mass_residuals` | `images` | with `truth.kappa_true_fits` or `truth.deflection_true_fits` |
-| `rgb` | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and, once, `fold_data`; for the JWST overview also `position_contours` and `small_lambda` (before the mass figure) and `paper_cutouts` (see [The rgb module](#the-rgb-module)) | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and `fold_cutouts`; for the JWST overview also `small_lambda`, `apj_fold_cutouts` and `paper_cutouts` | `images` | with `image_catalog.image_dir` and observed images |
+| `truth` | `relative_displacement` (with `outputs.truth.deflection_true_fits`, the true-lens record and a shared field: table and record `relative_displacement`), `truth_maps` (FITS, profile tables, record `truth_recovery`, arrays `truth_recovery_residuals`, the published ratios; with `outputs.truth.kappa_true_fits`), `magnification_recovery`, `cumulative_source_area`, `magnification_scatter` | `relative_displacement`, `magnification_recovery`, `cumulative_source_area`, `truth_residuals`, `mass_profile`, `kappa_mass_residuals` | `images` | with `outputs.truth.kappa_true_fits` or `outputs.truth.deflection_true_fits` |
+| `rgb` | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and, once, `fold_data`; for the JWST overview also `position_contours` and `small_lambda` (before the mass figure) and `paper_cutouts` (see [The rgb module](#the-rgb-module)) | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and `fold_cutouts`; for the JWST overview also `small_lambda`, `apj_fold_cutouts` and `paper_cutouts` | `images` | with `outputs.rgb.image_dir` and observed images |
 
 The product of `images` is read from the store, so `mass`, `truth` and `rgb` get the same tables in every pass mode:
 
@@ -257,19 +257,19 @@ per-draw critical-curve tracks of the fold figures (8 to 64 curves of 97 points 
 Compute needs the imaging FITS files, but only their headers and paths: the reference band's WCS, shape and pixel
 scale set the overview grid, the cutout fields and the imaging footprint, and the band paths go into the record of the
 covariance cutouts. Loading a variant also reads a subsample of each band for its sky level, which only the display
-uses. The command checks that `image_catalog.image_dir` exists before a full or compute pass, so on a machine without
+uses. The command checks that `outputs.rgb.image_dir` exists before a full or compute pass, so on a machine without
 the imaging run `--compute --skip rgb`. In a compute, a variant whose band files are missing (the extra JWST variant of
 M0416 and AS1063, for example) is logged once and left out, its `imaging:<variant>` step records that it wrote
 nothing, and the other variants go on; the render leaves that variant out too. In a render, a variant the compute drew
 needs its imaging again: when it cannot be loaded, the render step `imaging:<variant>` fails with a message that names
-the folder (`image_catalog.image_dir`) and suggests `--remap`, the variant's figures are not drawn, the other variants
+the folder (`outputs.rgb.image_dir`) and suggests `--remap`, the variant's figures are not drawn, the other variants
 go on, `rgb` ends as failed and the command exits with 1. Loading the imaging does not count as drawing a figure
 (`input_steps` of the module).
 
 | step | compute saves | render reads |
 |---|---|---|
 | `covariance_cutouts:<variant>` | table and record `small_lambda_covariance_cutouts<suffix>`, arrays `..._contours` and `..._ellipses` (the selected images' indices, directions and widths of the linear ellipse), table `..._intervals` (the posterior 16th and 84th percentiles along the stretch of the selected images, from the table `covariance_errors_both_planes` when the last compute of `fit` wrote it, else empty) | those |
-| `rgb_critical:<variant>` | arrays `<stem>` and record `<stem>_band` (`hst_rgb_critical_z9` or `jwst_rgb_critical_z9`), record `<stem>_model` (whether the run has a shared GRF and its label), for M0416 the record `<stem>_candidate_catalog` (the path and the candidates of `image_catalog.candidate_catalog_path`, default the packaged `m0416_candidates.json`, that the `_candidates` overview draws), the position contours | those; writes the figure records and the marker tables |
+| `rgb_critical:<variant>` | arrays `<stem>` and record `<stem>_band` (`hst_rgb_critical_z9` or `jwst_rgb_critical_z9`), record `<stem>_model` (whether the run has a shared GRF and its label), for M0416 the record `<stem>_candidate_catalog` (the path and the candidates of `outputs.rgb.candidate_catalog_path`, default the packaged `m0416_candidates.json`, that the `_candidates` overview draws), the position contours | those; writes the figure records and the marker tables |
 | `position_contours:<variant>` | arrays and record `posterior_overview_positions`, new arrays and record `posterior_overview_contours` (the 68.3% and 95.4% curves, `curve_<c>_segment_<k>`) | (no figure) |
 | `small_lambda:<variant>` | table and arrays `<prefix>_small_lambda_a_image_posteriors_jwst` (the ranking, with the panels shown and their fields), arrays and record `..._critical`, new record `..._selection` (the figure's settings) | those, `posterior_overview_positions`; writes the record `<prefix>_small_lambda_a_image_posteriors_jwst` |
 | `cluster_mass:<variant>` | tables `image_catalog_arc_directions<suffix>`, `..._extra_arc_directions`, `image_catalog_mass_profile<suffix>` and `..._y`, the covariance ellipses table, record `image_catalog_mass_provenance<suffix>`, the FITS, new arrays `image_catalog_family_cluster_mass<suffix>` (the median maps `model`, `model_grf`, `grf`, the resampled `truth` and the covariance curves) | those and, for the JWST overview, the position contours |
@@ -341,7 +341,7 @@ whose compute steps succeeded. A module that cannot give its dependents what the
 (`images` without its recovery, `truth` without its maps) and is failed with no product. A module that requires
 another runs only when that module gave its product, whatever it is: `mass`, `truth` and `rgb` therefore need a
 successful image recovery. The log ends with the list of failed modules. `run_summary` records each module under
-`modules`, in run order: `status` (`done`, `inactive`, `skipped` or `failed`), `mode` (the pass mode),
+`modules`, in run order: `status` (`done`, `disabled`, `inactive`, `skipped` or `failed`), `mode` (the pass mode),
 `seconds`, `steps` (each compute step's `status`, `seconds`, `wrote` and `error` or `reason`; in a render pass those of
 the completeness record), `render_steps` when the module rendered, `reporting_draws` and `image_draws` when its
 compute used the draws, the module's `reason` or `error`, and `failed_requirement` (the module whose failure it
@@ -354,9 +354,9 @@ module failed or was skipped, merges its summary into the saved `run_summary`. E
 written by its compute (`images` owns `fit`, `truth` owns `truth`): for every module that computed in this pass, done
 or failed, its keys and its record are this pass's, so a failed module leaves no old numbers (the macros then say "not
 available"). The same holds for a module skipped because a module it requires failed in this pass (`truth` after a
-failed `images`): it is recorded as skipped with the reason and its keys are dropped. A module that did not run for
-any other reason (not selected, in the skip list or requiring a module that is, inactive) keeps its saved keys and
-its saved record, and a module that ran in a render pass gets this pass's record but keeps the keys of its last
+failed `images`): it is recorded as skipped with the reason and its keys are dropped. A disabled module keeps its
+saved keys and gets this pass's record (`disabled`). A module that did not run for any other reason (not selected, in
+the skip list or requiring a module that is, inactive) keeps its saved keys and its saved record, and a module that ran in a render pass gets this pass's record but keeps the keys of its last
 compute, so a render pass leaves the numbers and the macros as the last compute wrote them. The top-level
 `reporting_draws` and `warnings` are those of the last pass that built the draws.
 
@@ -366,19 +366,40 @@ log has one `[outputs] WARNING` that names the modules with their draw counts an
 `warnings` in `run_summary`. A module whose required module was computed again with other draws after it is named
 as stale. The warning never blocks a pass; computing the modules together over the same draws clears it.
 
-### Choosing modules
+### The outputs section
 
-The `outputs` section of the configuration ({class}`~kappaccino.config.OutputsConfig`) selects them:
+Every setting of the stage lives in the `outputs` section of the configuration
+({class}`~kappaccino.config.OutputsConfig`): the settings the modules share at its top level, then one section per
+module, named after it, with its `enabled` switch and the module's own settings. The section never changes a fit:
+it is not part of the run hash, a resume ignores it, and `kappaccino outputs --set` may change any of it.
 
 ```yaml
 outputs:
-  skip: [rgb]             # no imaging products
-  # only: [truth]         # these and what they require (here images); null for all
-  # fail_fast: true       # stop at the first step that raises
+  draws: 64               # reporting draws behind the maps, curves and masses
+  image_draws: 256        # draws behind the image positions, residuals and RMS (at least draws)
+  workers: 4              # threads evaluating the draws; the products are the same for any value
+  caustic_source_redshift: 9.0
+  fail_fast: false        # stop at the first step that raises
+  image_solver: {}        # the exact-image solver, shared by images and rgb (ImageSolverConfig)
+  fit: {enabled: true}
+  images: {enabled: true, extra_images: true}
+  mass: {enabled: true}
+  truth:
+    enabled: true
+    kappa_true_fits: ../../data/imaging/hera/ffsims/kappa_z9_0.fits
+    deflection_true_fits: ../../data/imaging/hera/ffsims/deflAnglesHera.fits
+  rgb:
+    enabled: true
+    image_dir: ../../data/imaging/hera/ffsims
+    bands: [F435W, F606W, F814W]
 ```
 
-or `--set outputs.skip=[rgb]` on the command line. Steps cannot be selected. The section changes only what is
-reported, so it is not part of the run hash and a resume ignores it. `runtime.skip_plots` turns the whole stage off.
+A module runs when it is enabled and active (its inputs exist: `truth` needs a truth map, `rgb` an imaging folder).
+A disabled module is recorded as `disabled` and the modules that require it are skipped with the reason; `--set
+outputs.rgb.enabled=false` does the same for one rerun. Steps cannot be switched on and off. Some inputs are read by
+more than one module: `outputs.truth.kappa_true_fits` also by `mass` (aperture and zeta masses) and `rgb` (the cluster mass
+figure), and `outputs.truth.deflection_true_fits` also by `images` (the true-lens RMS), so a disabled `truth` leaves those
+products alone. `runtime.skip_plots` turns the whole stage off.
 
 ### Rerunning the outputs of a finished run
 
@@ -389,7 +410,8 @@ kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --render            
 kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --compute --skip rgb
 kappaccino outputs results/m0416_canucs2025/<run> --skip rgb --fail-fast --draws 32
 kappaccino outputs RUN --remap /home/dutra/sdev/burkelenscluster=$PWD --only truth
-kappaccino outputs RUN --all --set truth.deflection_true_fits=data/imaging/hera/defl.fits
+kappaccino outputs RUN --all --set outputs.truth.deflection_true_fits=data/imaging/hera/defl.fits
+kappaccino outputs RUN --set outputs.rgb.enabled=false --set outputs.workers=8
 kappaccino outputs --list results/hera/w500s250t7_allblocks-3f9a1c
 ```
 
@@ -411,24 +433,24 @@ its last compute drew; the imaging is not checked before the pass, and a variant
 render step (see [The rgb module](#the-rgb-module)).
 
 `--render` and `--compute` choose the pass mode (see [Pass modes](#pass-modes)); they exclude each other, and
-`--draws` cannot go with `--render`. `--only` and `--skip` replace the run's saved `outputs.only` and `outputs.skip`
-together (the one not given is empty), `--all` runs every module whatever the saved selection, and with none of them
-the saved selection applies. `--set SECTION.FIELD=VALUE` (repeatable, the syntax of the run command) changes a report
-setting before the pass. Only report settings are accepted: the `outputs` section, `truth.deflection_true_fits`
-(`config.REPORT_ONLY_FIELDS`) and `runtime.output_workers` (`config.PERFORMANCE_FIELDS`). Anything else is refused:
-settings in the run hash would no longer describe the saved fit, and the `paths` section, which the hash leaves out,
-names the run, the figure prefix and the imaging variants (`paths.figure_prefix=../../X` would write figures
-outside the run folder). The WBIC settings change nothing the outputs stage reads. `--draws N` sets `reporting.draws` and `reporting.image_draws` to N, as
-the run command's `--draws` does; both are in the run hash, and this is the one change of that kind a rerun allows.
-`--list` prints the modules with their `requires`, `after` and compute and render steps; given a run, it also says
-whether each applies to it, judged from the configuration alone. At the end the command prints the fit numbers of the
+`--draws` cannot go with `--render`. With none of `--only`, `--skip` and `--all`, the `enabled` switches of the run's
+saved configuration (after `--set`) choose the modules. Any of the three replaces the switches: `--only A,B` runs A, B
+and the modules they require, enabled or not (an explicit request wins), `--skip C,D` runs every module but C, D and
+the modules that require them, and `--all` runs every module. `--set outputs.FIELD=VALUE` or
+`--set outputs.MODULE.FIELD=VALUE` (repeatable, the syntax of the run command) changes a field of the `outputs`
+section before the pass. Anything outside that section is refused: settings in the run hash would no longer describe
+the saved fit, and the `paths` section, which the hash leaves out, names the run, the figure prefix and the imaging
+variants (`paths.figure_prefix=../../X` would write figures outside the run folder). `--draws N` sets
+`outputs.draws` and `outputs.image_draws` to N, as the run command's `--draws` does. `--list` prints the modules
+with their `requires`, `after` and compute and render steps; given a run, it also says whether each is enabled and
+whether it applies to it, judged from the configuration alone. At the end the command prints the fit numbers of the
 saved `run_summary`. The exit code is 1 when a module failed, `--fail-fast`
 stopped the pass (one line names the error; the step logged its traceback), the pass failed outside the modules
 (writing the run summary, for example; the traceback is printed) or a render pass drew nothing, and 2 for a usage
 error, a missing file or a refused `--set` or `--remap`. A `--set` value is checked before the pass
-(`config.validate_report_settings`): `outputs.only` and `outputs.skip` must be lists of module names,
-`outputs.fail_fast` true or false, `truth.deflection_true_fits` a path or null and `runtime.output_workers` a positive
-integer; anything else is a usage error that names the field.
+(`config.validate_outputs`, which calls each section's `validate`): an unknown field, or a value of the wrong type or
+range (`outputs.workers` a positive integer, `outputs.rgb.enabled` true or false, `outputs.truth.deflection_true_fits`
+a path or null), is a usage error that names the field.
 
 ### Comparing the outputs of two runs
 
@@ -450,9 +472,10 @@ column such as `exposure_seconds` is always compared. It exits with 1 on any oth
 
 ### Writing a new module with compute, product and render
 
-A module is a subclass of {class}`~kappaccino.outputs.base.OutputModule` with a `name`, the modules whose products it
-reads (`requires`) or that it should follow (`after`), an optional `active` that returns the reason it does not apply,
-its `compute_steps` and `render_steps`, and the three methods:
+A module is three things: a subclass of {class}`~kappaccino.outputs.base.OutputModule`, a frozen dataclass of its
+settings in `config.py`, and one entry in the registry. The class has a `name`, the modules whose products it reads
+(`requires`) or that it should follow (`after`), an optional `active` that returns the reason it does not apply, its
+`compute_steps` and `render_steps`, and the three methods:
 
 ```python
 from kappaccino.outputs.base import ModuleUnavailable, OutputModule
@@ -473,7 +496,8 @@ class GGSLModule(OutputModule):
         from ..plotting.ggsl import ggsl_probability          # heavy imports inside the methods
 
         def probability():
-            store.write_table(ctx.stage, "ggsl_probability", ggsl_probability(ctx.state, ctx.draws))
+            store.write_table(ctx.stage, "ggsl_probability",
+                              ggsl_probability(ctx.state, ctx.draws, ctx.settings.min_einstein_radius_arcsec))
             return "ggsl_probability"                          # None would mean: nothing written
         ctx.step("probability", probability)
         if not ctx.ok("probability"):
@@ -490,14 +514,47 @@ class GGSLModule(OutputModule):
                                                          ctx.figures, ctx.prefix))
 ```
 
-Put it in a file of `src/kappaccino/outputs/` and add an instance to `MODULES` in `outputs/registry.py`, where its
-position sets its place among modules with no ordering between them. The context (`ctx`) holds `config`, `state`,
-`posterior`, `audit`, `paths`, `stage`, `tables`, `figures`, `prefix`, `log`, `summary`, `products`, `mode`,
+Its settings are a frozen dataclass in `src/kappaccino/config.py`, documented like its neighbours, with an `enabled`
+switch and a `validate(where)` method that names `outputs.<module>.<field>` in its errors, added as one field of
+{class}`~kappaccino.config.OutputsConfig` under the module's name:
+
+```python
+@dataclass(frozen=True)
+class GGSLOutputConfig:
+    """The ``ggsl`` output module: the galaxy-galaxy strong-lensing probability.
+
+    Parameters
+    ----------
+    enabled : bool, optional
+        Run the module.  Default True.
+    min_einstein_radius_arcsec : float, optional
+        Smallest member Einstein radius counted, in arcsec.  Positive.  Default ``0.5``.
+    """
+    enabled: bool = True
+    min_einstein_radius_arcsec: float = 0.5
+
+    def validate(self, where: str = "outputs.ggsl") -> None:
+        _boolean(f"{where}.enabled", self.enabled)
+        _positive(f"{where}.min_einstein_radius_arcsec", self.min_einstein_radius_arcsec)
+
+
+# in OutputsConfig:
+    ggsl: GGSLOutputConfig = field(default_factory=GGSLOutputConfig)
+```
+
+`OutputsConfig.validate` calls the section's `validate`, the runner reads its `enabled`, and the module reads the
+section as `ctx.settings`; a file the compute reads is a path field of the section, named in the module's
+`path_fields` as a dotted name under `outputs` (`"ggsl.catalog_path"`), which `kappaccino outputs` checks before a
+pass and `--remap` moves. Put the module class in a file of `src/kappaccino/outputs/` and add an instance to
+`MODULES` in `outputs/registry.py`, where its position sets its place among modules with no ordering between them.
+Nothing else needs to change: the section is outside the run hash with the rest of `outputs`, and `--set
+outputs.ggsl.FIELD=VALUE` already accepts it. The context (`ctx`) holds `config`, `state`,
+`posterior`, `audit`, `paths`, `stage`, `tables`, `figures`, `prefix`, `log`, `summary`, `products`, `mode`, `settings`,
 `completion` (product and render: the completeness record), `imaging(image_config)`, which loads each imaging variant
 once per pass, and for compute steps only `evaluator` and the reporting draws `draws`. `active` should decide from
-`ctx.config` and the products of the modules it requires: `--list` calls it with only the saved configuration (no
-state, no products). Keep the imports of JAX and the plotting code inside the methods: the configuration imports the
-registry to check module names. Set `checkpoint = True` on a slow imaging module so that the run summary is written
+`ctx.settings` (or `ctx.config`) and the products of the modules it requires: `--list` calls it with only the saved
+configuration (no state, no products). Keep the imports of JAX and the plotting code inside the methods: the command
+line imports the registry to list and check module names. Set `checkpoint = True` on a slow imaging module so that the run summary is written
 before it. The instances in `MODULES` are process-wide singletons, shared by every pass of the process: keep no state
 on `self` between compute and render (or between passes); what render needs goes through the store.
 
@@ -583,7 +640,7 @@ Pitfalls:
 
 | figure | content |
 |---|---|
-| `image_residual_histogram.pdf` | image-plane residuals; with `truth.deflection_true_fits`, the true-lens RMS: the rms of the true deflection map on the catalog with a free source per family and one free amplitude, a reference value and not a lower bound on the RMS (band from a bootstrap over families; table `true_lens_residuals`, record `true_lens_rms`) |
+| `image_residual_histogram.pdf` | image-plane residuals; with `outputs.truth.deflection_true_fits`, the true-lens RMS: the rms of the true deflection map on the catalog with a free source per family and one free amplitude, a reference value and not a lower bound on the RMS (band from a bootstrap over families; table `true_lens_residuals`, record `true_lens_rms`) |
 | `image_recovery.pdf` | observed and model images per family |
 | `corner_globals.pdf` | posterior of the global parameters |
 | `scaling_relation.pdf` | member scaling relation and deviations |
@@ -612,7 +669,7 @@ not define one cluster-wide field and skip these figures.
 
 ## Simulated clusters
 
-With truth maps (`TruthRecoveryConfig`, set for Hera and Ares), the run also writes the following. Every figure is
+With truth maps (`outputs.truth`, {class}`~kappaccino.config.TruthOutputConfig`, set for Hera and Ares), the run also writes the following. Every figure is
 drawn from the store (`kappaccino outputs RUN --render` draws them again): the residual maps from the arrays
 `truth_recovery_residuals`, the profiles from the profile tables, the record `truth_recovery` (centre, mass per unit
 convergence per pixel) and the published ratios saved as `truth_literature_m2d_ratios` and
@@ -634,7 +691,7 @@ convergence per pixel) and the published ratios saved as `truth_literature_m2d_r
   pixels inside the image hull whose true magnification is within 10% of 3 or 10, over all reporting draws, for the
   parametric model and the parametric + GRF model (after Raney et al. 2020). `scripts/make_scatter_summary.py` draws
   these for several clusters as `scatter_summary.pdf`;
-- `relative_displacement.pdf` (with `truth.deflection_true_fits` and a shared field): the rms difference of a
+- `relative_displacement.pdf` (with `outputs.truth.deflection_true_fits` and a shared field): the rms difference of a
   displacement between two points against their separation, along the separation (blue) and across it (orange).
   Dashed is the true map minus each draw's parametric lens, solid the draw's mass-field realization, both at the
   field's reference redshift with the modes the likelihood projects out (`gp_project_modes`) removed by least squares;
@@ -648,7 +705,7 @@ convergence per pixel) and the published ratios saved as `truth_literature_m2d_r
   `true_lens_residuals` and the record `true_lens_rms` of the same pass; the render step draws the figure from the
   table alone. The step writes nothing, and the figure is left out, when the run has no deflection map, the `images`
   compute wrote no true-lens record, the run has no shared field or no image was observed; the log then says
-  `[outputs] relative displacement skipped: <reason>`. With a deflection map and no `truth.kappa_true_fits`, `truth`
+  `[outputs] relative displacement skipped: <reason>`. With a deflection map and no `outputs.truth.kappa_true_fits`, `truth`
   runs this step alone;
 - `subhalo_mass_concentration.pdf`: one row of four panels for the members on the true map and the parametric + GRF
   model map (evaluated on the truth-map pixels). Mass is the zeta statistic (Fahlman et al. 1994) in 10 kpc, the mass
@@ -668,7 +725,7 @@ When imaging is configured and present under `data/imaging/`:
 - `small_lambda_covariance_cutouts.pdf`: RGB cutouts, linear covariance ellipses and second-order lens-map contours for
   the twelve images with the smallest Jacobian eigenvalues;
 - `fold_pairs_source_caustics.pdf`: model-identified fold pairs (mutual-nearest opposite-parity images within
-  `image_diagnostics.fold_pair_max_separation_arcsec`), with posterior critical-curve bands and source panels;
+  `outputs.rgb.fold_pair_max_separation_arcsec`), with posterior critical-curve bands and source panels;
 - for M0416 and AS1063, JWST versions with an `_jwst` suffix, including contours of the predicted observed image positions (68.3% solid,
   95.4% dashed).
 
@@ -742,7 +799,7 @@ recover it; its model position, residual and magnification are medians over the 
 those found in at least half the draws.
 
 The extra images of a draw come from a global search of its lens (parametric plus its GRF realization). Every family's
-window, the span of its images plus `image_diagnostics.exact_image_window_margin_arcsec`, is ray-shot on a coarse grid
+window, the span of its images plus `outputs.image_solver.exact_image_window_margin_arcsec`, is ray-shot on a coarse grid
 (`exact_image_grid_pitch_arcsec`) with a finer sub-grid (`exact_image_fine_pitch_arcsec`) near critical curves, and
 every candidate is refined to a root of the lens equation. With a single lens plane and a fixed cosmology the lens of
 any source redshift is the lens at one reference redshift times the ratio of lensing efficiencies, plus the external

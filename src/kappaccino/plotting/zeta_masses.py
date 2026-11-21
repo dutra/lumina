@@ -121,8 +121,8 @@ def compute_zeta_masses(config, state, draws, members, image_xy, *, log=print):
     """Zeta masses and contrasts of ``members`` (``member_diagnostics.csv``) for both apertures, on the true map and,
     for the reporting draws (``reporting.draws.ReportingDraws``), on the parametric and parametric + GRF model maps.  Returns {aperture: (member table with ``truth_zeta_msun``,
     ``truth_contrast`` and ``inside_image_hull``, {model: {"zeta": (draw, member) in Msun, "contrast": (draw, member)}})}."""
-    native, wcs = rebinned(*load_truth_fits(config.truth.kappa_true_fits))
-    z_source = float(config.truth.caustic_source_redshift)
+    native, wcs = rebinned(*load_truth_fits(config.outputs.truth.kappa_true_fits))
+    z_source = float(config.outputs.caustic_source_redshift)
     pixel_arcsec = float(np.sqrt(abs(np.linalg.det(wcs.pixel_scale_matrix)))) * 3600
     apertures = member_apertures(members, wcs, state.reference, native.shape, state.kpc_per_arcsec, pixel_arcsec)
     factor = mass_per_kappa_pixel_msun(state, wcs, z_source)
@@ -335,7 +335,7 @@ def save_zeta_masses(config, state, draws, paths, image_df, *, recompute=False, 
     aperture, ``truth_contrast`` of the R_e aperture, and per draw and member the full model's ``model_zeta_msun`` and
     ``model_contrast``).  Returns the ``results.h5`` written, or None (logged) for a run without a true map or
     members."""
-    if not config.truth.kappa_true_fits or not len(state.members.member_ids):
+    if not config.outputs.truth.kappa_true_fits or not len(state.members.member_ids):
         log('[zeta] skipped: no true convergence map or no cluster members')
         return None
     members = store.read_table(paths.tables, 'member_diagnostics')

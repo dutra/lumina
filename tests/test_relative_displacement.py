@@ -92,19 +92,19 @@ def test_gp_structure_rises_to_plateau():
 
 def test_compute_skips_without_truth_map(tmp_path):
     lines = []
-    config = SimpleNamespace(truth=SimpleNamespace(deflection_true_fits=None), paths=SimpleNamespace(figure_prefix="x"))
+    config = SimpleNamespace(outputs=SimpleNamespace(truth=SimpleNamespace(deflection_true_fits=None)), paths=SimpleNamespace(figure_prefix="x"))
     recovery = {"image_fit_quality": pd.DataFrame({"x_obs_arcsec": [0.0]}),
                 "posterior_image_residual_draws": pd.DataFrame({"posterior_index": [0]})}
     out = rd.save_relative_displacement(config, None, None, SimpleNamespace(has_field=True), recovery, {"amplitude": 1.0},
                                         tmp_path, log=lines.append)
     assert out is None
-    assert lines == ["[outputs] relative displacement skipped: no truth.deflection_true_fits"]
+    assert lines == ["[outputs] relative displacement skipped: no outputs.truth.deflection_true_fits"]
     assert not (tmp_path / "results.h5").exists() and not (tmp_path / "figures").exists()
 
 
 def test_compute_skips_without_true_lens_field_or_images(tmp_path):
     lines = []
-    config = SimpleNamespace(truth=SimpleNamespace(deflection_true_fits="map.fits"), paths=SimpleNamespace(figure_prefix="x"))
+    config = SimpleNamespace(outputs=SimpleNamespace(truth=SimpleNamespace(deflection_true_fits="map.fits")), paths=SimpleNamespace(figure_prefix="x"))
     recovery = {"image_fit_quality": pd.DataFrame({"x_obs_arcsec": [0.0]}),
                 "posterior_image_residual_draws": pd.DataFrame({"posterior_index": [0]})}
     assert rd.save_relative_displacement(config, None, None, SimpleNamespace(has_field=True), recovery, None, tmp_path,
@@ -124,7 +124,7 @@ def test_compute_skips_on_unreadable_map(tmp_path):
     from kappaccino.io import store
     lines = []
     store.write_table(tmp_path, "true_lens_residuals", pd.DataFrame({"status": ["used"]}))
-    config = SimpleNamespace(truth=SimpleNamespace(deflection_true_fits=str(tmp_path / "missing.fits")),
+    config = SimpleNamespace(outputs=SimpleNamespace(truth=SimpleNamespace(deflection_true_fits=str(tmp_path / "missing.fits"))),
                              paths=SimpleNamespace(figure_prefix="x"))
     state = SimpleNamespace(cosmo_config={"H0": 70.0, "Om0": 0.3}, gp_reference_redshift=2.0)
     recovery = {"image_fit_quality": pd.DataFrame({"x_obs_arcsec": [0.0]}),
@@ -263,7 +263,7 @@ class TruthSetup:
     def context(self, mode="full"):
         from kappaccino.outputs import OutputContext
         self.mode = mode
-        config = SimpleNamespace(truth=SimpleNamespace(kappa_true_fits=self.kappa, deflection_true_fits=self.deflection),
+        config = SimpleNamespace(outputs=SimpleNamespace(truth=SimpleNamespace(kappa_true_fits=self.kappa, deflection_true_fits=self.deflection)),
                                  paths=SimpleNamespace(figure_prefix="toy"))
         state = SimpleNamespace(cosmo_config={"H0": 70.0, "Om0": 0.3}, gp_reference_redshift=2.0)
         paths = SimpleNamespace(tables=self.tmp_path / "tables", figures=self.tmp_path / "figures",
@@ -313,7 +313,7 @@ def test_a_deflection_map_alone_activates_truth_and_the_render_pass_redraws_the_
 
 
 @pytest.mark.parametrize("change, reason", [
-    (dict(deflection=None, kappa="kappa.fits"), "no truth.deflection_true_fits"),
+    (dict(deflection=None, kappa="kappa.fits"), "no outputs.truth.deflection_true_fits"),
     (dict(true_lens=False), "no true-lens record"),
     (dict(has_field=False), "no shared mass field"),
     (dict(empty=True), "no image table"),
@@ -343,4 +343,4 @@ def test_truth_is_inactive_without_either_map(truth_setup):
     s.deflection = None
     _, records = s.run()
     assert records["truth"] == {"status": "inactive", "seconds": 0.0, "reason": (
-        "no truth convergence or deflection map (truth.kappa_true_fits, truth.deflection_true_fits)")}
+        "no truth convergence or deflection map (outputs.truth.kappa_true_fits, outputs.truth.deflection_true_fits)")}

@@ -69,7 +69,7 @@ LIKELIHOODS = {"grf_gp": ("gp_image_plane", "knee"), "gp_image_plane": ("gp_imag
 # Named options: the solver fields each sets, after the preset and --fast and before --set (so --set wins).
 FIELD_OPTIONS = {"chains": ("runtime.chains",), "starts": ("search.n_starts",), "warmup": ("sampling.warmup",),
                  "samples": ("sampling.samples",), "tree_depth": ("sampling.max_tree_depth",),
-                 "target_accept": ("sampling.target_accept",), "draws": ("reporting.draws", "reporting.image_draws")}
+                 "target_accept": ("sampling.target_accept",), "draws": ("outputs.draws", "outputs.image_draws")}
 
 
 def likelihood(name: str, gp_blocks: str):
@@ -104,8 +104,8 @@ def solver(*, production: bool, fast: bool, seed: int, likelihood_name: str, gp_
     mock needs.  The lens model, with priors centred on the mock's truth, is attached per realization by the
     mock-validation pipeline.  The smoke preset keeps its small search and chains under --fast; the member and GP settings
     of --fast apply to both presets."""
-    from ..config import (ImageDiagnosticsConfig, LensClusterSolverConfig, MemberConfig, ReportingConfig, RuntimeConfig,
-                          SamplingConfig, ScalingModelConfig, SearchConfig)
+    from ..config import (ImageSolverConfig, ImagesOutputConfig, LensClusterSolverConfig, MemberConfig, OutputsConfig,
+                          RGBOutputConfig, RuntimeConfig, SamplingConfig, ScalingModelConfig, SearchConfig)
     # All-image blocks with the projection by default (2026-11-06), as full cluster runs: under system blocks the free lens
     # absorbed a quarter of the field (nov6b, .agents/nov6-mock-sigma-alpha-free-lens.md) and the fit lost the 600-1400
     # cross-system pairs at 2-15" that pin the knee and ell.  --fast keeps system blocks, about 5x cheaper per gradient.
@@ -128,16 +128,16 @@ def solver(*, production: bool, fast: bool, seed: int, likelihood_name: str, gp_
         # Centered deviations for the members the data pin, unit offsets for the rest, classification at the current model
         # (reclassified at the MAP), as for the observed clusters.
         members=MemberConfig(centering="auto", classification_prior_quantile=None),
-        image_diagnostics=ImageDiagnosticsConfig(match_tolerance_arcsec=3.0),
         # No search for extra images: the mock catalog holds every image of the true lens, and no recovery table reads them.
-        reporting=ReportingConfig(draws=64 if production else 32, image_draws=64 if production else 32, extra_images=False),
+        outputs=OutputsConfig(draws=64 if production else 32, image_draws=64 if production else 32,
+                              image_solver=ImageSolverConfig(match_tolerance_arcsec=3.0),
+                              images=ImagesOutputConfig(extra_images=False)),
     )
     if fast:
         config = replace(
             config,
             sampling=SamplingConfig(warmup=500, samples=250, max_tree_depth=8, target_accept=0.8, far_field_offsets="fixed") if production else config.sampling,
-            image_diagnostics=replace(config.image_diagnostics, fold_pair_max_separation_arcsec=3.0),
-            reporting=ReportingConfig(draws=32, image_draws=32, extra_images=False),
+            outputs=replace(config.outputs, draws=32, image_draws=32, rgb=RGBOutputConfig(fold_pair_max_separation_arcsec=3.0)),
             members=replace(config.members, far_field_cut_radii=2.0, classification_prior_quantile=None, min_deflection_arcsec=None,
                             cut_radius_inflation=3.0),
             scaling=replace(config.scaling, member_shape_scatter=None),
@@ -256,7 +256,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--tree-depth", type=_positive_int, metavar="N", help="NUTS maximum tree depth (sampling.max_tree_depth)")
     p.add_argument("--target-accept", type=_accept, metavar="P", help="NUTS target acceptance in (0, 1) (sampling.target_accept)")
     p.add_argument("--draws", type=_positive_int, metavar="N",
-                   help="posterior draws behind every reported product (reporting.draws and reporting.image_draws)")
+                   help="posterior draws behind every reported product (outputs.draws and outputs.image_draws)")
     p.add_argument("--set", action="append", default=[], dest="overrides", metavar="SECTION.FIELD=VALUE",
                    help="override one field of the solver template, after the options above, e.g. "
                         "likelihood.gp_blocks=system; repeatable")

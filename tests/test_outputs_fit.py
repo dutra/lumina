@@ -24,7 +24,7 @@ def likelihood(config, kind):
                 "knee": dict(likelihood_mode="gp_image_plane", gp_kernel="knee", gp_blocks="all"),
                 "knee_no_grf": dict(likelihood_mode="gp_image_plane", gp_kernel="knee", gp_blocks="all", sigma_grf_prior=None)}[kind]
     return replace(config, likelihood=replace(config.likelihood, **settings),
-                   reporting=replace(config.reporting, draws=2, image_draws=2)).validate()
+                   outputs=replace(config.outputs, draws=2, image_draws=2)).validate()
 
 
 def posterior_for(state, evaluator, *, chains=True, n=16):

@@ -376,7 +376,7 @@ The mosaics and truth maps the figures read, plain files, one folder per cluster
     ffsims_site/      the pages, stylesheet and thumbnails of the FF-SIMS site, which went offline in 2026
 
 Each file has a .json sidecar (origin URL or local path, sha256, shape, pixel scale) and manifest.json lists them.
-The cluster run.yaml files point ImageCatalogCutoutConfig.image_dir at <cluster>/<source> and the truth maps at <cluster>/ffsims.
+The cluster run.yaml files point outputs.rgb.image_dir at <cluster>/<source> and the truth maps (outputs.truth) at <cluster>/ffsims.
 Nothing here is a symbolic link: `download --local-source DIR` copies files it finds under DIR.  `zip` packs the JWST
 and FF-SIMS files with the catalogs/ tree; `unpack` restores the archive.  None of it is tracked by git.
 """

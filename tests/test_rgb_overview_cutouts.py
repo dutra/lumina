@@ -78,9 +78,9 @@ def test_partial_system_draws_median_critical_field_without_anchor(monkeypatch):
 
 def test_configured_panel_order_roundtrip_and_limit(tmp_path):
     from dataclasses import asdict
-    from kappaccino.config import ImageCatalogCutoutConfig
+    from kappaccino.config import RGBOutputConfig
     import json
-    config=ImageCatalogCutoutConfig(paper_small_lambda_cutouts=IMAGE_LABELS,
+    config=RGBOutputConfig(paper_small_lambda_cutouts=IMAGE_LABELS,
                                    paper_fold_cutouts=SYSTEM_IDS)
     saved=json.loads(json.dumps(asdict(config)))
     assert saved['paper_small_lambda_cutouts']==list(IMAGE_LABELS)
@@ -96,8 +96,8 @@ def test_launcher_declares_ordered_panels():
         data = yaml.safe_load(run.read_text())
         if 'extends' in data:
             data = yaml.safe_load((run.parent/data['extends']).read_text())
-        assert tuple(data['image_catalog']['paper_small_lambda_cutouts'])==tuple('image:'+s for s in M0416_SMALL_LAMBDA)
-        assert tuple(data['image_catalog']['paper_fold_cutouts'])==tuple('system:'+s for s in SYSTEM_IDS)
+        assert tuple(data['outputs']['rgb']['paper_small_lambda_cutouts'])==tuple('image:'+s for s in M0416_SMALL_LAMBDA)
+        assert tuple(data['outputs']['rgb']['paper_fold_cutouts'])==tuple('system:'+s for s in SYSTEM_IDS)
 
 
 def test_explicit_panels_compute_missing_critical_fields(tmp_path,monkeypatch):

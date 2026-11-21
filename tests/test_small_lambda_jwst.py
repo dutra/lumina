@@ -32,7 +32,7 @@ def test_render_from_the_reporting_draws(tmp_path, monkeypatch):
     state=NS(images=NS(image_labels=['a'],x_obs=[0.],y_obs=[0.],
                       family_index_per_image=[0],family_ids=['f']),
              family_data=[NS(family_id='f',z_source=2.)],reference=None)
-    config=NS(paths=NS(figure_prefix='test'),image_catalog=NS(image_dir='test'))
+    config=NS(paths=NS(figure_prefix='test'),outputs=NS(rgb=NS(image_dir='test')))
     paths=NS(tables=tmp_path,figures=tmp_path)
     from kappaccino.plotting import critical_fields
     def critical(draws,centers,fovs,redshifts,path,**k):           # what median_cutout_determinants saves

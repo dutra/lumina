@@ -109,9 +109,9 @@ class Setup:
 
     def context(self, mode="full"):
         self.mode = mode
-        config = SimpleNamespace(image_diagnostics=SimpleNamespace(exact_image_finder="global-jax"),
-                                 reporting=SimpleNamespace(extra_images=True),
-                                 truth=SimpleNamespace(deflection_true_fits=self.deflection),
+        config = SimpleNamespace(outputs=SimpleNamespace(image_solver=SimpleNamespace(exact_image_finder="global-jax"),
+                                                         images=SimpleNamespace(extra_images=True),
+                                                         truth=SimpleNamespace(deflection_true_fits=self.deflection)),
                                  paths=SimpleNamespace(figure_prefix="toy"))
         state = SimpleNamespace(family_data=[], parameter_specs=[], cosmo_config={"H0": 70.0, "Om0": 0.3})
         paths = SimpleNamespace(tables=self.tmp_path / "tables", figures=self.tmp_path / "figures", root=self.tmp_path)
@@ -156,8 +156,8 @@ def test_an_empty_image_table_round_trips_and_draws_no_figure(setup):
         pd.testing.assert_frame_equal(ctx.products["images"]["recovery"][name], frame, check_exact=True)
     assert ctx.products["images"]["recovery"]["position_coverage"].empty
     assert records["images"]["status"] == "done" and "render_steps" not in records["images"] and setup.figures() == []
-    ctx.config.image_catalog = SimpleNamespace(image_dir="imaging")
-    assert module_named("rgb").active(ctx) == "no observed image in the image recovery"
+    ctx.config.outputs.rgb = SimpleNamespace(image_dir="imaging")
+    assert ctx.inactive_reason(module_named("rgb")) == "no observed image in the image recovery"
 
 
 def test_a_render_pass_draws_both_figures_from_the_store(setup):

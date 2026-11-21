@@ -43,8 +43,8 @@ def resolve_panel(selector, systems):
 
 
 def paper_cutout_groups(config):
-    return [('small_lambda_posteriors', config.image_catalog.paper_small_lambda_cutouts),
-            ('fold_cutouts', config.image_catalog.paper_fold_cutouts)]
+    return [('small_lambda_posteriors', config.outputs.rgb.paper_small_lambda_cutouts),
+            ('fold_cutouts', config.outputs.rgb.paper_fold_cutouts)]
 
 
 def paper_cutouts_record(config):

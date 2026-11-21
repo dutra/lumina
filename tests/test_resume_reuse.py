@@ -388,7 +388,7 @@ def test_the_field_code_enters_the_grid_recovery_and_aperture_keys(monkeypatch, 
     truth = tmp_path / 'truth.fits'
     truth.write_bytes(b'0')
     members = pd.DataFrame(dict(member_id=['p:1'], catalog_id=['1'], x_centre=[0.], y_centre=[0.], catalog_mag=[20.]))
-    aperture_config = SimpleNamespace(truth=SimpleNamespace(kappa_true_fits=truth, caustic_source_redshift=9.))
+    aperture_config = SimpleNamespace(outputs=SimpleNamespace(truth=SimpleNamespace(kappa_true_fits=truth), caustic_source_redshift=9.))
 
     def keys():
         draws = reporting.ReportingDraws(evaluator, posterior, 4, 0)

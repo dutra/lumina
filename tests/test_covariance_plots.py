@@ -18,7 +18,7 @@ from kappaccino.core.state import build_state
 @pytest.mark.parametrize('selection', [True, False])
 def test_covariance_outputs_with_one_draw(synthetic_config, tmp_path, selection):
     config = replace(synthetic_config,
-                     reporting=replace(synthetic_config.reporting, draws=1))
+                     outputs=replace(synthetic_config.outputs, draws=1))
     if not selection:
         config = replace(config, likelihood=replace(config.likelihood, sigma_sel_prior=None))
     state = build_state(config)

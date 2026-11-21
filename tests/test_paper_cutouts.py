@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from kappaccino.plotting import paper_cutouts as pc
-from kappaccino.config import ImageCatalogCutoutConfig
+from kappaccino.config import RGBOutputConfig
 
 
 NO_CRITICAL = dict(entry=None, index=[])
@@ -43,9 +43,9 @@ def test_selectors_preserve_order_and_select_only_family():
 
 def test_writer_uses_saved_panels_and_preserves_selector_order(tmp_path, monkeypatch):
     selections = ('family:K6B','image:K34.b','system:K6')
-    cfg = ImageCatalogCutoutConfig(paper_small_lambda_cutouts=selections)
+    cfg = RGBOutputConfig(paper_small_lambda_cutouts=selections)
     assert asdict(cfg)['paper_small_lambda_cutouts'] == selections
-    config = NS(image_catalog=cfg, paths=NS(figure_prefix='test',run_name='test'))
+    config = NS(outputs=NS(rgb=cfg), paths=NS(figure_prefix='test',run_name='test'))
     monkeypatch.setattr(pc,'load_fold_data',lambda _:dict(systems=[system()],partial_systems=[]))
     calls=[]
     def cached(*args, **kwargs):
@@ -68,12 +68,12 @@ def test_writer_uses_saved_panels_and_preserves_selector_order(tmp_path, monkeyp
 
 def test_empty_selections_do_not_load_diagnostics(tmp_path, monkeypatch):
     monkeypatch.setattr(pc,'load_fold_data',lambda _:pytest.fail('disabled figure read diagnostics'))
-    assert write(NS(image_catalog=ImageCatalogCutoutConfig(),paths=NS(figure_prefix='test')),None,tmp_path,tmp_path,None)==[]
+    assert write(NS(outputs=NS(rgb=RGBOutputConfig()),paths=NS(figure_prefix='test')),None,tmp_path,tmp_path,None)==[]
 
 
 def test_figure_without_a_saved_posterior_is_skipped_not_fatal(tmp_path, monkeypatch):
-    cfg = ImageCatalogCutoutConfig(paper_small_lambda_cutouts=('image:K34.b',), paper_fold_cutouts=('system:K6',))
-    config = NS(image_catalog=cfg, paths=NS(figure_prefix='test',run_name='test'))
+    cfg = RGBOutputConfig(paper_small_lambda_cutouts=('image:K34.b',), paper_fold_cutouts=('system:K6',))
+    config = NS(outputs=NS(rgb=cfg), paths=NS(figure_prefix='test',run_name='test'))
     monkeypatch.setattr(pc,'load_fold_data',lambda _:dict(systems=[system()],partial_systems=[]))
     monkeypatch.setattr(pc,'overview_cutout_data',
                         lambda *a, **k: None if k['image_labels'] else dict(images=[],systems=[system()],critical_source=NO_CRITICAL))
@@ -89,9 +89,9 @@ def partial(identity='K8'):
 
 
 def test_partial_system_is_drawn_reduced_and_unknown_selector_skips_figure(tmp_path, monkeypatch):
-    cfg = ImageCatalogCutoutConfig(paper_small_lambda_cutouts=('system:K6','system:K9'),
+    cfg = RGBOutputConfig(paper_small_lambda_cutouts=('system:K6','system:K9'),
                                    paper_fold_cutouts=('system:K6','system:K8','family:K8B'))
-    config = NS(image_catalog=cfg, paths=NS(figure_prefix='test',run_name='test'))
+    config = NS(outputs=NS(rgb=cfg), paths=NS(figure_prefix='test',run_name='test'))
     monkeypatch.setattr(pc,'load_fold_data',lambda _:dict(systems=[system()],partial_systems=[partial()]))
     monkeypatch.setattr(pc,'overview_cutout_data',lambda *a, **k: dict(images=[],systems=[],critical_source=NO_CRITICAL))
     drawn=[]

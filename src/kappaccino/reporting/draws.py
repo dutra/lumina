@@ -1,13 +1,13 @@
 """The posterior draws behind every reported product, chosen once and evaluated once.
 
-``reporting_draws`` picks ``config.reporting.draws`` random posterior draws over all chains with the run seed.  The
+``reporting_draws`` picks ``config.outputs.draws`` random posterior draws over all chains with the run seed.  The
 returned :class:`ReportingDraws` evaluates each draw lazily and keeps what it computed, so the figures and tables of one
 output pass share the work.  Each draw carries one conditional realization of the shared GRF (``plotting.grf``), drawn
 once with a seed fixed by the run seed and the draw's posterior row, and a grid of lens maps is evaluated once per draw
 however many products read it.  Every product reports the median over these draws and their 16th to 84th percentile
 range, which therefore holds the uncertainty of the lens parameters and of the field; none uses the single best sample.
 
-The grids evaluate the draws in ``workers`` threads (``config.runtime.output_workers``, :func:`core.parallel.map_draws`);
+The grids evaluate the draws in ``workers`` threads (``config.outputs.workers``, :func:`core.parallel.map_draws`);
 the caches of this object are filled under locks, so the threads see one realization per draw.
 
 Grids on disk.  With ``cache_stage`` set (the output stage, ``reporting.outputs.write_outputs``), the maps of every grid
@@ -526,12 +526,11 @@ class ReportingDraws:
 
 
 def reporting_draws(config, evaluator, posterior) -> ReportingDraws:
-    """The reporting draws of a run (``config.reporting.draws`` product draws within ``config.reporting.image_draws``
-    image draws, ``config.runtime.seed``, evaluated in ``config.runtime.output_workers`` threads), cached on the
+    """The reporting draws of a run (``config.outputs.draws`` product draws within ``config.outputs.image_draws``
+    image draws, ``config.runtime.seed``, evaluated in ``config.outputs.workers`` threads), cached on the
     posterior object so every product of one output pass shares them and their evaluations."""
-    count, seed = int(config.reporting.draws), int(config.runtime.seed)
-    image_count = int(getattr(config.reporting, 'image_draws', count))
-    workers = int(getattr(config.runtime, 'output_workers', 1))
+    count, seed = int(config.outputs.draws), int(config.runtime.seed)
+    image_count, workers = int(config.outputs.image_draws), int(config.outputs.workers)
     cached = getattr(posterior, "_reporting_draws", None)
     if (cached is not None and cached.evaluator is evaluator and len(cached) == min(count, len(posterior.samples)) and cached.seed == seed
             and len(cached.image_indices) == min(max(count, image_count), len(posterior.samples))):

@@ -135,8 +135,9 @@ def test_compute_all_draws_including_no_pair(synthetic_config, monkeypatch):
 
 @pytest.mark.parametrize('bad',[0.,-1.,np.inf,np.nan])
 def test_separation_validation(synthetic_config,bad):
-    config=replace(synthetic_config,image_diagnostics=replace(synthetic_config.image_diagnostics,fold_pair_max_separation_arcsec=bad))
-    with pytest.raises(ValueError,match='fold_pair'):
+    outputs=synthetic_config.outputs
+    config=replace(synthetic_config,outputs=replace(outputs,rgb=replace(outputs.rgb,fold_pair_max_separation_arcsec=bad)))
+    with pytest.raises(ValueError,match='outputs.rgb.fold_pair_max_separation_arcsec'):
         config.validate()
 
 

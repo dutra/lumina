@@ -37,7 +37,6 @@ def _truth_maps(folder, reference, *, size=121, scale=.5, einstein=12.):
 def test_the_real_truth_module_renders_its_figures_again_from_the_store(synthetic_config, tmp_path, monkeypatch):
     import jax
     import jax.numpy as jnp
-    from kappaccino.config import ReportingConfig
     from kappaccino.core.state import build_state
     from kappaccino.likelihood.evaluator import Evaluator
     from kappaccino.outputs import saved_run
@@ -45,9 +44,9 @@ def test_the_real_truth_module_renders_its_figures_again_from_the_store(syntheti
     from kappaccino.reporting import draws as draws_module
     state = build_state(synthetic_config)
     maps = _truth_maps(tmp_path / "truth", state.reference)
-    config = replace(synthetic_config, reporting=ReportingConfig(draws=2),
-                     truth=replace(synthetic_config.truth, kappa_true_fits=maps["kappa"], gammax_true_fits=maps["gamma1"],
-                                   gammay_true_fits=maps["gamma2"], truth_grid_size=48))
+    outputs = synthetic_config.outputs
+    config = replace(synthetic_config, outputs=replace(outputs, draws=2, truth=replace(
+        outputs.truth, kappa_true_fits=maps["kappa"], gammax_true_fits=maps["gamma1"], gammay_true_fits=maps["gamma2"], grid_size=48)))
     evaluator = Evaluator(state)
     samples = np.asarray(state.initial_theta)[None] + np.random.default_rng(2).normal(0, .002, (4, state.n_parameters))
     posterior = SimpleNamespace(samples=samples, physical=np.asarray(jax.vmap(evaluator.physical)(jnp.asarray(samples))),

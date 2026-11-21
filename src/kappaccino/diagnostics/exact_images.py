@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from ..config import ImageDiagnosticsConfig
+from ..config import ImageSolverConfig
 from ..likelihood.evaluator import Evaluator
 from ..core.model import (CORED_POWER_LAW_PROFILE, DP_IE_PROFILE, MASS_SHEET_PROFILE, NFW_PROFILE, SHEAR_PROFILE, FamilyData,
                           PackedLensState)
@@ -69,7 +69,7 @@ class ExactImageSolver:
     # redshift (``solve_all_global``); False forces the search per source redshift (kept for comparison and tests).
     shared_lattice = True
 
-    def __init__(self, evaluator: Evaluator, config: ImageDiagnosticsConfig) -> None:
+    def __init__(self, evaluator: Evaluator, config: ImageSolverConfig) -> None:
         self.evaluator = evaluator
         self.config = config
         self.timing: dict[str, float] = {"exact_solver": 0.0, "global_grid": 0.0, "global_refine": 0.0}

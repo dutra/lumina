@@ -26,9 +26,10 @@ def with_ffsims_dir(config, directory):
     if not directory:
         return config
     directory = str(directory).rstrip('/')
-    truth = replace(config.truth, kappa_true_fits=f'{directory}/kappa_z9_0.fits', gammax_true_fits=f'{directory}/gammax_z9_0.fits',
+    outputs = config.outputs
+    truth = replace(outputs.truth, kappa_true_fits=f'{directory}/kappa_z9_0.fits', gammax_true_fits=f'{directory}/gammax_z9_0.fits',
                     gammay_true_fits=f'{directory}/gammay_z9_0.fits')
-    return replace(config, truth=truth, image_catalog=replace(config.image_catalog, image_dir=directory))
+    return replace(config, outputs=replace(outputs, truth=truth, rgb=replace(outputs.rgb, image_dir=directory)))
 
 
 def redirect(catalogs=None, ffsims_dir=None):

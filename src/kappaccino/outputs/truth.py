@@ -1,4 +1,5 @@
-"""The comparison with the true lens of a simulated cluster (``truth.kappa_true_fits``, ``truth.deflection_true_fits``)."""
+"""The comparison with the true lens of a simulated cluster (``outputs.truth.kappa_true_fits``,
+``outputs.truth.deflection_true_fits``)."""
 from __future__ import annotations
 
 from .base import ModuleUnavailable, OutputContext, OutputModule
@@ -37,9 +38,9 @@ class TruthModule(OutputModule):
                    "truth.deflection_true_fits")
 
     def active(self, ctx: OutputContext) -> str | None:
-        truth = ctx.config.truth
+        truth = ctx.settings
         return None if truth.kappa_true_fits or truth.deflection_true_fits else (
-            "no truth convergence or deflection map (truth.kappa_true_fits, truth.deflection_true_fits)")
+            "no truth convergence or deflection map (outputs.truth.kappa_true_fits, outputs.truth.deflection_true_fits)")
 
     def compute(self, ctx: OutputContext) -> None:
         from ..diagnostics.exact_images import astropy_cosmology
@@ -53,7 +54,7 @@ class TruthModule(OutputModule):
         # First: it needs no truth maps, so a failed truth_maps step leaves it alone.
         ctx.step("relative_displacement", lambda: save_relative_displacement(
             config, state, ctx.evaluator, ctx.draws, images["recovery"], images["true_lens"], ctx.stage, log=log))
-        truth = ctx.step("truth_maps", lambda: compute_truth_recovery(state, ctx.draws, config.truth, ctx.paths.fits, tables, log=log))
+        truth = ctx.step("truth_maps", lambda: compute_truth_recovery(state, ctx.draws, config.outputs, ctx.paths.fits, tables, log=log))
         if not ctx.ok("truth_maps"):
             for name in self.compute_steps[2:]:
                 ctx.skip_step(name, "truth_maps failed")
@@ -63,7 +64,7 @@ class TruthModule(OutputModule):
         image_df = images["image_df"]
         cosmology = astropy_cosmology(state.cosmo_config)
         ctx.step("magnification_recovery", save_magnification_recovery, truth, image_df, state.reference, state.z_lens,
-                 cosmology, config.truth, tables, log=log)
+                 cosmology, config.outputs, tables, log=log)
         ctx.step("cumulative_source_area", lambda: save_cumulative_source_area(truth, ctx.draws, cosmology, tables, log=log))
         ctx.step("magnification_scatter", lambda: write_magnification_scatter(truth, ctx.draws, image_df, tables, log=log))
         if truth["profile"] is not None:

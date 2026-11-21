@@ -25,7 +25,8 @@ def test_native_truth_redshift_scaling(tmp_path):
         path = tmp_path / f'{name}.fits'
         fits.writeto(path, np.full((10, 10), value), header)
         paths.append(str(path))
-    config = SimpleNamespace(kappa_true_fits=paths[0], gammax_true_fits=paths[1], gammay_true_fits=paths[2], caustic_source_redshift=9.)
+    config = SimpleNamespace(truth=SimpleNamespace(kappa_true_fits=paths[0], gammax_true_fits=paths[1], gammay_true_fits=paths[2]),
+                             caustic_source_redshift=9.)
     images = pd.DataFrame({'x_obs_arcsec':[0.,0.], 'y_obs_arcsec':[0.,0.], 'z_source':[1.,9.]})
     cosmo = FlatLambdaCDM(H0=70, Om0=.3)
     mu, _ = image_truth_magnification(images, (3,10.,5.), .3, cosmo, config)
@@ -52,7 +53,7 @@ def test_bins_and_style_isolation(tmp_path):
 
 
 def test_missing_truth_skips(tmp_path):
-    config=SimpleNamespace(kappa_true_fits=None,gammax_true_fits=None,gammay_true_fits=None)
+    config=SimpleNamespace(truth=SimpleNamespace(kappa_true_fits=None,gammax_true_fits=None,gammay_true_fits=None))
     assert save_magnification_recovery(None,pd.DataFrame(),None,None,None,config,tmp_path) is None
     assert not list(tmp_path.iterdir())
 
@@ -69,7 +70,7 @@ def test_writer_preserves_family_redshifts_and_records_limits(tmp_path, monkeypa
         seen.extend(frame.z_source)
         return np.array([2.,-3.,4.,200.]),[9.,9.,9.]
     monkeypatch.setattr(module,'image_truth_magnification',image_truth)
-    config=SimpleNamespace(kappa_true_fits='k',gammax_true_fits='g1',gammay_true_fits='g2')
+    config=SimpleNamespace(truth=SimpleNamespace(kappa_true_fits='k',gammax_true_fits='g1',gammay_true_fits='g2'))
     assert save_magnification_recovery(truth,images,None,None,None,config,tmp_path) is not None
     path=render_magnification_recovery(tmp_path,tmp_path/'toy_magnification_recovery.pdf')
     assert path.name=='toy_magnification_recovery.pdf'

@@ -33,7 +33,9 @@ def test_run_outputs_create_potfile_corner(tmp_path, monkeypatch):
     samples, specs = fixture_draws()
     posterior = SimpleNamespace(samples=samples, physical=samples, log_prob=np.zeros(len(samples)))
     state = SimpleNamespace(parameter_specs=specs)
-    config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="hera"), image_diagnostics=None, reporting=SimpleNamespace(draws=2, extra_images=False), runtime=SimpleNamespace(seed=0))
+    config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="hera"), runtime=SimpleNamespace(seed=0),
+                             outputs=SimpleNamespace(draws=2, image_draws=2, workers=1, fail_fast=False, image_solver=None,
+                                                     images=SimpleNamespace(extra_images=False)))
     paths = SimpleNamespace(tables=tmp_path / "tables", figures=tmp_path / "figures", root=tmp_path)
     monkeypatch.setattr(posterior_module, "posterior_summary_table", lambda *args: pd.DataFrame())
     monkeypatch.setattr(posterior_module, "classification_table", lambda *args: pd.DataFrame())

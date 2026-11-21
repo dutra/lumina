@@ -23,8 +23,10 @@ pass the saved records are checked for modules computed over different draws (:f
 
 The runner (:func:`run_modules`) orders the modules by what they need (``requires``, hard: the module reads
 ``ctx.products`` of those) and by what they should follow (``after``, ordering only), stably with respect to the
-registry order (``outputs.registry.MODULES``), and runs each one that is selected, not skipped and active.  A module
-runs only when every module it requires gave its product (which may be None).  Each module's outcome, wall time,
+registry order (``outputs.registry.MODULES``), and runs each one that is selected, not skipped, not disabled and
+active.  Each module has a section of the configuration under ``outputs`` by its name (``config.OutputsConfig``), with
+its ``enabled`` switch and its own settings; the module reads it as :attr:`OutputContext.settings`.  A module runs only
+when every module it requires gave its product (which may be None).  Each module's outcome, wall time,
 steps and the reporting draws it used go to ``ctx.summary["modules"]``, and so to the record ``run_summary``.
 
 The modules import matplotlib, the plotting and diagnostics modules and the image solver inside their phases, so
@@ -70,7 +72,8 @@ class OutputContext:
 
     ``config``, ``state``, ``posterior`` and ``audit`` are those of the fit; ``paths`` is the final ``StagePaths``
     (``root``, ``tables``, ``figures``, ``fits``); ``mode`` is the pass mode (:data:`MODES`).  ``summary`` is the record
-    ``run_summary`` being built, and ``products`` holds what each module's ``product`` returned, by module name.  The
+    ``run_summary`` being built, and ``products`` holds what each module's ``product`` returned, by module name;
+    :attr:`settings` is the running module's section of ``config.outputs``.  The
     evaluator (:attr:`evaluator`) and the reporting draws (:attr:`draws`, built on first access, so a pass of modules
     that need none never builds them) are for compute steps only: anywhere else they raise :class:`ComputeOnly`, which
     names the module and step that asked.  :meth:`imaging` loads the imaging of each variant once per pass."""
@@ -109,6 +112,28 @@ class OutputContext:
     @property
     def prefix(self) -> str:
         return self.config.paths.figure_prefix
+
+    @property
+    def settings(self):
+        """The running module's own section of the configuration, ``config.outputs.<module name>`` (in ``active`` too).
+
+        Raises
+        ------
+        RuntimeError
+            Outside a module.
+        """
+        if self._module is None:
+            raise RuntimeError("OutputContext.settings is the running module's section: read it inside a module")
+        return getattr(self.config.outputs, self._module.name)
+
+    def inactive_reason(self, module: "OutputModule") -> str | None:
+        """``module.active(self)`` with ``module`` as the running module, so that it reads its own :attr:`settings`
+        (for listing and checking modules outside a pass)."""
+        previous, self._module = self._module, module
+        try:
+            return module.active(self)
+        finally:
+            self._module = previous
 
     @property
     def stage(self) -> Path:
@@ -179,7 +204,7 @@ class OutputContext:
         if imaging is None and required:
             from .saved_run import REMAP_HINT
             raise FileNotFoundError(f"the last compute drew this imaging variant, but its imaging cannot be loaded from "
-                                    f"image_catalog.image_dir = {image_config.image_dir} ({error}); {REMAP_HINT}")
+                                    f"outputs.rgb.image_dir = {image_config.image_dir} ({error}); {REMAP_HINT}")
         return imaging
 
     def _records(self) -> dict[str, dict]:
@@ -309,8 +334,10 @@ class OutputModule:
     ``input_steps`` those render steps that only load what the figures read (the imaging), which do not count as
     having drawn something (:func:`rendered_anything`).  ``summary_keys`` are the top-level keys of ``run_summary``
     the module writes, from its compute: a later full or compute pass that runs the module drops them before merging,
-    so a failed module leaves no old numbers behind, and a render pass keeps them.  ``path_fields`` are the configuration fields (``section.field``) of the files the
-    compute reads, checked before a rerun (``outputs.command``)."""
+    so a failed module leaves no old numbers behind, and a render pass keeps them.  ``path_fields`` are the fields of
+    the files the compute reads, as dotted names under ``outputs`` (``rgb.image_dir``, ``truth.kappa_true_fits``),
+    checked before a rerun (``outputs.command``).  The module's settings are the section ``config.outputs.<name>``
+    (:attr:`OutputContext.settings`), whose ``enabled`` switch the runner reads."""
 
     name: str = ""
     requires: tuple[str, ...] = ()
@@ -325,7 +352,8 @@ class OutputModule:
 
     def active(self, ctx: OutputContext) -> str | None:
         """None when the module applies to this run, else a short reason why not (logged, recorded as inactive).
-        Decided from ``ctx.config`` and, at run time, the products of the modules it requires (absent when listing)."""
+        Decided from ``ctx.settings`` (or another part of ``ctx.config``) and, at run time, the products of the modules
+        it requires (absent when listing)."""
         return None
 
     def compute(self, ctx: OutputContext) -> None:
@@ -376,6 +404,14 @@ def order_modules(modules: Sequence[OutputModule]) -> list[OutputModule]:
     return ordered
 
 
+def disabled_modules(config, modules: Sequence[OutputModule] | None = None) -> tuple[str, ...]:
+    """The names of the ``modules`` (default: the registry) whose section ``config.outputs.<name>`` has ``enabled``
+    false."""
+    if modules is None:
+        from .registry import MODULES as modules
+    return tuple(m.name for m in modules if not getattr(config.outputs, m.name).enabled)
+
+
 def plan_modules(modules: Sequence[OutputModule], *, only: Iterable[str] | None = None,
                  skip: Iterable[str] = ()) -> tuple[list[OutputModule], dict[str, str]]:
     """The modules a pass runs, in run order, and those added to ``only`` because a selected module requires them
@@ -388,10 +424,10 @@ def plan_modules(modules: Sequence[OutputModule], *, only: Iterable[str] | None 
     """
     ordered = order_modules(modules)
     by_name = {m.name: m for m in ordered}
-    for label, names in (("only", only or ()), ("skip", skip)):
+    for label, names in (("--only", only or ()), ("--skip", skip)):
         unknown = [n for n in names if n not in by_name]
         if unknown:
-            raise ValueError(f"outputs.{label} names unknown output modules {unknown}; known: {list(by_name)}")
+            raise ValueError(f"{label} names unknown output modules {unknown}; known: {list(by_name)}")
     if only is None:
         return ordered, {}
     selected, added = set(only), {}
@@ -407,24 +443,27 @@ def plan_modules(modules: Sequence[OutputModule], *, only: Iterable[str] | None 
 
 
 def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = None, *, only: Iterable[str] | None = None,
-                skip: Iterable[str] = (), fail_fast: bool = False, checkpoint: Callable[[], None] | None = None) -> dict[str, dict]:
+                skip: Iterable[str] = (), disabled: Iterable[str] = (), fail_fast: bool = False,
+                checkpoint: Callable[[], None] | None = None) -> dict[str, dict]:
     """Run the output modules (default: the registry, ``outputs.registry.MODULES``) on ``ctx`` in its mode
     (``ctx.mode``): per module compute, product and render in a full pass, compute and product in a compute pass,
     product and render in a render pass.
 
     ``only`` selects modules plus whatever they require (in a render pass a module added that way gives only its
-    product); ``skip`` removes modules, and a module that requires a skipped, inactive or failed-without-product one is
-    skipped too.  A failing step is recorded and the module goes on (:meth:`OutputContext.step`); an error outside the
-    steps fails the module, and the other modules still run.  ``fail_fast`` re-raises the first error instead.
-    ``checkpoint`` is called once, before the first module with ``checkpoint`` set that runs.  Every module of the
-    plan gets a record in ``ctx.summary["modules"]``: ``status`` ("done", "inactive", "skipped" or "failed"),
+    product); ``skip`` removes modules; ``disabled`` names the modules switched off in the configuration
+    (:func:`disabled_modules`), which are recorded as disabled and do not run.  A module that requires a skipped,
+    disabled, inactive or failed-without-product one is skipped too.  A failing step is recorded and the module goes on
+    (:meth:`OutputContext.step`); an error outside the steps fails the module, and the other modules still run.
+    ``fail_fast`` re-raises the first error instead.  ``checkpoint`` is called once, before the first module with
+    ``checkpoint`` set that runs.  Every module of the plan gets a record in ``ctx.summary["modules"]``: ``status``
+    ("done", "disabled", "inactive", "skipped" or "failed"),
     ``mode``, ``seconds``, ``steps`` (each compute step's ``status``, ``seconds``, ``wrote`` and ``error`` or
     ``reason``; in a render pass those of the saved completeness record), ``render_steps`` when it rendered,
     ``reporting_draws`` and ``image_draws`` when its compute used the draws, and ``reason`` or ``error``.  Returns
     those records."""
     if modules is None:
         from .registry import MODULES as modules
-    skip = tuple(skip)
+    skip, disabled = tuple(skip), tuple(disabled)
     plan, added = plan_modules(modules, only=only, skip=skip)
     log = ctx.log
     if added:
@@ -436,8 +475,12 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
     for module in plan:
         name = module.name
         if name in skip:
-            records[name] = {"status": "skipped", "seconds": 0.0, "reason": "in outputs.skip"}
-            log(f"[outputs] {name}: skipped (in outputs.skip)")
+            records[name] = {"status": "skipped", "seconds": 0.0, "reason": "in --skip"}
+            log(f"[outputs] {name}: skipped (in --skip)")
+            continue
+        if name in disabled:
+            records[name] = {"status": "disabled", "seconds": 0.0, "reason": f"outputs.{name}.enabled is false"}
+            log(f"[outputs] {name}: disabled (outputs.{name}.enabled is false)")
             continue
         missing = next((r for r in module.requires if r not in ctx.products), None)
         if missing is not None:

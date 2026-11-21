@@ -32,7 +32,7 @@ def test_quadratic_contour_linear_limit_and_curved_map():
 def test_exact_geometry_and_derivatives(synthetic_config):
     state = build_state(synthetic_config); evaluator = Evaluator(state)
     g = cc.draw_geometry(state, evaluator, state.initial_theta)
-    solver = ExactImageSolver(evaluator, synthetic_config.image_diagnostics)
+    solver = ExactImageSolver(evaluator, synthetic_config.outputs.image_solver)
     for i in [0, 2]:  # different source redshifts
         family = state.family_data[int(state.images.family_index_per_image[i])]
         packed = evaluator.packed_state_for_z(g['physical'], family.z_source)
@@ -79,7 +79,7 @@ def test_output_reuses_loaded_imaging(monkeypatch, synthetic_config, tmp_path, c
     from kappaccino.imaging import cutouts
     from kappaccino.diagnostics import image_recovery
     from kappaccino.plotting import mass_figure, plots, covariance_cutouts, fold_pairs
-    config=replace(synthetic_config,paths=replace(synthetic_config.paths,run_name=cluster),image_catalog=replace(synthetic_config.image_catalog,image_dir='already-loaded'))
+    config=replace(synthetic_config,paths=replace(synthetic_config.paths,run_name=cluster),outputs=replace(synthetic_config.outputs,rgb=replace(synthetic_config.outputs.rgb,image_dir='already-loaded')))
     state=SimpleNamespace(parameter_specs=[],reference=(3,0,0),z_lens=.3,z_source_values=[2.])
     posterior=SimpleNamespace(samples=np.zeros((1,1)),physical=np.zeros((1,1)),log_prob=np.zeros(1))
     evaluator=SimpleNamespace(physical=lambda p:p,source_positions=lambda p:np.zeros((1,2)))
@@ -124,7 +124,7 @@ def test_output_reuses_loaded_imaging(monkeypatch, synthetic_config, tmp_path, c
     # One RGB critical overview per loaded imaging variant, named by its instrument.
     assert len(rgb_calls)==expected
     assert sorted(call[5].name for call in rgb_calls)==sorted(
-        ("jwst" if call[0].image_catalog.figure_suffix=="_jwst" else "hst")+"_rgb_critical_z9.pdf" for call in rgb_calls)
+        ("jwst" if call[0].outputs.rgb.figure_suffix=="_jwst" else "hst")+"_rgb_critical_z9.pdf" for call in rgb_calls)
     assert any(call[5].name=="jwst_rgb_critical_z9.pdf" for call in rgb_calls)==(cluster in {"m0416","as1063"})
     assert len(lambda_calls)==(1 if cluster in {"m0416","as1063"} else 0)
     assert all(call[4][3] is imaging for call in lambda_calls)
@@ -135,16 +135,16 @@ def test_output_reuses_loaded_imaging(monkeypatch, synthetic_config, tmp_path, c
 
 def test_default_jwst_variants(synthetic_config):
     from dataclasses import replace
-    from kappaccino.imaging.cutouts import imaging_variants
+    from kappaccino.imaging.cutouts import imaging_variants, variant_config
     from kappaccino.imaging.rgb import DEFAULT_JWST_RGB_BANDS
     from kappaccino.config import RGBDisplayConfig
     for name in ['m0416_bergamini2023', 'as1063']:
         config = replace(synthetic_config, paths=replace(synthetic_config.paths, run_name=name))
         primary, jwst = imaging_variants(config)
-        assert primary is config.image_catalog
+        assert primary is config.outputs.rgb
         assert jwst.bands == tuple(DEFAULT_JWST_RGB_BANDS)
-        assert jwst.rgb == RGBDisplayConfig()
+        assert jwst.display == RGBDisplayConfig()
         assert jwst.figure_suffix == '_jwst'
         assert jwst.image_dir in ('data/imaging/m0416/canucs_dr1', 'data/imaging/as1063/dja_v7.5')
-        assert imaging_variants(replace(config, image_catalog=jwst)) == [jwst]
-    assert imaging_variants(synthetic_config) == [synthetic_config.image_catalog]
+        assert imaging_variants(variant_config(config, jwst)) == [jwst]
+    assert imaging_variants(synthetic_config) == [synthetic_config.outputs.rgb]

@@ -67,8 +67,9 @@ key by key into the base and every other value replaces the base's.
 ``profiles``
     Named overlays, applied in the order asked for, each with the sections below.
 Any other key is a section of :class:`~kappaccino.config.LensClusterSolverConfig` (``likelihood``, ``search``,
-``sampling``, ``members``, ``reporting``, ``image_catalog``, ...) with its field names; ``scaling`` here changes
-the fields that ``priors.yaml`` set.  An unknown key raises.
+``sampling``, ``members``, ``outputs``, ...) with its field names; ``scaling`` here changes the fields that
+``priors.yaml`` set, and ``outputs`` holds the settings of the outputs stage, one section per output module.  An
+unknown key raises.
 """
 from __future__ import annotations
 
@@ -105,9 +106,10 @@ _IMPLICIT = {"id", "z_lens", "priors", "profile_type"}
 
 PRIORS_KEYS = {"extends", "reference", "cosmology", "z_lens", "images", "halos", "members", "scaling"}
 RUN_KEYS = {"extends", "name", "priors", "profiles"}
-# Paths in run.yaml sections, resolved against the file's folder.
-RUN_PATHS = {"truth": ("kappa_true_fits", "gammax_true_fits", "gammay_true_fits", "deflection_true_fits"),
-             "image_catalog": ("image_dir", "candidate_catalog_path"), "partition": ("catalog_path",)}
+# Paths in run.yaml sections, by their keys from the top of the file, resolved against the file's folder.
+RUN_PATHS = (("outputs", "truth", "kappa_true_fits"), ("outputs", "truth", "gammax_true_fits"),
+             ("outputs", "truth", "gammay_true_fits"), ("outputs", "truth", "deflection_true_fits"),
+             ("outputs", "rgb", "image_dir"), ("outputs", "rgb", "candidate_catalog_path"), ("partition", "catalog_path"))
 
 
 # ----------------------------------------------------------------------------- values
@@ -298,10 +300,12 @@ def _resolve_run_paths(data: dict, folder: Path) -> None:
     for layer in layers:
         if "priors" in layer and layer is not data:
             layer["priors"] = _resolve(layer["priors"], folder)
-        for section, keys in RUN_PATHS.items():
-            for key in keys:
-                if isinstance(layer.get(section), dict) and layer[section].get(key) is not None:
-                    layer[section][key] = _resolve(layer[section][key], folder)
+        for *sections, key in RUN_PATHS:
+            node = layer
+            for section in sections:
+                node = node.get(section) if isinstance(node, dict) else None
+            if isinstance(node, dict) and node.get(key) is not None:
+                node[key] = _resolve(node[key], folder)
 
 
 def _unknown(where: str, keys, allowed) -> None:

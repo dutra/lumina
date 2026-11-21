@@ -3,13 +3,13 @@ from dataclasses import replace
 import numpy as np
 import pandas as pd
 
-from kappaccino.config import TruthRecoveryConfig
+from kappaccino.config import TruthOutputConfig
 from kappaccino.diagnostics.truth_recovery import LITERATURE_RATIOS, annular_kappa_profile, literature_m2d_ratios, literature_ratios
 from kappaccino.plotting import plots
 
 
 def test_literature_ratios_are_read_beside_the_truth_map_and_drawn(tmp_path):
-    config = replace(TruthRecoveryConfig(), kappa_true_fits=str(tmp_path/"kappa.fits"))
+    config = replace(TruthOutputConfig(), kappa_true_fits=str(tmp_path/"kappa.fits"))
     assert literature_m2d_ratios(config) is None
     radius = np.geomspace(5., 90., 60)
     rows = [dict(quantity=q, approach=a, model=m, r_arcsec=r, ratio=1.02, width_px=3.0, flag=0) for q in ("mass", "kappa") for m, a in (("CATS", "parametric"), ("GRALE", "free-form")) for r in radius]
