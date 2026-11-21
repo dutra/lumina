@@ -21,9 +21,10 @@ class TruthModule(OutputModule):
     deflection map: the table and record ``relative_displacement``), the truth maps
     (``diagnostics.truth_recovery.compute_truth_recovery``: FITS, profile tables, the record ``truth_recovery`` and the
     arrays ``truth_recovery_residuals``), the magnification recovery, the cumulative source area, the magnification
-    scatter and ``truth`` in ``run_summary``; raises ModuleUnavailable when the truth_maps step failed.  Render: every
-    figure, from the store (``truth_recovery.load_truth_recovery`` and the tables of each figure).  No product: no
-    module reads it."""
+    scatter and ``truth`` in ``run_summary``; raises ModuleUnavailable when the truth_maps step failed, after which the
+    relative displacement figure is still drawn (its step needs no truth map) and the figures of the truth maps are
+    reported as not drawn.  Render: every figure, from the store (``truth_recovery.load_truth_recovery`` and the tables
+    of each figure).  No product: no module reads it."""
 
     name = "truth"
     requires = ("images",)
@@ -51,7 +52,7 @@ class TruthModule(OutputModule):
         from ..plotting.scatter_summary import write_magnification_scatter
         config, state, tables, log = ctx.config, ctx.state, ctx.tables, ctx.log
         images = ctx.products["images"]
-        # First: it needs no truth maps, so a failed truth_maps step leaves it alone.
+        # First: it needs no truth maps, so its table is saved and its figure drawn even when truth_maps fails.
         ctx.step("relative_displacement", lambda: save_relative_displacement(
             config, state, ctx.evaluator, ctx.draws, images["recovery"], images["true_lens"], ctx.stage, log=log))
         truth = ctx.step("truth_maps", lambda: compute_truth_recovery(state, ctx.draws, config.outputs, ctx.paths.fits, tables, log=log))
@@ -81,7 +82,8 @@ class TruthModule(OutputModule):
         ctx.render_step("relative_displacement", lambda: render_relative_displacement(
             store.read_table(ctx.stage, "relative_displacement"),
             plots.figure_path(ctx.figures, "relative_displacement.pdf", ctx.prefix)))
-        if not ctx.computed("truth_maps"):          # no truth convergence map, or the source is not behind the lens
+        maps = ctx.completion["steps"]["truth_maps"]
+        if maps["status"] == "done" and not maps["wrote"]:   # no truth convergence map, or no source behind the lens
             return
         figures, prefix, stage = ctx.figures, ctx.prefix, ctx.stage
         truth = _once(lambda: load_truth_recovery(stage))

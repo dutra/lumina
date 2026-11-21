@@ -3,6 +3,7 @@ section and the ``kappaccino outputs`` command."""
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -536,10 +537,30 @@ def test_module_selection_on_the_command_line(monkeypatch, synthetic_config, tmp
 
     # Nothing given: the enabled switches of the configuration.
     assert selection() == {"only": None, "skip": (), "disabled": ("truth", "rgb"), "fail_fast": False}
-    # --only, --skip or --all replace them: an explicit request wins.
+    # --only and --all replace them: an explicit request wins.
     assert selection(only=["rgb"]) == {"only": ("rgb",), "skip": (), "disabled": (), "fail_fast": False}
-    assert selection(skip=["fit"]) == {"only": None, "skip": ("fit",), "disabled": (), "fail_fast": False}
     assert selection(all_modules=True, fail_fast=True) == {"only": None, "skip": (), "disabled": (), "fail_fast": True}
+    # --skip goes on top of the switches (a disabled module stays off), or of --all.
+    assert selection(skip=["fit"]) == {"only": None, "skip": ("fit",), "disabled": ("truth", "rgb"), "fail_fast": False}
+    assert selection(all_modules=True, skip=["rgb"]) == {"only": None, "skip": ("rgb",), "disabled": (), "fail_fast": False}
+
+
+def test_skip_keeps_disabled_modules_off_in_a_real_pass(monkeypatch, synthetic_config, tmp_path):
+    from kappaccino.io import store as store_module
+    from kappaccino.reporting import outputs
+    monkeypatch.setattr(outputs, "write_run_summary", lambda *a, **k: None)
+    monkeypatch.setattr(store_module, "compact", lambda stage: None)
+    settings = synthetic_config.outputs
+    off = replace(synthetic_config, outputs=replace(settings, rgb=replace(settings.rgb, enabled=False)))
+    paths = SimpleNamespace(tables=tmp_path, figures=tmp_path, root=tmp_path)
+    modules = [Fake("fit"), Fake("images"), Fake("mass", requires=["images"]), Fake("truth", requires=["images"]),
+               Fake("rgb", requires=["images"])]
+    monkeypatch.setattr("kappaccino.outputs.registry.MODULES", tuple(modules))
+    summary = outputs.write_outputs(off, None, None, None, {}, paths, log=lambda _: None, skip=["truth"])
+    statuses = {name: record["status"] for name, record in summary["modules"].items()}
+    assert statuses == {"fit": "done", "images": "done", "mass": "done", "truth": "skipped", "rgb": "disabled"}
+    summary = outputs.write_outputs(off, None, None, None, {}, paths, log=lambda _: None, all_modules=True, skip=["truth"])
+    assert {name: record["status"] for name, record in summary["modules"].items()}["rgb"] == "done"
 
 
 def test_remap_and_report_overrides(synthetic_config, tmp_path):
@@ -601,6 +622,13 @@ def test_missing_files_name_the_field_and_suggest_remap(synthetic_config):
     check_module_paths(off)
     with pytest.raises(FileNotFoundError, match=r"\(module mass\)"):
         check_module_paths(off, only=("mass",))
+    # --skip keeps the disabled ones off; --all checks them, and --all --skip leaves out the skipped ones.
+    check_module_paths(off, skip=("fit",))
+    with pytest.raises(FileNotFoundError, match=r"\(module mass\)"):
+        check_module_paths(off, all_modules=True)
+    check_module_paths(off, all_modules=True, skip=("mass", "truth", "rgb"))
+    # A module that requires a skipped one is not run, so not checked.
+    check_module_paths(config, skip=("images",))
 
 
 def test_outputs_command_options(monkeypatch, tmp_path, capsys):
@@ -614,12 +642,15 @@ def test_outputs_command_options(monkeypatch, tmp_path, capsys):
         return ("config",)
 
     monkeypatch.setattr(command, "prepare_rerun", prepare)
+    saves = []
+    monkeypatch.setattr(command, "save_outputs_settings", lambda run, **k: saves.append(k))
     from kappaccino.reporting import outputs
     store.write_record(tmp_path / "final", "run_summary", {"fit": {"rms": 0.25}})
     monkeypatch.setattr(outputs, "write_outputs", lambda *a, **k: {"modules": {"fit": {"status": "done"}}})
     assert command.main([str(tmp_path), "--only", "fit", "--draws", "4", "--remap", "/a=/b", "--set", "outputs.fail_fast=true"]) == 0
     assert seen["only"] == ("fit",) and seen["draws"] == 4 and seen["remap"] == [("/a", "/b")]
     assert seen["overrides"] == ["outputs.fail_fast=true"]
+    assert saves == [{"overrides": ["outputs.fail_fast=true"], "draws": 4, "log": saves[0]["log"]}]
     # The fit numbers printed are the saved record's, which a pass of fit alone does not touch.
     assert json.loads(capsys.readouterr().out) == {"rms": 0.25}
     # --fail-fast: one line, exit code 1.
@@ -758,27 +789,31 @@ def test_render_without_a_completed_compute_is_unavailable(tmp_path):
     events = []
     records = run_modules(context(tmp_path, mode="render"), [Phased("a", events=events), Phased("b", requires=["a"], events=events)])
     assert events == []
-    assert records["a"]["status"] == "failed"
-    assert records["a"]["error"].startswith("ModuleUnavailable: no record output_module_a of a completed compute")
+    assert records["a"]["status"] == "failed" and records["a"]["not_computed"] is True
+    assert records["a"]["error"].startswith("NotComputed: no record output_module_a of a compute of a")
     assert "run its compute first: kappaccino outputs RUN --only a" in records["a"]["error"]
     assert records["b"]["reason"] == "requires a, which failed without a product"
 
 
 def test_a_failed_compute_leaves_no_record_of_completeness(tmp_path):
-    # A complete compute first, then one whose step fails: the record says incomplete, and a render pass refuses.
+    # A complete compute first, then one whose step fails: the record says incomplete and which step failed.
     run_modules(context(tmp_path), [Phased("a")])
     records = run_modules(context(tmp_path), [Phased("a", fail={"table"})])
     assert records["a"]["status"] == "failed" and records["a"]["error"] == "failed steps: table"
     # The full pass still rendered what it could: the figure step is skipped with its reason.
     assert records["a"]["render_steps"]["figure"] == {"status": "skipped", "seconds": 0.0, "reason": "compute step table failed"}
     saved = store.read_record(tmp_path, completion_name("a"))
-    assert saved["complete"] is False and saved["steps"]["table"]["status"] == "failed"
+    assert saved["complete"] is False and saved["steps"]["table"]["status"] == "failed" and saved["unavailable"] is None
+    # A render pass draws what the last compute saved (nothing here), never the figure of the older complete compute.
+    (tmp_path / "figures" / "a.pdf").unlink()
     records = run_modules(context(tmp_path, mode="render"), [Phased("a")])
-    assert "the last compute of a is incomplete (steps not done: table)" in records["a"]["error"]
+    assert records["a"]["status"] == "failed" and records["a"]["error"] == "failed steps: table"
+    assert records["a"]["render_steps"]["figure"]["status"] == "skipped" and not (tmp_path / "figures" / "a.pdf").exists()
     # A compute that raises outside its steps.
     run_modules(context(tmp_path), [Phased("a")])
     run_modules(context(tmp_path), [Phased("a", error=ModuleUnavailable("no table"))])
-    assert store.read_record(tmp_path, completion_name("a"))["complete"] is False
+    saved = store.read_record(tmp_path, completion_name("a"))
+    assert saved["complete"] is False and saved["unavailable"] == "ModuleUnavailable: no table"
     # A compute interrupted half way (no chance to write the end record) leaves the incomplete marker.
     run_modules(context(tmp_path), [Phased("a")])
     with pytest.raises(KeyboardInterrupt):
@@ -843,10 +878,14 @@ def test_render_and_compute_flags(monkeypatch, tmp_path, capsys):
     seen = []
     drew = {"modules": {"a": {"status": "done", "render_steps": {"figure": {"status": "done"}}}}}
     monkeypatch.setattr(command, "prepare_rerun", lambda run, **options: seen.append(options["mode"]) or ("config",))
+    saves = []
+    monkeypatch.setattr(command, "save_outputs_settings", lambda run, **k: saves.append(seen[-1]))
     monkeypatch.setattr(outputs, "write_outputs", lambda *a, **k: seen.append(k["mode"]) or drew)
     for flag, mode in (("--render", "render"), ("--compute", "compute"), (None, "full")):
         assert command.main([str(tmp_path)] + ([flag] if flag else [])) == 0
         assert seen[-2:] == [mode, mode]
+    # The saved settings follow a pass that computed, never a render pass.
+    assert saves == ["compute", "full"]
     # A render pass that draws nothing says so and fails.
     drew["modules"]["a"] = {"status": "failed", "error": "ModuleUnavailable: no record"}
     capsys.readouterr()
@@ -964,15 +1003,170 @@ def test_render_step_names_are_checked(tmp_path):
         assert records["a"]["status"] == "failed" and message in records["a"]["error"]
 
 
-def test_a_skipped_compute_step_makes_the_compute_incomplete(tmp_path):
+def test_a_skipped_compute_step_skips_only_its_own_figures(tmp_path):
     class Skips(Phased):
         def compute(self, ctx):
             super().compute(ctx)
             ctx.skip_step("nothing", "table failed")
 
-    run_modules(context(tmp_path), [Skips("a")])
+    records = run_modules(context(tmp_path), [Skips("a")])
     assert store.read_record(tmp_path, completion_name("a"))["complete"] is False
+    # The figure of the table step is drawn; the one of the skipped step is not, and that fails the module.
+    assert records["a"]["render_steps"]["figure"]["status"] == "done"
+    assert records["a"]["render_steps"]["unused"] == {"status": "skipped", "seconds": 0.0, "reason": "compute step nothing skipped"}
+    assert records["a"]["status"] == "failed" and records["a"]["error"] == "render steps not drawn: unused"
+    (tmp_path / "figures" / "a.pdf").unlink()
+    records = run_modules(context(tmp_path, mode="render"), [Phased("a")])
+    assert (tmp_path / "figures" / "a.pdf").read_text() == "3.0"
+    assert records["a"]["status"] == "failed" and records["a"]["error"] == "render steps not drawn: unused"
+
+
+class Unavailable(Phased):
+    """A Phased module whose second step fails, after which its compute raises ModuleUnavailable (like truth after a
+    failed truth_maps): its first step's figure must still be drawn, in the full pass and in a later render pass."""
+
+    compute_steps = ("table", "nothing", "maps")
+    render_steps = ("figure", "unused", "maps_figure")
+
+    def compute(self, ctx):
+        super().compute(ctx)
+        ctx.step("maps", lambda: (_ for _ in ()).throw(ValueError("maps broke")))
+        raise ModuleUnavailable("no maps (the maps step failed)")
+
+    def render(self, ctx):
+        super().render(ctx)
+        ctx.render_step("maps_figure", lambda: self.events.append("maps drawn"), needs="maps")
+
+
+def test_a_module_unavailable_after_some_steps_draws_what_they_saved(tmp_path):
+    events = []
+    modules = [Unavailable("a", events=events), Phased("b", requires=["a"], events=events)]
+    records = run_modules(context(tmp_path), modules)
+    assert events == ["a.compute", "a.render"] and (tmp_path / "figures" / "a.pdf").read_text() == "3.0"
+    assert records["a"]["status"] == "failed" and records["a"]["error"] == "ModuleUnavailable: no maps (the maps step failed)"
+    assert records["a"]["render_steps"]["maps_figure"]["reason"] == "compute step maps failed"
+    assert records["b"]["status"] == "skipped" and records["b"]["reason"] == "requires a, which failed without a product"
+    saved = store.read_record(tmp_path, completion_name("a"))
+    assert saved["unavailable"] == "ModuleUnavailable: no maps (the maps step failed)" and saved["complete"] is False
+    # A render pass after it: the figure comes back, the module is failed without a product, b is skipped.
+    (tmp_path / "figures" / "a.pdf").unlink()
+    events.clear()
+    lines = []
+    ctx = context(tmp_path, log=lines.append, mode="render")
+    records = run_modules(ctx, modules)
+    assert events == ["a.render"] and (tmp_path / "figures" / "a.pdf").read_text() == "3.0" and "a" not in ctx.products
+    assert records["a"]["status"] == "failed" and records["a"]["error"].startswith(
+        "ModuleUnavailable: the last compute of a gave no product (ModuleUnavailable: no maps (the maps step failed))")
+    assert records["a"]["render_steps"]["figure"]["status"] == "done" and records["b"]["status"] == "skipped"
+    assert any(line == "[outputs] a.maps_figure (render): skipped (compute step maps failed)" for line in lines)
+    # Only what a render step needs decides: --only b in a render pass still takes no product from a.
+    records = run_modules(context(tmp_path, mode="render"), modules, only=["b"])
+    assert records["a"]["status"] == "failed" and records["b"]["status"] == "skipped"
+
+
+def test_a_render_pass_after_an_interrupted_compute_refuses_the_module(tmp_path):
+    run_modules(context(tmp_path), [Phased("a")])
+    with pytest.raises(KeyboardInterrupt):
+        run_modules(context(tmp_path), [Phased("a", error=KeyboardInterrupt())])
     lines = []
     records = run_modules(context(tmp_path, log=lines.append, mode="render"), [Phased("a")])
-    assert "the last compute of a is incomplete (steps not done: nothing)" in records["a"]["error"]
-    assert any("this render pass drew nothing" in line for line in lines)
+    assert records["a"]["not_computed"] is True and "was interrupted before it recorded its steps" in records["a"]["error"]
+    assert any(line.startswith("[outputs] WARNING: this render pass drew nothing: nothing was computed for the selected "
+                               "modules (a)") for line in lines)
+
+
+def test_why_a_render_pass_drew_nothing():
+    from kappaccino.outputs.base import nothing_drawn_reason
+    assert nothing_drawn_reason({"a": {"status": "disabled"}}).startswith("no selected module ran")
+    assert nothing_drawn_reason({"a": {"status": "failed", "not_computed": True}}).startswith(
+        "nothing was computed for the selected modules (a)")
+    imaging = {"status": "failed", "render_steps": {"imaging:jwst": {"status": "failed", "input": True,
+                                                                     "error": "FileNotFoundError: no folder x"}}}
+    assert nothing_drawn_reason({"images": {"status": "done"}, "rgb": imaging}) == (
+        "the compute is there, but an input needed to draw is missing: rgb.imaging:jwst (FileNotFoundError: no folder x)")
+    skipped = {"status": "failed", "render_steps": {"figure": {"status": "skipped", "reason": "compute step table failed"}}}
+    assert nothing_drawn_reason({"a": skipped}) == (
+        "the compute is there, but no figure could be drawn: a.figure (skipped: compute step table failed)")
+    assert nothing_drawn_reason({"a": {"status": "done"}}) == "the last compute of the selected modules saved nothing to draw"
+
+
+def test_a_step_note_is_logged_and_recorded(tmp_path):
+    class Noting(Phased):
+        def compute(self, ctx):
+            super().compute(ctx)
+            ctx.step("nothing", lambda: ctx.note("went without the intervals") or "wrote")
+
+    lines = []
+    records = run_modules(context(tmp_path, log=lines.append), [Noting("a")])
+    assert records["a"]["steps"]["nothing"]["notes"] == ["went without the intervals"]
+    assert "[outputs] a.nothing: went without the intervals" in lines
+    assert "notes" not in records["a"]["steps"]["table"]
+    with pytest.raises(RuntimeError, match="inside ctx.step"):
+        context(tmp_path).note("outside")
+
+
+def test_a_pass_that_computed_saves_its_outputs_settings(synthetic_config, tmp_path):
+    from kappaccino.io import artifacts
+    from kappaccino.outputs.command import save_outputs_settings
+    directory = tmp_path / "final" / "artifacts"
+    artifacts.save_config(directory, synthetic_config)
+    lines = []
+    assert save_outputs_settings(tmp_path, log=lines.append) is False and lines == []      # nothing changed
+    assert save_outputs_settings(tmp_path, overrides=["outputs.truth.enabled=false", "outputs.workers=2"], draws=5,
+                                 log=lines.append) is True
+    saved = artifacts.load_config(directory)
+    assert (saved.outputs.draws, saved.outputs.image_draws, saved.outputs.workers) == (5, 5, 2)
+    assert not saved.outputs.truth.enabled and len(lines) == 1
+    # Nothing outside the outputs section changes.
+    assert saved.to_json_dict() | {"outputs": None} == synthetic_config.to_json_dict() | {"outputs": None}
+
+
+def test_list_applies_set_and_remap(synthetic_config, tmp_path, capsys):
+    from kappaccino.io import artifacts
+    from kappaccino.outputs import command
+    artifacts.save_config(tmp_path / "final" / "artifacts", synthetic_config)
+    assert command.main(["--list", str(tmp_path), "--set", "outputs.mass.enabled=false"]) == 0
+    rows = {line.split()[0]: line.split() for line in capsys.readouterr().out.splitlines() if not line.startswith(" ")}
+    assert rows["mass"][3] == "no" and rows["fit"][3] == "yes"
+    assert command.main(["--list", str(tmp_path), "--set", "outputs.nosuch=1"]) == 2
+    with pytest.raises(SystemExit):
+        command.main(["--list", "--set", "outputs.mass.enabled=false"])
+
+
+def test_paths_are_checked_only_for_modules_that_will_run(synthetic_config):
+    from kappaccino.outputs.command import check_module_paths
+    outputs = synthetic_config.outputs
+    config = replace(synthetic_config, outputs=replace(outputs, images=replace(outputs.images, enabled=False),
+                                                       rgb=replace(outputs.rgb, image_dir="/far/away/imaging")))
+    check_module_paths(config)                      # rgb requires the disabled images: it will not run
+    with pytest.raises(FileNotFoundError, match=r"outputs.rgb.image_dir = /far/away/imaging \(module rgb\)"):
+        check_module_paths(config, all_modules=True)
+
+
+def test_a_module_skipped_for_a_disabled_requirement_replaces_its_saved_record(monkeypatch, tmp_path):
+    images = SummaryModule("images", "fit")
+    truth = SummaryModule("truth", "truth", requires=["images"])
+    summary_pass(monkeypatch, tmp_path, [images, truth], draws=8)
+    off = summary_pass(monkeypatch, tmp_path, [images, truth], draws=8, disabled=("images",))
+    assert off["modules"]["images"]["status"] == "disabled"
+    assert off["modules"]["truth"]["status"] == "skipped" and off["modules"]["truth"]["disabled_requirement"] == "images"
+    assert off["modules"]["truth"]["reason"] == "requires images, which was disabled"
+    # Nothing was recomputed and nothing failed: the numbers stay.
+    assert off["truth"] == {"value": "truth over 8 draws"} and off["fit"] == {"value": "images over 8 draws"}
+
+
+def test_the_outputs_section_is_validated_field_by_field(synthetic_config):
+    from kappaccino.outputs.saved_run import apply_overrides
+    for bad, message in (("outputs.rgb.display.q=abc", "outputs.rgb.display.q must be a finite number or null"),
+                         ("outputs.rgb.bands=F1", "outputs.rgb.bands must be a list of strings or null"),
+                         ("outputs.rgb.image_scale=99mas", "outputs.rgb.image_scale must be one of auto"),
+                         ("outputs.rgb.paper_fold_cutouts=3", "outputs.rgb.paper_fold_cutouts must be a list of strings"),
+                         ("outputs.rgb.paper_fold_cutouts=[x]", "outputs.rgb.paper_fold_cutouts: 'x' is not image:ID"),
+                         ("outputs.rgb.figure_suffix=3", "outputs.rgb.figure_suffix must be a string"),
+                         ("outputs.image_solver.exact_image_lm_max_iter=abc", "outputs.image_solver.exact_image_lm_max_iter must be an integer"),
+                         ("outputs.image_solver.match_tolerance_arcsec=-1", "outputs.image_solver.match_tolerance_arcsec must be positive"),
+                         ("outputs.rgb.bogus=1", "outputs.rgb.bogus: no such field"),
+                         ("outputs.image_solver.bogus=1", "outputs.image_solver.bogus: no such field")):
+        with pytest.raises(ValueError, match="^--set: " + re.escape(message)):
+            apply_overrides(synthetic_config, [bad])
+    assert apply_overrides(synthetic_config, ["outputs.rgb.bands=[F1, F2]"]).outputs.rgb.bands == ("F1", "F2")

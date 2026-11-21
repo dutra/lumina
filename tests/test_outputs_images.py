@@ -208,9 +208,13 @@ def test_a_failed_recovery_makes_the_module_unavailable(setup):
     assert records["images"]["steps"]["true_lens"] == {"status": "skipped", "seconds": 0.0, "reason": "recovery failed"}
     assert records["dependent"]["status"] == "skipped" and seen == [] and setup.figures() == [] and "fit" not in ctx.summary
     assert setup.true_lens_calls == []
-    # A render pass then refuses the module: its last compute is incomplete.
+    # Nothing to draw without the recovery: both render steps are reported as not drawn, the product is never read.
+    assert {step: record["reason"] for step, record in records["images"]["render_steps"].items()} == {
+        "residual_histogram": "compute step recovery failed", "recovery_figure": "compute step recovery failed"}
+    # A render pass then draws nothing either, and gives no product: its last compute gave none.
     ctx, records = setup.run("render", modules=[ImagesModule(), Dependent(seen)])
-    assert records["images"]["status"] == "failed" and "incomplete" in records["images"]["error"]
+    assert records["images"]["status"] == "failed" and "gave no product" in records["images"]["error"]
+    assert "images" not in ctx.products and setup.figures() == []
     assert records["dependent"]["status"] == "skipped"
 
 
@@ -271,3 +275,4 @@ def test_the_fit_numbers_survive_a_render_pass(setup):
     write_run_summary(ctx, partial=True, modules=modules)
     saved = store.read_record(setup.tmp_path, "run_summary")
     assert saved["fit"] == fit and saved["modules"]["images"]["mode"] == "render"
+

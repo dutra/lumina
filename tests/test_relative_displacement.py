@@ -120,7 +120,7 @@ def test_compute_skips_without_true_lens_field_or_images(tmp_path):
     assert not (tmp_path / "results.h5").exists()
 
 
-def test_compute_skips_on_unreadable_map(tmp_path):
+def test_an_unreadable_map_fails_the_compute(tmp_path):
     from kappaccino.io import store
     lines = []
     store.write_table(tmp_path, "true_lens_residuals", pd.DataFrame({"status": ["used"]}))
@@ -129,11 +129,11 @@ def test_compute_skips_on_unreadable_map(tmp_path):
     state = SimpleNamespace(cosmo_config={"H0": 70.0, "Om0": 0.3}, gp_reference_redshift=2.0)
     recovery = {"image_fit_quality": pd.DataFrame({"x_obs_arcsec": [0.0]}),
                 "posterior_image_residual_draws": pd.DataFrame({"posterior_index": [0]})}
-    out = rd.save_relative_displacement(config, state, None, SimpleNamespace(has_field=True), recovery, {"amplitude": 1.0},
-                                        tmp_path, log=lines.append)
-    assert out is None and len(lines) == 1
-    assert lines[0].startswith("[outputs] relative displacement skipped: ")
-    assert not store.has_table(tmp_path, "relative_displacement")
+    # A configured map that cannot be read is an error (a failed step), never a quiet skip.
+    with pytest.raises(OSError):
+        rd.save_relative_displacement(config, state, None, SimpleNamespace(has_field=True), recovery, {"amplitude": 1.0},
+                                      tmp_path, log=lines.append)
+    assert lines == [] and not store.has_table(tmp_path, "relative_displacement")
 
 
 def test_mode_removal_ignores_nonfinite_points():
@@ -344,3 +344,32 @@ def test_truth_is_inactive_without_either_map(truth_setup):
     _, records = s.run()
     assert records["truth"] == {"status": "inactive", "seconds": 0.0, "reason": (
         "no truth convergence or deflection map (outputs.truth.kappa_true_fits, outputs.truth.deflection_true_fits)")}
+
+
+def test_the_figure_survives_failed_truth_maps_in_the_full_pass_and_a_later_render(truth_setup):
+    from kappaccino.diagnostics import truth_recovery
+    s = truth_setup
+    s.kappa = "kappa.fits"
+
+    def broken(*a, **k):
+        raise OSError("kappa.fits is not a FITS file")
+    s.monkeypatch.setattr(truth_recovery, "compute_truth_recovery", broken)
+    _, records = s.run()
+    truth = records["truth"]
+    # The module is failed without a product, but the figure of the step that succeeded is drawn.
+    assert truth["status"] == "failed" and truth["error"] == "ModuleUnavailable: no truth maps (the truth_maps step failed)"
+    assert truth["steps"]["relative_displacement"]["wrote"] is True and truth["steps"]["truth_maps"]["status"] == "failed"
+    assert truth["render_steps"]["relative_displacement"]["status"] == "done" and s.figure.exists()
+    # The figures of the truth maps are reported as not drawn, with the reason.
+    assert {step: record["reason"] for step, record in truth["render_steps"].items() if record["status"] == "skipped"} == {
+        "magnification_recovery": "compute step magnification_recovery skipped",
+        "cumulative_source_area": "compute step cumulative_source_area skipped",
+        "truth_residuals": "compute step truth_maps failed", "mass_profile": "compute step truth_maps failed",
+        "kappa_mass_residuals": "compute step truth_maps failed"}
+    # A later render-only pass draws it again from the saved table, and truth stays failed.
+    s.figure.unlink()
+    _, records = s.run("render")
+    truth = records["truth"]
+    assert truth["status"] == "failed" and truth["mode"] == "render" and s.figure.exists()
+    assert truth["render_steps"]["relative_displacement"]["status"] == "done" and len(s.rendered) == 2
+    assert "gave no product" in truth["error"] and "the truth_maps step failed" in truth["error"]

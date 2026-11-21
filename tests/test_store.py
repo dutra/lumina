@@ -167,6 +167,23 @@ def test_missing_entries(tmp_path):
         store.write_table(tmp_path, 'a/b', pd.DataFrame())
 
 
+def test_loose_files_are_not_read(tmp_path):
+    # results.h5 is the only source: a file under tables/ or figures/ is no entry.
+    stage = tmp_path / 'final'
+    (stage / 'tables').mkdir(parents=True)
+    (stage / 'figures').mkdir()
+    (stage / 'tables' / 'image_fit_quality.csv').write_text('family_id,x\n1,0.5\n')
+    (stage / 'tables' / 'run_summary.json').write_text('{}')
+    (stage / 'figures' / 'hera_corner.json').write_text('{}')
+    with pytest.raises(store.MissingEntry):
+        store.read_table(stage, 'image_fit_quality')
+    with pytest.raises(store.MissingEntry):
+        store.read_record(stage, 'run_summary')
+    with pytest.raises(store.MissingEntry):
+        store.read_figure_record(stage / 'figures' / 'hera_corner.pdf')
+    assert not store.has_table(stage, 'image_fit_quality') and not any(store.entries(stage).values())
+
+
 def test_writing_a_name_again_replaces_it(tmp_path):
     store.write_table(tmp_path, 't', pd.DataFrame({'a': [1]}))
     store.write_table(tmp_path, 't', pd.DataFrame({'b': ['x', 'y']}))

@@ -189,7 +189,7 @@ def _digest(*parts) -> str:
 def recovery_fingerprint(state: ModelState, draws, config: ImageSolverConfig, *, extra_images: bool) -> dict[str, str]:
     """What ``image_recovery_tables`` depends on, part by part: ``version`` (``IMAGE_RECOVERY_VERSION`` and the
     solver's ``shared_lattice`` switch), ``draws`` (seed, product and image draw indices and parameter vectors,
-    and the model they map to, ``ReportingDraws.image_key``), ``image_diagnostics`` (every setting of ``config``, the ``outputs.image_solver`` section), ``extra_images`` and
+    and the model they map to, ``ReportingDraws.image_key``), ``image_solver`` (every setting of ``config``, the ``outputs.image_solver`` section), ``extra_images`` and
     ``catalog`` (each family's id, redshift, labels, observed positions and search window, the image order and the
     parameter names)."""
     import dataclasses
@@ -207,7 +207,7 @@ def recovery_fingerprint(state: ModelState, draws, config: ImageSolverConfig, *,
                            json.dumps([spec.name for spec in getattr(state, "parameter_specs", ())])))
     return {"version": f"{IMAGE_RECOVERY_VERSION}:shared_lattice={bool(ExactImageSolver.shared_lattice)}",
             "draws": str(draws.image_key),
-            "image_diagnostics": _digest(json.dumps(settings, sort_keys=True, default=str)),
+            "image_solver": _digest(json.dumps(settings, sort_keys=True, default=str)),
             "extra_images": str(bool(extra_images)),
             "catalog": _digest(*catalog)}
 
@@ -222,12 +222,12 @@ def saved_image_recovery(stage, fingerprint: dict[str, str]) -> tuple[dict[str, 
         return None, "no saved image recovery"
     except (store.DamagedEntry, store.StoreError) as error:
         return None, f"its record cannot be read ({type(error).__name__}: {error})"
-    old = saved.get("fingerprint", {}) if isinstance(saved, dict) else {}
-    changed = [part for part in fingerprint if old.get(part) != fingerprint[part]]
+    old = saved["fingerprint"]
+    changed = [part for part in fingerprint if old.get(part) != fingerprint[part]]     # a part may be new
     if changed:
         return None, "changed since it was saved: " + ", ".join(changed)
     tables = {}
-    for name in saved.get("tables", []):
+    for name in saved["tables"]:
         try:
             tables[str(name)] = store.read_table(stage, str(name))
         except store.MissingEntry:

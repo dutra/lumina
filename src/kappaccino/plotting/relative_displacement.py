@@ -342,10 +342,10 @@ def save_relative_displacement(config, state, evaluator, draws, recovery: dict, 
     ``relative_displacement`` in the results of ``stage`` (one batch), and the record returned.  ``recovery`` holds the
     image-recovery tables (``image_fit_quality``, ``posterior_image_residual_draws``); ``true_lens`` is the record
     ``true_lens_rms`` (``outputs.images.write_true_lens_rms``), whose table ``true_lens_residuals`` is read from the
-    stage.  Report-only: any missing input or an unreadable map logs one line and returns None, and nothing is
-    written."""
-    image_df = recovery.get("image_fit_quality") if recovery else None
-    residual_draws = recovery.get("posterior_image_residual_draws") if recovery else None
+    stage.  When it does not apply (no deflection map configured, no true-lens record, no shared mass field, no
+    observed image) it logs one line and returns None, and nothing is written; an unreadable or malformed map, or a
+    missing ``true_lens_residuals`` table, raises (a failed step)."""
+    image_df, residual_draws = recovery["image_fit_quality"], recovery["posterior_image_residual_draws"]
     reason = None
     if not config.outputs.truth.deflection_true_fits:
         reason = "no outputs.truth.deflection_true_fits"
@@ -353,20 +353,16 @@ def save_relative_displacement(config, state, evaluator, draws, recovery: dict, 
         reason = "no true-lens record"
     elif not draws.has_field:
         reason = "no shared mass field"
-    elif image_df is None or image_df.empty or residual_draws is None or residual_draws.empty:
+    elif image_df.empty or residual_draws.empty:
         reason = "no image table"
     if reason is not None:
         log(f"[outputs] relative displacement skipped: {reason}")
         return None
     from ..diagnostics.exact_images import astropy_cosmology
     start = time.perf_counter()
-    try:
-        true_table = store.read_table(stage, "true_lens_residuals")
-        alpha_true, lens_map, scale = true_deflection(config.outputs.truth.deflection_true_fits, astropy_cosmology(state.cosmo_config),
-                                               float(state.gp_reference_redshift), float(true_lens["amplitude"]))
-    except (OSError, KeyError, IndexError, ValueError) as error:
-        log(f"[outputs] relative displacement skipped: {type(error).__name__}: {error}")
-        return None
+    true_table = store.read_table(stage, "true_lens_residuals")
+    alpha_true, lens_map, scale = true_deflection(config.outputs.truth.deflection_true_fits, astropy_cosmology(state.cosmo_config),
+                                           float(state.gp_reference_redshift), float(true_lens["amplitude"]))
     table, record = relative_displacement_table(state, evaluator, draws, residual_draws, true_table, alpha_true, lens_map, log=log)
     record.update(amplitude=float(true_lens["amplitude"]), scale_to_reference=scale, deflection_fits=str(config.outputs.truth.deflection_true_fits))
     with store.batch(stage):

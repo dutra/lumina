@@ -201,7 +201,7 @@ def test_the_recovery_fingerprint_changes_with_every_input():
                   recovery.recovery_fingerprint(state, _recovery_inputs(count=4)[1], config, extra_images=True),
                   recovery.recovery_fingerprint(state, _recovery_inputs(image_count=5)[1], config, extra_images=True)],
         'extra_images': [recovery.recovery_fingerprint(state, draws, config, extra_images=False)],
-        'image_diagnostics': [recovery.recovery_fingerprint(state, draws, SimpleNamespace(**{**vars(config), 'exact_image_grid_pitch_arcsec': .4}),
+        'image_solver': [recovery.recovery_fingerprint(state, draws, SimpleNamespace(**{**vars(config), 'exact_image_grid_pitch_arcsec': .4}),
                                                             extra_images=True)],
     }
     moved = SimpleNamespace(**{**vars(state), 'family_data': [SimpleNamespace(**{**vars(state.family_data[0]), 'x_obs': np.array([1., -1.001])})]})

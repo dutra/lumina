@@ -10,24 +10,28 @@ relative saved path is compared as the absolute path it names from here)::
     kappaccino outputs results/m0416_canucs2025/<run> --skip rgb --fail-fast
     kappaccino outputs RUN --remap /home/me/burkelenscluster=$PWD --set outputs.truth.deflection_true_fits=defl.fits
     kappaccino outputs RUN --set outputs.rgb.enabled=false
+    kappaccino outputs RUN --all --skip rgb
     kappaccino outputs --list [RUN_DIR]
 
-Module selection: with none of ``--only``, ``--skip`` and ``--all``, a module runs when its ``outputs.<module>.enabled``
-is true (in the run's saved configuration, or as ``--set`` changes it) and it is active.  Any of the three replaces
-those switches: ``--only A,B`` runs A, B and the modules they require, enabled or not; ``--skip C,D`` runs every
-module but C, D and the modules that require them; ``--all`` runs every module.  The products go to the run's
-``final/`` folder, as after the fit.
+Module selection: a module runs when its ``outputs.<module>.enabled`` is true (in the run's saved configuration, or as
+``--set`` changes it) and it is active.  ``--only A,B`` runs A, B and the modules they require, enabled or not (an
+explicit request); ``--all`` runs every module, enabled or not; ``--skip C,D`` also leaves out C, D and the modules
+that require them, on top of the switches (or of ``--all``: ``--all --skip rgb`` runs everything but rgb).  The
+products go to the run's ``final/`` folder, as after the fit.
 
 Pass mode: by default each module computes its results into the store and draws its figures from the store.
 ``--render`` only draws the figures again from what an earlier pass saved, without building the evaluator or the
-reporting draws (a module whose compute never completed fails, with the hint to compute it first; ``rgb`` fails for an
-imaging variant its compute drew whose imaging cannot be loaded here; a render pass that draws nothing at all exits
-with 1); ``--compute`` writes the results and no figures (on a machine without the
-imaging: ``--compute --skip rgb``).
+reporting draws: each render step is drawn when the compute step it needs wrote in the module's last compute; a module
+never computed here fails with the hint to compute it first; a render step that cannot be drawn (its compute step
+failed, or ``rgb`` cannot load the imaging of a variant its compute drew) is reported and fails the module; a render
+pass that draws nothing at all says why and exits with 1.  ``--compute`` writes the results and no figures (on a
+machine without the imaging: ``--compute --skip rgb``).
 
 ``--set`` changes only the ``outputs`` section (``outputs.FIELD`` or ``outputs.MODULE.FIELD``), which never changes
 the fit, checked (``config.validate_outputs``) before the pass.  ``--draws N`` sets ``outputs.draws`` and
-``outputs.image_draws``.
+``outputs.image_draws``.  After a full or compute pass, ``final/artifacts/config.json`` takes the outputs section of
+that pass (``--set`` and ``--draws`` applied, paths as saved), so that it describes the products; a render pass
+leaves it alone.  ``--list RUN`` applies ``--remap`` and ``--set`` before listing.
 """
 from __future__ import annotations
 
@@ -65,8 +69,10 @@ def parser() -> argparse.ArgumentParser:
                                 epilog="\n\n".join(__doc__.split("\n\n")[1:]))
     p.add_argument("run", nargs="?", type=Path, help="the run folder, results/<name>/<run> (optional with --list)")
     p.add_argument("--only", type=_names, metavar="A,B", help="run only these modules and the modules they require, enabled or not")
-    p.add_argument("--skip", type=_names, metavar="C,D", help="do not run these modules nor the modules that require them")
-    p.add_argument("--all", action="store_true", help="run every module, whatever the outputs.<module>.enabled switches")
+    p.add_argument("--skip", type=_names, metavar="C,D",
+                   help="also leave out these modules and the modules that require them (disabled modules stay off)")
+    p.add_argument("--all", action="store_true",
+                   help="run every module, whatever the outputs.<module>.enabled switches (with --skip: all but those)")
     p.add_argument("--fail-fast", action="store_true", help="stop at the first step that raises")
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--render", action="store_const", const="render", dest="mode",
@@ -122,8 +128,8 @@ def module_table(config=None) -> str:
 
 def check_module_paths(config, *, only=None, skip=None, all_modules=False) -> None:
     """Refuse a pass whose active modules read a file that does not exist, naming the configuration field.  The
-    modules are those the pass runs: the selection ``only``, ``skip``, ``all_modules`` (as
-    ``reporting.outputs.write_outputs`` takes it) or, with none, the enabled ones.
+    modules are those the pass runs: the selection ``only``, ``skip``, ``all_modules`` over the enabled modules, as
+    ``reporting.outputs.write_outputs`` takes it, without the modules that require a module left out.
 
     Raises
     ------
@@ -133,13 +139,14 @@ def check_module_paths(config, *, only=None, skip=None, all_modules=False) -> No
     from .base import OutputContext, disabled_modules, plan_modules
     from .registry import MODULES
     from .saved_run import REMAP_HINT, missing_paths
-    selected = only is not None or skip is not None or all_modules
-    skipped = set(skip or ()) | (set() if selected else set(disabled_modules(config, MODULES)))
+    skipped = set(skip or ()) | (set() if only is not None or all_modules else set(disabled_modules(config, MODULES)))
     plan, _ = plan_modules(MODULES, only=only, skip=tuple(skip or ()))
     ctx = OutputContext(config, None, None, None, None, None)
     missing = []
     for module in plan:
-        if module.name in skipped or ctx.inactive_reason(module) is not None:
+        if (module.name in skipped or set(module.requires) & skipped
+                or ctx.inactive_reason(module) is not None):
+            skipped.add(module.name)            # so are the modules that require it
             continue
         missing += [f"{item} (module {module.name})"
                     for item in missing_paths(config, [f"outputs.{name}" for name in module.path_fields])]
@@ -191,14 +198,38 @@ def prepare_rerun(run_directory, *, only=None, skip=None, all_modules=False, fai
     return config, state, evaluator, posterior, audit, final
 
 
+def save_outputs_settings(run_directory, *, overrides=(), draws=None, log=print) -> bool:
+    """After a pass that computed (full or compute), make ``final/artifacts/config.json`` describe the settings that
+    produced its products: its ``outputs`` section becomes the saved one with ``overrides`` (``--set``) and ``draws``
+    (``--draws``) applied.  The paths stay as saved (``--remap`` only says where the same files are on this machine)
+    and nothing outside ``outputs`` changes.  Returns whether the file changed (logged)."""
+    from ..io import artifacts
+    from .saved_run import apply_overrides
+    directory = Path(run_directory) / "final" / "artifacts"
+    saved = artifacts.load_config(directory)
+    config = apply_overrides(saved, overrides)
+    if draws is not None:
+        config = replace(config, outputs=replace(config.outputs, draws=int(draws), image_draws=int(draws)))
+    if config.outputs == saved.outputs:
+        return False
+    artifacts.save_config(directory, replace(saved, outputs=config.outputs))
+    log(f"[outputs] {directory / artifacts.CONFIG_FILE}: outputs section set to the settings of this pass")
+    return True
+
+
 def rerun_outputs(run_directory, *, log=print, mode="full", only=None, skip=None, all_modules=False, **options) -> dict:
     """Run the outputs stage of the finished run in ``run_directory`` into its ``final/`` folder in ``mode``
     (:func:`prepare_rerun` with ``options``, then ``reporting.outputs.write_outputs`` with the module selection
-    ``only``, ``skip``, ``all_modules``: none of them runs the enabled modules); returns this pass's summary."""
+    ``only``, ``skip``, ``all_modules``: none of them runs the enabled modules); returns this pass's summary.  After a
+    pass that computed, the saved configuration takes its outputs settings (:func:`save_outputs_settings`)."""
     from ..reporting.outputs import write_outputs
     selection = dict(only=only, skip=skip, all_modules=all_modules)
-    return write_outputs(*prepare_rerun(run_directory, log=log, mode=mode, **selection, **options), log=log, mode=mode,
-                         **selection)
+    prepared = prepare_rerun(run_directory, log=log, mode=mode, **selection, **options)
+    try:
+        return write_outputs(*prepared, log=log, mode=mode, **selection)
+    finally:
+        if mode != "render":
+            save_outputs_settings(run_directory, overrides=options.get("overrides", ()), draws=options.get("draws"), log=log)
 
 
 def main(argv=None) -> int:
@@ -208,15 +239,23 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
     if args.list:
         config = None
-        if args.run is not None:
+        if args.run is not None:            # the configuration a pass would run with: remapped, then --set applied
             from ..io import artifacts
-            config = artifacts.load_config(Path(args.run) / "final" / "artifacts")
+            from .saved_run import apply_overrides, remap_paths
+            try:
+                config = apply_overrides(remap_paths(artifacts.load_config(Path(args.run) / "final" / "artifacts"),
+                                                     args.remap, log=lambda _: None), args.overrides)
+            except ValueError as error:
+                print(f"kappaccino outputs: {error}", flush=True)
+                return 2
+        elif args.remap or args.overrides:
+            p.error("--remap and --set with --list need the run folder")
         print(module_table(config))
         return 0
     if args.run is None:
         p.error("the run folder is required (or use --list)")
-    if args.all and (args.only is not None or args.skip is not None):
-        p.error("--all runs every module; it cannot be combined with --only or --skip")
+    if args.all and args.only is not None:
+        p.error("--all runs every module; it cannot be combined with --only")
     mode = args.mode or "full"
     if mode == "render" and args.draws is not None:
         p.error("--draws chooses the draws of a compute; --render draws what the last compute saved")
@@ -238,6 +277,8 @@ def main(argv=None) -> int:
     try:
         summary = write_outputs(*prepared, log=log, mode=mode, only=args.only, skip=args.skip, all_modules=args.all)
     except Exception as error:
+        if mode != "render":                    # what the pass wrote before the error came from these settings
+            save_outputs_settings(args.run, overrides=args.overrides, draws=args.draws, log=log)
         if prepared[0].outputs.fail_fast:       # the step logged its traceback; one line here
             print(f"kappaccino outputs: stopped at the first error (fail_fast: {type(error).__name__}: {error})", flush=True)
         else:                                   # outside the modules (the run summary, the store): nothing logged it
@@ -245,16 +286,17 @@ def main(argv=None) -> int:
             print(f"kappaccino outputs: the pass failed outside the modules ({type(error).__name__}: {error})\n"
                   f"{traceback.format_exc().rstrip()}", flush=True)
         return 1
+    if mode != "render":
+        save_outputs_settings(args.run, overrides=args.overrides, draws=args.draws, log=log)
     from ..io import store
     try:
         saved = store.read_record(Path(args.run) / "final", "run_summary")
     except (store.MissingEntry, store.DamagedEntry, store.StoreError):
         saved = {}
     print(json.dumps(saved.get("fit", {}), indent=2, default=float), flush=True)
-    from .base import rendered_anything
-    if mode == "render" and not rendered_anything(summary.get("modules", {})):
-        print("kappaccino outputs: the render pass drew nothing (no selected module with a completed compute drew a figure)",
-              flush=True)
+    from .base import nothing_drawn_reason, rendered_anything
+    if mode == "render" and not rendered_anything(summary["modules"]):
+        print(f"kappaccino outputs: the render pass drew nothing: {nothing_drawn_reason(summary['modules'])}", flush=True)
         return 1
-    failed = [name for name, record in summary.get("modules", {}).items() if record["status"] == "failed"]
+    failed = [name for name, record in summary["modules"].items() if record["status"] == "failed"]
     return 1 if failed else 0

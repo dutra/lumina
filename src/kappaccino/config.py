@@ -27,7 +27,7 @@ from __future__ import annotations
 import importlib
 import math
 from dataclasses import dataclass, field, fields, is_dataclass, replace
-from numbers import Integral
+from numbers import Integral, Real
 from pathlib import Path
 from types import UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
@@ -1519,8 +1519,17 @@ class ImageSolverConfig:
     match_tolerance_arcsec: float = 5.0
 
     def validate(self, where: str = "outputs.image_solver") -> None:
-        """Raise ValueError, naming ``<where>.<field>``, for an unknown finder or a pitch, tolerance or iteration count
-        out of range."""
+        """Raise ValueError, naming ``<where>.<field>``, for a value of the wrong type (:func:`_check_field_types`), an
+        unknown finder, or a pitch, tolerance or iteration count out of range."""
+        _check_field_types(self, where)
+        for name in ("exact_image_min_distance_arcsec", "exact_image_precision_limit", "exact_image_critical_det_threshold",
+                     "exact_image_min_separation_arcsec", "exact_image_displacement_tol_arcsec",
+                     "exact_image_identification_tol_arcsec", "match_tolerance_arcsec"):
+            _positive(f"{where}.{name}", getattr(self, name))
+        _positive(f"{where}.exact_image_window_margin_arcsec", self.exact_image_window_margin_arcsec, allow_zero=True)
+        _positive_int(f"{where}.exact_image_lm_max_iter", self.exact_image_lm_max_iter)
+        if self.exact_image_adaptive_max_levels < 0:
+            raise ValueError(f"{where}.exact_image_adaptive_max_levels must be a nonnegative integer.")
         if self.exact_image_finder not in {"global-jax", "local-lm", "local-lm-adaptive"}:
             raise ValueError(f"{where}.exact_image_finder must be 'global-jax', 'local-lm', or 'local-lm-adaptive'.")
         _positive(f"{where}.exact_image_grid_pitch_arcsec", self.exact_image_grid_pitch_arcsec)
@@ -1548,6 +1557,7 @@ class FitOutputConfig:
 
     def validate(self, where: str = "outputs.fit") -> None:
         """Raise ValueError, naming ``<where>.<field>``, for a bad value."""
+        _check_field_types(self, where)
         _boolean(f"{where}.enabled", self.enabled)
 
 
@@ -1569,6 +1579,7 @@ class ImagesOutputConfig:
 
     def validate(self, where: str = "outputs.images") -> None:
         """Raise ValueError, naming ``<where>.<field>``, for a bad value."""
+        _check_field_types(self, where)
         _boolean(f"{where}.enabled", self.enabled)
         _boolean(f"{where}.extra_images", self.extra_images)
 
@@ -1587,6 +1598,7 @@ class MassOutputConfig:
 
     def validate(self, where: str = "outputs.mass") -> None:
         """Raise ValueError, naming ``<where>.<field>``, for a bad value."""
+        _check_field_types(self, where)
         _boolean(f"{where}.enabled", self.enabled)
 
 
@@ -1627,6 +1639,7 @@ class TruthOutputConfig:
 
     def validate(self, where: str = "outputs.truth") -> None:
         """Raise ValueError, naming ``<where>.<field>``, for a bad value."""
+        _check_field_types(self, where)
         _boolean(f"{where}.enabled", self.enabled)
         for name in ("kappa_true_fits", "gammax_true_fits", "gammay_true_fits", "deflection_true_fits"):
             _optional_path(f"{where}.{name}", getattr(self, name))
@@ -1712,11 +1725,19 @@ class RGBOutputConfig:
 
     def validate(self, where: str = "outputs.rgb") -> None:
         """Raise ValueError, naming ``<where>.<field>``, for a bad value."""
+        _check_field_types(self, where)
         _boolean(f"{where}.enabled", self.enabled)
         for name in ("image_dir", "candidate_catalog_path"):
             _optional_path(f"{where}.{name}", getattr(self, name))
-        if not isinstance(self.display, RGBDisplayConfig):
-            raise ValueError(f"{where}.display must be a section (q, stretch, minimum, red_gain, green_gain, blue_gain).")
+        if self.image_scale not in RGB_IMAGE_SCALES:
+            raise ValueError(f"{where}.image_scale must be one of {', '.join(RGB_IMAGE_SCALES)}; got {self.image_scale!r}")
+        if self.bands is not None and not self.bands:
+            raise ValueError(f"{where}.bands must name at least one band, or be null for the default bands.")
+        for name in ("paper_small_lambda_cutouts", "paper_fold_cutouts"):
+            for selector in getattr(self, name):
+                kind, separator, identity = selector.partition(":")
+                if not separator or kind not in {"image", "family", "system"} or not identity:
+                    raise ValueError(f"{where}.{name}: {selector!r} is not image:ID, family:ID or system:ID")
         if not math.isfinite(self.fold_pair_max_separation_arcsec) or self.fold_pair_max_separation_arcsec <= 0:
             raise ValueError(f"{where}.fold_pair_max_separation_arcsec must be finite and positive.")
 
@@ -1786,6 +1807,7 @@ class OutputsConfig:
         ValueError
             At the first bad value, with a message naming ``outputs.<field>`` or ``outputs.<section>.<field>``.
         """
+        _check_field_types(self, "outputs")
         _positive_int("outputs.draws", self.draws)
         if isinstance(self.image_draws, bool) or not isinstance(self.image_draws, Integral) or self.image_draws < self.draws:
             raise ValueError("outputs.image_draws must be an integer of at least outputs.draws.")
@@ -1913,8 +1935,6 @@ class LensClusterSolverConfig:
 
 
 CLASS_KEY = "_class"
-# Fields a saved ``config.json`` may still hold after their removal from the configuration; dropped on load.
-REMOVED_FIELDS = {"RuntimeConfig": ("cpu_threads_per_chain",)}       # CPU pinning, removed 2026-11-12
 
 
 def _hint_class(hint: Any) -> type | None:
@@ -1956,7 +1976,11 @@ def _jsonable(value: Any, hint: Any = Any) -> Any:
     return value
 
 
-def _from_jsonable(value: Any, hint: Any = Any) -> Any:
+def _from_jsonable(value: Any, hint: Any = Any, where: str = "") -> Any:
+    """The value a ``_jsonable`` payload stands for, read as ``hint``; ``where`` is its dotted name in the
+    configuration (``outputs.rgb``), which names an unknown field in the TypeError it raises."""
+    def at(key):
+        return f"{where}.{key}" if where else str(key)
     if isinstance(value, dict):
         if CLASS_KEY in value or _hint_class(hint) is not None:
             if CLASS_KEY in value:
@@ -1965,15 +1989,20 @@ def _from_jsonable(value: Any, hint: Any = Any) -> Any:
             else:
                 cls = _hint_class(hint)
             hints = get_type_hints(cls)
-            dropped = (CLASS_KEY, *REMOVED_FIELDS.get(cls.__name__, ()))
-            return cls(**{key: _from_jsonable(item, hints.get(key, Any)) for key, item in value.items() if key not in dropped})
+            known = [f.name for f in fields(cls) if f.init]
+            unknown = [key for key in value if key != CLASS_KEY and key not in known]
+            if unknown:
+                raise TypeError(f"{', '.join(at(key) for key in unknown)}: no such field (the fields of "
+                                f"{where or 'the configuration'} are {', '.join(known)})")
+            return cls(**{key: _from_jsonable(item, hints.get(key, Any), at(key)) for key, item in value.items()
+                          if key != CLASS_KEY})
         if {"family", "log"} <= value.keys():
             from .priors import from_dict
             return from_dict(value)
-        return {key: _from_jsonable(item) for key, item in value.items()}
+        return {key: _from_jsonable(item, Any, at(key)) for key, item in value.items()}
     if isinstance(value, list):
         element = _element_hint(hint)
-        items = [_from_jsonable(item, element) for item in value]
+        items = [_from_jsonable(item, element, f"{where}[{index}]") for index, item in enumerate(value)]
         return items if get_origin(hint) is list else tuple(items)
     if value in ("inf", "-inf"):
         return float(value)
@@ -2022,6 +2051,55 @@ def _boolean(name: str, value: Any) -> None:
 def _optional_path(name: str, value: Any) -> None:
     if value is not None and (not isinstance(value, (str, Path)) or not str(value)):
         raise ValueError(f"{name} must be the path of a file or folder, or null; got {value!r}")
+
+
+RGB_IMAGE_SCALES = ("auto", "20mas", "30mas", "40mas", "60mas")     # outputs.rgb.image_scale
+
+
+def _type_matches(value: Any, hint: Any) -> bool:
+    """Whether ``value`` is of the type ``hint`` names (one option of a union): bool, int, a finite float, str, Path,
+    None, a tuple or list of such, or a section (dataclass).  Other hints are not checked."""
+    if hint is type(None):
+        return value is None
+    if hint is bool:
+        return isinstance(value, bool)
+    if hint is int:
+        return isinstance(value, Integral) and not isinstance(value, bool)
+    if hint is float:
+        return isinstance(value, Real) and not isinstance(value, bool) and math.isfinite(value)
+    if hint in (str, Path):
+        return isinstance(value, hint)
+    if get_origin(hint) in (tuple, list):
+        element = _element_hint(hint)
+        return isinstance(value, (tuple, list)) and all(_type_matches(item, element) for item in value)
+    if is_dataclass(hint):
+        return isinstance(value, hint)
+    return True
+
+
+def _type_name(hint: Any) -> str:
+    if hint is type(None):
+        return "null"
+    if is_dataclass(hint):
+        return f"a section ({', '.join(f.name for f in fields(hint))})"
+    if get_origin(hint) in (tuple, list):
+        return f"a list of {_type_name(_element_hint(hint)).removeprefix('a ').removeprefix('an ')}s"
+    return {bool: "true or false", int: "an integer", float: "a finite number", str: "a string",
+            Path: "a path"}.get(hint, str(hint))
+
+
+def _check_field_types(section: Any, where: str) -> None:
+    """Raise ValueError, naming ``<where>.<field>``, for a field of the dataclass ``section`` whose value is not of
+    its annotated type (:func:`_type_matches`); nested sections are checked through, so every field under them is.
+    Ranges and choices are each section's own checks."""
+    hints = get_type_hints(type(section))
+    for item in fields(section):
+        name, value, hint = f"{where}.{item.name}", getattr(section, item.name), hints[item.name]
+        options = get_args(hint) if get_origin(hint) in (Union, UnionType) else (hint,)
+        if not any(_type_matches(value, option) for option in options):
+            raise ValueError(f"{name} must be {' or '.join(_type_name(option) for option in options)}; got {value!r}")
+        if is_dataclass(value):
+            _check_field_types(value, name)
 
 
 def validate_config(config: LensClusterSolverConfig) -> None:

@@ -191,7 +191,7 @@ of a full pass and of a later render-only pass come from the same code and the s
 | module | compute steps | render steps | requires | runs when |
 |---|---|---|---|---|
 | `fit` | `tables` (`posterior_summary`, `member_classification`), `chain_traces` (`chain_convergence`, record `chain_traces`), `audit` (the record), `scaling_table` (`member_scaling_relation`), `covariance` (`covariance_errors_both_planes`), `fields` (`gp_diagnostics`, `conditional_field_maps`), `members` (`member_diagnostics` and its companions) | `chain_traces`, `potfiles`, `block_corner` (`corner_combined.pdf`), `cosmology_corner`, `covariance` (covariance corner and errors), `fields` (GP and GRF plots), `members` (the member plots), `scaling_plot`, `globals_corner` | | always |
-| `images` | `recovery` (the image-recovery tables, record `image_recovery_fingerprint`, `position_coverage`, `fit` in `run_summary`), `true_lens` (with `outputs.truth.deflection_true_fits` and observed images: `true_lens_residuals`, record `true_lens_rms`) | `residual_histogram`, `recovery_figure` (both with observed images) | | always |
+| `images` | `recovery` (the image-recovery tables, record `image_recovery_fingerprint`, `position_coverage`, `fit` in `run_summary`), `true_lens` (with `outputs.truth.deflection_true_fits` and observed images: `true_lens_residuals`, record `true_lens_rms`; a map that cannot be read or fitted to the catalog fails the step) | `residual_histogram`, `recovery_figure` (both with observed images) | | always |
 | `mass` | `critical_curves` (arrays `critical_curves`), `aperture_masses` (`member_aperture_masses`, record `aperture_mass_histogram`), `zeta_masses` (`member_zeta_masses`, record `zeta_masses`, arrays `subhalo_mass_concentration`) | `critical_curves`, `zeta_masses` (the figure and the table `zeta_mass_function`) | `images` | always; the masses with a truth convergence map |
 | `truth` | `relative_displacement` (with `outputs.truth.deflection_true_fits`, the true-lens record and a shared field: table and record `relative_displacement`), `truth_maps` (FITS, profile tables, record `truth_recovery`, arrays `truth_recovery_residuals`, the published ratios; with `outputs.truth.kappa_true_fits`), `magnification_recovery`, `cumulative_source_area`, `magnification_scatter` | `relative_displacement`, `magnification_recovery`, `cumulative_source_area`, `truth_residuals`, `mass_profile`, `kappa_mass_residuals` | `images` | with `outputs.truth.kappa_true_fits` or `outputs.truth.deflection_true_fits` |
 | `rgb` | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and, once, `fold_data`; for the JWST overview also `position_contours` and `small_lambda` (before the mass figure) and `paper_cutouts` (see [The rgb module](#the-rgb-module)) | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and `fold_cutouts`; for the JWST overview also `small_lambda`, `apj_fold_cutouts` and `paper_cutouts` | `images` | with `outputs.rgb.image_dir` and observed images |
@@ -262,14 +262,17 @@ the imaging run `--compute --skip rgb`. In a compute, a variant whose band files
 M0416 and AS1063, for example) is logged once and left out, its `imaging:<variant>` step records that it wrote
 nothing, and the other variants go on; the render leaves that variant out too. In a render, a variant the compute drew
 needs its imaging again: when it cannot be loaded, the render step `imaging:<variant>` fails with a message that names
-the folder (`outputs.rgb.image_dir`) and suggests `--remap`, the variant's figures are not drawn, the other variants
-go on, `rgb` ends as failed and the command exits with 1. Loading the imaging does not count as drawing a figure
-(`input_steps` of the module).
+the folder, the variant's figures are not drawn, the other variants go on, `rgb` ends as failed and the command exits
+with 1. For the configured imaging the message names `outputs.rgb.image_dir` and suggests `--remap`; for the extra
+JWST variant, whose folder is no configuration field, it says where the relative folder resolves and to run the
+command from the repository root. Loading the imaging does not count as drawing a figure (`input_steps` of the
+module); a render pass that drew nothing because the imaging is missing says so and names the folder. One failed step
+of a variant leaves the figures of the other steps and variants alone.
 
 | step | compute saves | render reads |
 |---|---|---|
-| `covariance_cutouts:<variant>` | table and record `small_lambda_covariance_cutouts<suffix>`, arrays `..._contours` and `..._ellipses` (the selected images' indices, directions and widths of the linear ellipse), table `..._intervals` (the posterior 16th and 84th percentiles along the stretch of the selected images, from the table `covariance_errors_both_planes` when the last compute of `fit` wrote it, else empty) | those |
-| `rgb_critical:<variant>` | arrays `<stem>` and record `<stem>_band` (`hst_rgb_critical_z9` or `jwst_rgb_critical_z9`), record `<stem>_model` (whether the run has a shared GRF and its label), for M0416 the record `<stem>_candidate_catalog` (the path and the candidates of `outputs.rgb.candidate_catalog_path`, default the packaged `m0416_candidates.json`, that the `_candidates` overview draws), the position contours | those; writes the figure records and the marker tables |
+| `covariance_cutouts:<variant>` | table and record `small_lambda_covariance_cutouts<suffix>`, arrays `..._contours` and `..._ellipses` (the selected images' indices, directions and widths of the linear ellipse), table `..._intervals` (the posterior 16th and 84th percentiles along the stretch of the selected images, from the table `covariance_errors_both_planes` when the last compute of `fit` wrote it, else empty: the figure then has no interval lines, which the log and the step's `notes` say) | those |
+| `rgb_critical:<variant>` | arrays `<stem>` and record `<stem>_band` (`hst_rgb_critical_z9` or `jwst_rgb_critical_z9`), record `<stem>_model` (whether the run has a shared GRF and its label), for M0416 the record `<stem>_candidate_catalog` (the path and the candidates of `outputs.rgb.candidate_catalog_path`, default the packaged `m0416_candidates.json`, that the `_candidates` overview draws) and the table `<stem>_marker_photometry` (the F200W magnitudes of the packaged `m0416_image_f200w_photometry.csv` matched to the catalog images by label and position, which size the markers) with the record of the same name (its `path`), the position contours | those; writes the figure records and the marker tables |
 | `position_contours:<variant>` | arrays and record `posterior_overview_positions`, new arrays and record `posterior_overview_contours` (the 68.3% and 95.4% curves, `curve_<c>_segment_<k>`) | (no figure) |
 | `small_lambda:<variant>` | table and arrays `<prefix>_small_lambda_a_image_posteriors_jwst` (the ranking, with the panels shown and their fields), arrays and record `..._critical`, new record `..._selection` (the figure's settings) | those, `posterior_overview_positions`; writes the record `<prefix>_small_lambda_a_image_posteriors_jwst` |
 | `cluster_mass:<variant>` | tables `image_catalog_arc_directions<suffix>`, `..._extra_arc_directions`, `image_catalog_mass_profile<suffix>` and `..._y`, the covariance ellipses table, record `image_catalog_mass_provenance<suffix>`, the FITS, new arrays `image_catalog_family_cluster_mass<suffix>` (the median maps `model`, `model_grf`, `grf`, the resampled `truth` and the covariance curves) | those and, for the JWST overview, the position contours |
@@ -301,10 +304,11 @@ recorded figure cannot be drawn.
   0.2 s, `mass` 0.4 s, `truth` 1.3 s, `rgb` 4 s), against 232 s for the full pass (`fit` 63 s, `mass` 68 s, `truth`
   56 s, `rgb` 20 s); on M0416 (`results/m0416_canucs2025/w1000s500t8_allblocks_fast-59dfa1`) `--render --only rgb`
   took 54 s (`rgb` 50 s, most of it building the RGB cutouts from the JWST mosaics) against 240 s for
-  `--only rgb --draws 16` (`rgb` 199 s). A render pass in which no selected module draws anything (none
-  has a completed compute, or a module only loaded its inputs, such as the imaging of `rgb`) says so in the log and
-  the command exits with 1; so does any render pass in which a module failed, for example `rgb` when the imaging of a
-  variant its compute drew cannot be loaded.
+  `--only rgb --draws 16` (`rgb` 199 s). A render pass in which no selected module draws anything says why in the
+  log and on the command line: no selected module was computed in this run folder, an input a figure needs is missing
+  (the imaging of `rgb`, named with its folder), the render steps could not be drawn, or the last compute saved
+  nothing to draw; the command then exits with 1. So does any render pass in which a module failed, for example
+  `rgb` when the imaging of a variant its compute drew cannot be loaded.
 
 In a render pass (and in the product and render phases of any pass) `ctx.draws` and `ctx.evaluator` raise
 `ComputeOnly`, which names the module and step that asked, so a figure that still needs the lens fails its step
@@ -315,21 +319,30 @@ from the store.
 ### The completeness record
 
 When a module's compute starts, its record `output_module_<name>` in `results.h5` is set to
-`{"complete": false, "started_at": ...}`; when the compute ends it holds `complete` (true only when every compute step
-ran without failing: a failed or a skipped step makes it false), `computed_at`, the compute steps (`status`, `seconds`, `wrote`, and `error` or `reason`), and
-when the compute used the reporting draws `reporting_draws`, `image_draws`, `draws_seed` and `draws_key`. A compute
-that fails, raises or is interrupted therefore never leaves a record that claims completeness. A render pass renders a
-module only when its record is complete; otherwise the module fails with `ModuleUnavailable` and a message that says
-to run its compute first (`kappaccino outputs RUN --only <module>`, or `--compute --only <module>`). A module pulled
-into a render pass by `--only` (because a selected module requires it) gives only its product.
+`{"complete": false, "started_at": ...}`; when the compute ends it holds the compute steps (`status`, `seconds`,
+`wrote`, `notes` when the step noted something it went without, and `error` or `reason`), `complete` (true only when
+every compute step ran without failing and the module gave its product; for information), `unavailable` (the error
+with which the compute ended without a product, `ModuleUnavailable` or another error, else null), `computed_at`, and
+when the compute used the reporting draws `reporting_draws`, `image_draws`, `draws_seed` and `draws_key`.
 
-A compute step is skipped (`ctx.skip_step`) only when it cannot run because another step failed, so a skipped step
-makes the compute incomplete and the module cannot be rendered until it is computed again. A step that does not
-apply to the run (for example the magnification figures without shear truth) runs and returns None: it wrote
-nothing and is recorded with `wrote` false, which leaves the compute complete. Render steps are declared against the
-compute steps they draw (`ctx.render_step`): a render step whose compute step failed is skipped with the reason, and
-one whose compute step wrote nothing is left out. A render step whose name is not in `render_steps`, or that needs a
-step not in `compute_steps`, is an error that fails the module.
+Completeness is per step. A render step is drawn when the compute step it needs finished and wrote in the module's
+last compute, whatever the other steps did; its figure never comes from an older compute. A render pass refuses a
+module only when there is no record of a compute with its steps: never computed in this run folder, or interrupted
+before the compute recorded them (the record is still the marker). The module then fails with `ModuleUnavailable`
+and a message that says to run its compute first (`kappaccino outputs RUN --only <module>`, or `--compute --only
+<module>`). Otherwise the render pass draws what it can and reports each render step it could not draw, with the
+reason; the module ends as failed when a compute step of its last compute failed or a render step could not be drawn,
+and as done otherwise. A module whose last compute gave no product (`unavailable`) draws what it can and is failed
+with no product, so the modules that require it are skipped. A module pulled into a render pass by `--only` (because
+a selected module requires it) gives only its product.
+
+A compute step is skipped (`ctx.skip_step`) only when it cannot run because another step failed; the render steps
+that need it are then skipped too, as not drawn. A step that does not apply to the run (for example the magnification
+figures without shear truth) runs and returns None: it wrote nothing and is recorded with `wrote` false. Render steps
+are declared against the compute steps they draw (`ctx.render_step`): a render step whose compute step failed, was
+skipped or did not run is skipped with the reason (not drawn), and one whose compute step wrote nothing is left out. A
+render step whose name is not in `render_steps`, or that needs a step not in `compute_steps`, is an error that fails
+the module.
 
 ### Steps, failures and the run summary
 
@@ -338,7 +351,10 @@ that needs the result of a failed one is skipped with the reason (no step of `im
 no `truth` step after a failed `truth_maps`, no fold step after a failed `fold_data`, no figure whose compute step
 failed). A module with a failed step ends as `failed` but keeps its product, and a full pass still draws the figures
 whose compute steps succeeded. A module that cannot give its dependents what they need raises after its steps
-(`images` without its recovery, `truth` without its maps) and is failed with no product. A module that requires
+(`images` without its recovery, `truth` without its maps) and is failed with no product; its render still runs, in a
+full pass and in a later render pass, and draws the figures whose compute steps succeeded (`truth` draws the relative
+displacement, which needs no truth map, and reports its other figures as not drawn; `images` has nothing to draw
+without its recovery). A module that requires
 another runs only when that module gave its product, whatever it is: `mass`, `truth` and `rgb` therefore need a
 successful image recovery. The log ends with the list of failed modules. `run_summary` records each module under
 `modules`, in run order: `status` (`done`, `disabled`, `inactive`, `skipped` or `failed`), `mode` (the pass mode),
@@ -355,7 +371,9 @@ written by its compute (`images` owns `fit`, `truth` owns `truth`): for every mo
 or failed, its keys and its record are this pass's, so a failed module leaves no old numbers (the macros then say "not
 available"). The same holds for a module skipped because a module it requires failed in this pass (`truth` after a
 failed `images`): it is recorded as skipped with the reason and its keys are dropped. A disabled module keeps its
-saved keys and gets this pass's record (`disabled`). A module that did not run for any other reason (not selected, in
+saved keys and gets this pass's record (`disabled`). So does a module skipped because a module it requires is
+disabled in this pass (`truth` with `outputs.images.enabled=false`): its record says it was skipped and why, and its
+numbers stay, since nothing was recomputed and nothing failed. A module that did not run for any other reason (not selected, in
 the skip list or requiring a module that is, inactive) keeps its saved keys and its saved record, and a module that ran in a render pass gets this pass's record but keeps the keys of its last
 compute, so a render pass leaves the numbers and the macros as the last compute wrote them. The top-level
 `reporting_draws` and `warnings` are those of the last pass that built the draws.
@@ -433,24 +451,45 @@ its last compute drew; the imaging is not checked before the pass, and a variant
 render step (see [The rgb module](#the-rgb-module)).
 
 `--render` and `--compute` choose the pass mode (see [Pass modes](#pass-modes)); they exclude each other, and
-`--draws` cannot go with `--render`. With none of `--only`, `--skip` and `--all`, the `enabled` switches of the run's
-saved configuration (after `--set`) choose the modules. Any of the three replaces the switches: `--only A,B` runs A, B
-and the modules they require, enabled or not (an explicit request wins), `--skip C,D` runs every module but C, D and
-the modules that require them, and `--all` runs every module. `--set outputs.FIELD=VALUE` or
+`--draws` cannot go with `--render`. The `enabled` switches of the run's saved configuration (after `--set`) choose
+the modules. `--only A,B` runs A, B and the modules they require, enabled or not (an explicit request wins), and
+`--all` runs every module, enabled or not; the two exclude each other. `--skip C,D` leaves out C, D and the modules
+that require them on top of that: a module disabled in the configuration stays off, and `--all --skip rgb` runs every
+module but `rgb`. `--set outputs.FIELD=VALUE` or
 `--set outputs.MODULE.FIELD=VALUE` (repeatable, the syntax of the run command) changes a field of the `outputs`
 section before the pass. Anything outside that section is refused: settings in the run hash would no longer describe
 the saved fit, and the `paths` section, which the hash leaves out, names the run, the figure prefix and the imaging
 variants (`paths.figure_prefix=../../X` would write figures outside the run folder). `--draws N` sets
-`outputs.draws` and `outputs.image_draws` to N, as the run command's `--draws` does. `--list` prints the modules
+`outputs.draws` and `outputs.image_draws` to N, as the run command's `--draws` does. After a full or compute pass
+(also one that failed), `final/artifacts/config.json` takes the `outputs` section of that pass: the saved one with
+`--set` and `--draws` applied, its paths as saved (`--remap` only says where the same files are on this machine;
+`--fail-fast` is a flag of the command, not a setting). The saved configuration then describes the settings behind the
+products, and a later `kappaccino outputs RUN` uses them. A render pass changes nothing, since it computes nothing. A
+pass that computes only some modules (`--only truth --draws 4`) still records its settings for the whole section; the
+completeness record of each module keeps the draws its own compute used, and the draws check below warns when they
+differ. The run command does the same: resuming a finished run (`kappaccino catalogs/hera --draws 8`) saves the new
+`outputs` section in `final/artifacts/config.json` before the outputs stage runs, and leaves the rest of the saved
+configuration alone. `--list` prints the modules
 with their `requires`, `after` and compute and render steps; given a run, it also says whether each is enabled and
-whether it applies to it, judged from the configuration alone. At the end the command prints the fit numbers of the
+whether it applies to it, judged from the configuration alone, after the `--remap` and `--set` given with it. At the end the command prints the fit numbers of the
 saved `run_summary`. The exit code is 1 when a module failed, `--fail-fast`
 stopped the pass (one line names the error; the step logged its traceback), the pass failed outside the modules
-(writing the run summary, for example; the traceback is printed) or a render pass drew nothing, and 2 for a usage
-error, a missing file or a refused `--set` or `--remap`. A `--set` value is checked before the pass
-(`config.validate_outputs`, which calls each section's `validate`): an unknown field, or a value of the wrong type or
-range (`outputs.workers` a positive integer, `outputs.rgb.enabled` true or false, `outputs.truth.deflection_true_fits`
-a path or null), is a usage error that names the field.
+(writing the run summary, for example; the traceback is printed) or a render pass drew nothing (the command says
+why), and 2 for a usage
+error, a missing file or a refused `--set` or `--remap`. A `--set` value is checked before the pass, and so is the
+whole `outputs` section of every run (`config.validate_outputs`, which calls each section's `validate`). An unknown
+field anywhere in the configuration is an error that names its dotted path (`outputs.rgb.bogus`). Every field under
+`outputs`, nested sections included (`outputs.rgb.display`, `outputs.image_solver`), must have the type it is
+declared with: true or false, an integer, a finite number, a string, a path, a list of strings, or null where the
+field allows it (`outputs.rgb.bands` a list of strings or null, `outputs.rgb.display.q` a finite number or null).
+On top of that: `outputs.draws` and `outputs.workers` positive, `outputs.image_draws` at least `outputs.draws`; the
+path fields non-empty; `outputs.truth.grid_size` nonnegative; `outputs.rgb.image_scale` one of `auto`, `20mas`,
+`30mas`, `40mas`, `60mas`, `outputs.rgb.bands` not empty, every `paper_*_cutouts` selector `image:ID`, `family:ID`
+or `system:ID`, `fold_pair_max_separation_arcsec` positive; `outputs.image_solver.exact_image_finder` one of the
+three finders, its pitches, tolerances, separations, thresholds, `match_tolerance_arcsec` and
+`exact_image_lm_max_iter` positive, `exact_image_window_margin_arcsec` and `exact_image_adaptive_max_levels`
+nonnegative, the fine pitch at most the coarse one and `exact_image_polish_iterations` positive. The trust radius and
+the display values are checked for their type only. A bad value is a usage error that names the field.
 
 ### Comparing the outputs of two runs
 
@@ -515,7 +554,9 @@ class GGSLModule(OutputModule):
 ```
 
 Its settings are a frozen dataclass in `src/kappaccino/config.py`, documented like its neighbours, with an `enabled`
-switch and a `validate(where)` method that names `outputs.<module>.<field>` in its errors, added as one field of
+switch and a `validate(where)` method that names `outputs.<module>.<field>` in its errors (it starts with
+`_check_field_types`, which checks every field against its annotation, then checks ranges and choices), added as one
+field of
 {class}`~kappaccino.config.OutputsConfig` under the module's name:
 
 ```python
@@ -534,6 +575,7 @@ class GGSLOutputConfig:
     min_einstein_radius_arcsec: float = 0.5
 
     def validate(self, where: str = "outputs.ggsl") -> None:
+        _check_field_types(self, where)                       # every field has its declared type
         _boolean(f"{where}.enabled", self.enabled)
         _positive(f"{where}.min_einstein_radius_arcsec", self.min_einstein_radius_arcsec)
 
@@ -562,8 +604,10 @@ on `self` between compute and render (or between passes); what render needs goes
    for steps named per variant) is declared in `compute_steps` or `render_steps`; an undeclared name is an error.
    `ctx.ok(step)` tells whether a step of the current phase ran without an error (a step may return None on success),
    and `ctx.computed(step)` whether a compute step ran and wrote something. A step that does not apply to the run
-   returns None (`wrote` false); `ctx.skip_step` is only for a step that cannot run because another failed, and it
-   makes the compute incomplete, so the module cannot be rendered until it is computed again.
+   returns None (`wrote` false); `ctx.skip_step` is only for a step that cannot run because another failed, and the
+   render steps that need it are then not drawn. A step that goes on without something it would have used says so
+   with `ctx.note(message)`, which logs the message and adds it to the step's `notes`. An input the run configures
+   that cannot be read (an unreadable or malformed map) is an error that fails the step, not a skip.
 2. **Split the computation from the drawing.** Keep the computation in a function that writes to the store and
    returns something that is not None when it wrote (`save_magnification_recovery`, `save_zeta_masses`,
    `critical_curve_maps` plus one `store.write_arrays`), and the drawing in one that takes the stage and the figure
@@ -705,8 +749,10 @@ convergence per pixel) and the published ratios saved as `truth_literature_m2d_r
   `true_lens_residuals` and the record `true_lens_rms` of the same pass; the render step draws the figure from the
   table alone. The step writes nothing, and the figure is left out, when the run has no deflection map, the `images`
   compute wrote no true-lens record, the run has no shared field or no image was observed; the log then says
-  `[outputs] relative displacement skipped: <reason>`. With a deflection map and no `outputs.truth.kappa_true_fits`, `truth`
-  runs this step alone;
+  `[outputs] relative displacement skipped: <reason>`. A deflection map that cannot be read, or is malformed, fails the
+  step (the other steps of `truth` go on), as it fails the `true_lens` step of `images`. With a deflection map and no
+  `outputs.truth.kappa_true_fits`, `truth` runs this step alone. The step runs before the truth maps, so its figure is
+  drawn even when the `truth_maps` step fails;
 - `subhalo_mass_concentration.pdf`: one row of four panels for the members on the true map and the parametric + GRF
   model map (evaluated on the truth-map pixels). Mass is the zeta statistic (Fahlman et al. 1994) in 10 kpc, the mass
   inside 10 kpc above the mean of the 10–20 kpc annulus; concentration is κ̄(<R_e)/κ̄(R_e–2R_e) − 1. Panels: number of
@@ -731,7 +777,8 @@ When imaging is configured and present under `data/imaging/`:
 
 A compute reports missing imaging and leaves that variant out. `kappaccino outputs RUN --render --only rgb` draws all
 of these again from the store and the imaging, and fails for a variant whose imaging the compute had but the render
-cannot load (see [The rgb module](#the-rgb-module)).
+cannot load (see [The rgb module](#the-rgb-module)). The marker sizes of the M0416 overview come from the F200W
+photometry that the compute saved (`<stem>_marker_photometry`), so the render reads no packaged data file.
 
 The det A maps of the fold pairs, fold systems and small cutouts are not evaluated over the whole lens on their own
 grids. Each draw's parametric lens on those grids is the overview's (512 x 512 over the cluster, evaluated anyway)
@@ -757,7 +804,8 @@ from `inputs/command.json`. It refuses when the imaging settings, the image cata
 configuration differ from `final/artifacts/config.json`, and, before writing anything, when the run has no completed
 image recovery or a draw of `<stem>` is missing from `posterior_image_residual_draws`. The model description in the
 figure record comes from `final/artifacts/config.json`, which also records how many images got a contour
-(`recovered_position_contours`). For M0416 it draws the candidates saved in the record `<stem>_candidate_catalog`.
+(`recovered_position_contours`). For M0416 it draws the candidates saved in the record `<stem>_candidate_catalog`
+and sizes the markers from the table `<stem>_marker_photometry`.
 It rewrites the figures, their records, the marker tables, `posterior_overview_positions` and
 `posterior_overview_contours` (arrays and records) in `final/results.h5`, never the arrays `<stem>`.
 
