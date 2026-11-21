@@ -19,11 +19,11 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from kappaccino.plotting.style import PAPER_STYLE
+from lumina.plotting.style import PAPER_STYLE
 
 
 def plot_scaling_truth(matched, final, figures, prefix):
-    from kappaccino.plotting.plots import population_scaling_draws
+    from lumina.plotting.plots import population_scaling_draws
     plt.rcParams.update(PAPER_STYLE)
 
     summary = pd.read_csv(final / 'tables/posterior_summary.csv')
@@ -112,7 +112,7 @@ def main():
     figures.mkdir(exist_ok=True)
     # The run's own name (run.yaml `name`), so every catalog size labels its files.
     prefix = json.loads((final / 'artifacts/config.json').read_text())['paths']['figure_prefix']
-    plt.style.use(Path(__file__).resolve().parents[1] / 'src/kappaccino/plotting/style.mplstyle')
+    plt.style.use(Path(__file__).resolve().parents[1] / 'src/lumina/plotting/style.mplstyle')
     plt.rcParams.update(PAPER_STYLE)
 
     fig, ax = plt.subplots(figsize=(3.5, 3.1))

@@ -157,7 +157,7 @@ def build(tag):
         f"extends: ../large/priors.yaml\nimages: images.yaml\n\nmembers:\n  members: {{catalog_path: members.yaml}}\n")
     (dest / "run.yaml").write_text(
         f"# How the medium {tag} catalog is fitted: the settings of ../large/run.yaml.\n"
-        f"# kappaccino catalogs/{tag}/medium [--profile fast]\n"
+        f"# lumina catalogs/{tag}/medium [--profile fast]\n"
         f"extends: ../large/run.yaml\nname: {name}\npriors: priors.yaml\n")
     obs = t[t.in_observed & t.system.isin(systems.system)]
     nim = len(obs[obs.knot.isin(["", "A"])])

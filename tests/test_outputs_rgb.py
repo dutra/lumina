@@ -9,9 +9,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.io import store
-from kappaccino.outputs import OutputContext, OutputModule, run_modules
-from kappaccino.outputs.rgb import RGBModule
+from lumina.io import store
+from lumina.outputs import OutputContext, OutputModule, run_modules
+from lumina.outputs.rgb import RGBModule
 
 
 class Images(OutputModule):
@@ -45,11 +45,11 @@ class FakeDraws(list):
 def rgb_pass(monkeypatch, synthetic_config, tmp_path):
     """Runs the images stand-in and the rgb module with every compute and render function of rgb replaced by a
     recorder; ``missing`` names the imaging variants (``figure_suffix``) whose imaging folder is missing."""
-    from kappaccino.diagnostics import position_contours
-    from kappaccino.imaging import cutouts
-    from kappaccino.plotting import (apj_fold_cutouts, covariance_cutouts, fold_pairs, jwst_rgb, mass_figure,
+    from lumina.diagnostics import position_contours
+    from lumina.imaging import cutouts
+    from lumina.plotting import (apj_fold_cutouts, covariance_cutouts, fold_pairs, jwst_rgb, mass_figure,
                                      paper_cutouts, small_lambda_jwst)
-    from kappaccino.reporting import draws as draws_module
+    from lumina.reporting import draws as draws_module
     events, lines = [], []
 
     def record(name, result=None):
@@ -106,7 +106,7 @@ def test_compute_saves_and_render_draws_every_variant(rgb_pass):
 
 
 def test_a_render_pass_without_the_imaging_of_a_computed_variant_fails_it(rgb_pass):
-    from kappaccino.outputs.base import rendered_anything
+    from lumina.outputs.base import rendered_anything
     rgb_pass()
     # On a machine without the HST imaging that the compute drew: that variant fails, naming its folder and --remap; the
     # JWST figures are still drawn, and nothing is computed.
@@ -133,7 +133,7 @@ def test_a_variant_computed_without_imaging_is_left_out_of_the_render(rgb_pass):
 
 
 def test_render_skips_the_figures_of_a_failed_compute_step(rgb_pass):
-    from kappaccino.plotting import fold_pairs
+    from lumina.plotting import fold_pairs
 
     def broken(*a, **k):
         raise ValueError("no folds")
@@ -155,7 +155,7 @@ def test_render_skips_the_figures_of_a_failed_compute_step(rgb_pass):
 
 
 def test_one_failed_variant_leaves_the_other_variants_figures(rgb_pass):
-    from kappaccino.plotting import jwst_rgb
+    from lumina.plotting import jwst_rgb
 
     def save(variant, *a, **k):
         if variant.outputs.rgb.figure_suffix == "_jwst":
@@ -174,7 +174,7 @@ def test_one_failed_variant_leaves_the_other_variants_figures(rgb_pass):
         "no posterior interval lines in the covariance cutouts")
 
 def test_position_contours_read_back_as_computed(tmp_path):
-    from kappaccino.diagnostics.position_contours import load_or_compute_contours, load_position_contours
+    from lumina.diagnostics.position_contours import load_or_compute_contours, load_position_contours
     rng = np.random.default_rng(3)
     rows = []
     for draw in range(12):
@@ -200,7 +200,7 @@ def test_position_contours_read_back_as_computed(tmp_path):
 def _inset_inputs(tmp_path, monkeypatch):
     """The saved ranking, positions and fold data of two image panels ``a`` and ``b``; median_cutout_determinants
     replaced by a stand-in that saves fields named after its entry (``calls`` counts them)."""
-    from kappaccino.plotting import critical_fields, rgb_overview_cutouts as rc
+    from lumina.plotting import critical_fields, rgb_overview_cutouts as rc
     store.write_table(tmp_path, "toy_small_lambda_a_image_posteriors_jwst", pd.DataFrame(dict(
         image_label=["a", "b"], x_arcsec=[0., 1.], y_arcsec=[0., 0.], z_source=[2., 3.], family_id=["1", "2"], shown=[False, False])))
     store.write_arrays(tmp_path, "posterior_overview_positions", image_labels=np.array(["a", "b"]),
@@ -253,7 +253,7 @@ def test_small_lambda_critical_fields_are_used_only_when_this_compute_wrote_them
     rc, calls = _inset_inputs(tmp_path, monkeypatch)
     # A small-lambda entry holding exactly these panels, as an older compute may have left it.
     stale = "toy_small_lambda_a_image_posteriors_jwst_critical"
-    from kappaccino.plotting import critical_fields
+    from lumina.plotting import critical_fields
     first = rc.overview_cutout_data(tmp_path, "toy", image_labels=("b", "a"), draws=object())
     centers = [item["center"] for item in first["images"]]
     critical_fields.median_cutout_determinants(None, centers[::-1], [item["fov"] for item in first["images"]][::-1],
@@ -277,10 +277,10 @@ def test_small_lambda_critical_fields_are_used_only_when_this_compute_wrote_them
 
 def test_covariance_cutouts_render_from_the_store(synthetic_config, tmp_path, monkeypatch):
     from astropy.wcs import WCS
-    from kappaccino.core.state import build_state
-    from kappaccino.likelihood.evaluator import Evaluator
-    from kappaccino.plotting import covariance_cutouts as cc
-    from kappaccino.reporting.draws import ReportingDraws
+    from lumina.core.state import build_state
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.plotting import covariance_cutouts as cc
+    from lumina.reporting.draws import ReportingDraws
     state = build_state(synthetic_config)
     evaluator = Evaluator(state)
     posterior = SimpleNamespace(samples=np.array([state.initial_theta]),
@@ -339,9 +339,9 @@ def _toy_imaging(folder, reference, *, size=640, scale=.1):
 
 def _forbid_evaluation(monkeypatch):
     """Make every way of evaluating the lens raise, for a render pass."""
-    from kappaccino.likelihood.evaluator import Evaluator
-    from kappaccino.outputs import saved_run
-    from kappaccino.reporting import draws as draws_module
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.outputs import saved_run
+    from lumina.reporting import draws as draws_module
 
     def forbidden(*args, **kwargs):
         raise AssertionError("a render pass evaluated the lens")
@@ -353,9 +353,9 @@ def _forbid_evaluation(monkeypatch):
 def test_the_real_rgb_module_renders_its_figures_again_from_the_store(synthetic_config, tmp_path, monkeypatch):
     import jax
     import jax.numpy as jnp
-    from kappaccino.core.state import build_state
-    from kappaccino.likelihood.evaluator import Evaluator
-    from kappaccino.pipeline import StagePaths
+    from lumina.core.state import build_state
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.pipeline import StagePaths
     outputs = synthetic_config.outputs
     config = replace(synthetic_config, outputs=replace(outputs, draws=2, rgb=replace(outputs.rgb, image_dir=str(tmp_path / "toy_imaging"),
                                                                                      bands=("F435W", "F606W", "F814W"))))
@@ -387,8 +387,8 @@ def test_the_real_rgb_module_renders_its_figures_again_from_the_store(synthetic_
 
 
 def test_the_covariance_cutouts_read_the_table_of_fit_only_when_its_last_compute_wrote_it(tmp_path):
-    from kappaccino.outputs.base import completion_name
-    from kappaccino.outputs.rgb import fit_covariance_errors
+    from lumina.outputs.base import completion_name
+    from lumina.outputs.rgb import fit_covariance_errors
     table = pd.DataFrame(dict(image_label=["a"], plane=["image"], direction=["arc"], total_p16_arcsec=[1.], total_p84_arcsec=[2.]))
     store.write_table(tmp_path, "covariance_errors_both_planes", table)
     notes = []

@@ -8,18 +8,18 @@ member catalog:
 - `run.yaml`: how it is fitted. The likelihood, search, sampler, member classification, reported products and
   figures, with named profiles layered on top.
 
-{func}`kappaccino.run_files.load_run` reads both into a {class}`~kappaccino.config.LensClusterSolverConfig`. The
-`kappaccino` command (or `python -m kappaccino`, {mod}`kappaccino.cli`) runs a folder from the repository root:
+{func}`lumina.run_files.load_run` reads both into a {class}`~lumina.config.LensClusterSolverConfig`. The
+`lumina` command (or `python -m lumina`, {mod}`lumina.cli`) runs a folder from the repository root:
 
 ```bash
-kappaccino catalogs/hera --dry-run
-kappaccino catalogs/m0416/canucs2025 --profile fast --profile jwst
-kappaccino catalogs/as1063/bergamini2019 --set sampling.warmup=1000 --set runtime.skip_plots=true
-kappaccino catalogs/hera --set outputs.rgb.enabled=false
-kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --only truth
+lumina catalogs/hera --dry-run
+lumina catalogs/m0416/canucs2025 --profile fast --profile jwst
+lumina catalogs/as1063/bergamini2019 --set sampling.warmup=1000 --set runtime.skip_plots=true
+lumina catalogs/hera --set outputs.rgb.enabled=false
+lumina outputs results/hera/w500s250t7_allblocks-3f9a1c --only truth
 ```
 
-`kappaccino outputs RUN_DIR` reruns the outputs stage of a finished run without fitting; see {doc}`outputs`. A cluster
+`lumina outputs RUN_DIR` reruns the outputs stage of a finished run without fitting; see {doc}`outputs`. A cluster
 folder that is literally named `outputs` must be given as `./outputs`.
 
 Each run goes to `results/<name>/<description>-<hash>`, for example `results/hera/w500s250t7_allblocks-3f9a1c`. The
@@ -37,7 +37,7 @@ Images of unknown family are a `partition` section: `--set partition.catalog_pat
 
 The common fields have named options, applied after the profiles and before `--set`: `--chains`, `--seed`,
 `--starts`, `--warm-start RUN_DIR`, `--warmup`, `--samples`, `--tree-depth`, `--target-accept`, `--draws`
-(`outputs.draws` and `outputs.image_draws`) and `--skip-plots`. `kappaccino --help` lists them with the field each sets.
+(`outputs.draws` and `outputs.image_draws`) and `--skip-plots`. `lumina --help` lists them with the field each sets.
 
 `--member-profile power-law` fits the members as cored power laws, the dPIE with a free 3D slope (one sampled slope
 per population), and `--member-slope G` holds that slope at G. In `priors.yaml` the same is `profile_type: 102` on a
@@ -116,26 +116,26 @@ scaling:
   alpha_sigma_prior: normal(0.25, 0.05) in [0.1, 0.4]
 ```
 
-`reference` and `cosmology` take the fields of {class}`~kappaccino.config.ReferenceFrameConfig` and
-{class}`~kappaccino.config.CosmologyConfig`. `z_lens` is the redshift of every halo and population.
+`reference` and `cosmology` take the fields of {class}`~lumina.config.ReferenceFrameConfig` and
+{class}`~lumina.config.CosmologyConfig`. `z_lens` is the redshift of every halo and population.
 
 `halos` are keyed by id. `profile` is `dpie` (default), `nfw`, `shear` or `sheet`. `preset` builds the component with a
-constructor of its class, {meth}`~kappaccino.config.DPIEHaloConfig.cluster_scale` or
-{meth}`~kappaccino.config.ShearHaloConfig.free`, from the keys it takes; a `cluster_scale` halo takes its softening
+constructor of its class, {meth}`~lumina.config.DPIEHaloConfig.cluster_scale` or
+{meth}`~lumina.config.ShearHaloConfig.free`, from the keys it takes; a `cluster_scale` halo takes its softening
 from the centre of `scaling.softening_length_prior`. Every other key is a parameter of the component, named as in its
 class. A number fixes it. A prior samples it from the prior's centre; `start` and `prior` sample it from `start`.
 `e1`, `e2`, `cut_excess_kpc`, `gamma1` and `gamma2` take priors only. `shape` samples the shape uniformly in the
-(e1, e2) box of {func}`~kappaccino.priors.ellipticity_box` over the `ellipticity` (Lenstool `ellipticite`) and
+(e1, e2) box of {func}`~lumina.priors.ellipticity_box` over the `ellipticity` (Lenstool `ellipticite`) and
 `angle` ranges, starting from the middle of the box, below `soft_cap` when one is given, unless `ellipticite` and
 `angle_pos` are set.
 
 `members` are keyed by population id: `catalog_path`, an optional `preset` (`bergamini2019` or `neutral`, see
-{class}`~kappaccino.config.MemberPopulationConfig`) with the keys it takes, and any other field of the population.
+{class}`~lumina.config.MemberPopulationConfig`) with the keys it takes, and any other field of the population.
 `independent` takes members off the relation, keyed by catalog id; each entry's priors replace the defaults of
-{class}`~kappaccino.config.IndependentMemberHaloConfig`, and `fixed` holds a parameter at its start.
+{class}`~lumina.config.IndependentMemberHaloConfig`, and `fixed` holds a parameter at its start.
 
 `scaling` takes an optional `preset` (`bergamini2019` or `neutral`) and the fields of
-{class}`~kappaccino.config.ScalingModelConfig`.
+{class}`~lumina.config.ScalingModelConfig`.
 
 (cosmography)=
 ### Cosmography
@@ -161,7 +161,7 @@ with astropy to $10^{-11}$ (`tests/test_cosmology.py`). The parameters are `cosm
 block of the cluster-scale halos: the search draws them from their priors and optimizes them with the halos.
 
 Each cluster folder, the TNG mocks included, has a `priors_cosmography.yaml` that extends its `priors.yaml` with these priors, and a
-`cosmography` profile that selects it: `kappaccino catalogs/hera --profile cosmography` (Hera was simulated with
+`cosmography` profile that selects it: `lumina catalogs/hera --profile cosmography` (Hera was simulated with
 $\Omega_m = 0.24$, Ares with 0.272 and the TNG mocks were built with 0.3, all with $w = -1$).
 
 Three things stay at the start values: the redshift weights of the GRF and of the image-plane GP (they change by
@@ -197,7 +197,7 @@ profiles:
 ```
 
 `name` sets the figure prefix and the output folder, and `priors` names the priors file. Every other top-level key is a
-section of {class}`~kappaccino.config.LensClusterSolverConfig` with its field names; `scaling` here changes what
+section of {class}`~lumina.config.LensClusterSolverConfig` with its field names; `scaling` here changes what
 `priors.yaml` set. `outputs` lists what the run produces, one section per output module with its `enabled` switch and
 its settings (see {doc}`outputs`); paths in it (`outputs.truth.*_true_fits`, `outputs.rgb.image_dir`,
 `outputs.rgb.candidate_catalog_path`) are relative to the file's folder, as `partition.catalog_path` is. `profiles` are overlays of the same sections, applied in the order given on the command line, and

@@ -13,9 +13,9 @@ import pytest
 from scipy.optimize import brentq
 
 from conftest import synthetic_cluster_config, write_offset_catalog
-from kappaccino.likelihood import gp_image_plane as gp, smoothed as sl
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.core.state import build_state
+from lumina.likelihood import gp_image_plane as gp, smoothed as sl
+from lumina.likelihood.evaluator import Evaluator
+from lumina.core.state import build_state
 
 ELL, FLOOR = 7.0, 0.0015
 SHARED2, WHITE2 = 0.99, 0.01          # the fractions of sigma_img^2 that reproduce the earlier rho = 0.99 model
@@ -349,7 +349,7 @@ def test_gradient_overhead_below_five_percent(tmp_path):
 
 def test_sampled_ell_matches_the_fixed_kernel_and_has_a_gradient(synthetic_config):
     """ell sampled (default) and ell fixed at the same value give the same likelihood; None removes the site."""
-    from kappaccino import priors
+    from lumina import priors
     sampled_state = build_state(gp_config(synthetic_config))
     fixed_state = build_state(gp_config(synthetic_config, gp_correlation_length_prior=None, gp_correlation_length_arcsec=3.0))
     assert fixed_state.ell_gp_param_index == -1 and not any(s.name == "images.ell_gp" for s in fixed_state.parameter_specs)

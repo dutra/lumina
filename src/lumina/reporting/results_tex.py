@@ -1,0 +1,787 @@
+"""Publication macros from recorded results; no inference or plot generation."""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import re
+from pathlib import Path
+from ..io import store
+from ..io.hdf5 import load_arrays
+
+_DIGITS = ('Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine')
+_ALIASES = {'ares': 'Ares', 'hera': 'Hera', 'm0416': 'MJZeroFourOneSix',
+            'mj0416': 'MJZeroFourOneSix', 'macs0416': 'MJZeroFourOneSix',
+            'm1206': 'MJOneTwoZeroSix', 'mj1206': 'MJOneTwoZeroSix',
+            'as1063': 'ASOneZeroSixThree', 'mock': 'Mock'}
+
+
+def command_prefix(name: str) -> str:
+    key = re.sub(r'[^a-z0-9]', '', name.lower())
+    if key in _ALIASES:
+        return _ALIASES[key]
+    words = re.findall(r'[A-Za-z]+|[0-9]', name)
+    prefix = ''.join(_DIGITS[int(w)] if w.isdigit() else w[:1].upper() + w[1:] for w in words)
+    if not prefix:
+        raise ValueError('Results name must contain letters or digits')
+    return prefix
+
+
+def number(value, decimals=3) -> str:
+    if value is None or not math.isfinite(float(value)):
+        return r'\textnormal{not available}'
+    return f'{float(value):.{decimals}f}'
+
+
+def duration(seconds) -> str:
+    if seconds is None or not math.isfinite(float(seconds)) or seconds < 0:
+        return r'\textnormal{not available}'
+    hours, remainder = divmod(int(math.floor(float(seconds) + .5)), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return rf'\ensuremath{{{hours}\,\mathrm{{h}}\;{minutes}\,\mathrm{{min}}\;{seconds}\,\mathrm{{s}}}}'
+
+
+def _read(path):
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def _record(final, name):
+    """The record ``name`` of the stage ``final`` (:func:`lumina.io.store.read_record`); {} when missing."""
+    try:
+        return store.read_record(final, name)
+    except store.MissingEntry:
+        return {}
+
+
+def _table(final, name):
+    """The table ``name`` of the stage ``final``, or None when missing."""
+    try:
+        return store.read_table(final, name)
+    except store.MissingEntry:
+        return None
+
+
+def _write(path, prefix, metrics, comments):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ['% Generated results. Do not edit; regenerate from saved artifacts.',
+             '% Residuals are in arcseconds; fractions are percentages only when named Percent.',
+             *['% ' + text for text in comments]]
+    for suffix, value in metrics.items():
+        command = prefix + suffix
+        if not re.fullmatch('[A-Za-z]+', command):
+            raise ValueError(f'Invalid TeX command: {command}')
+        lines.append(rf'\newcommand{{\{command}}}{{{value}}}')
+    path.write_text('\n'.join(lines) + '\n')
+    return path
+
+
+def interval(median, lower_error, upper_error, decimals=1):
+    """TeX numerical interval in braces, to be used in math mode.  The braces make it one group, so a unit written as a
+    superscript right after it (``$\\HeraRMS''$``, arcsec) does not become a double superscript."""
+    return ('{' + number(median, decimals) + '_{-' + number(lower_error, decimals)
+            + '}^{+' + number(upper_error, decimals) + '}}')
+
+
+def m0416_table_metrics(final):
+    """Saved-draw model comparison; R25 published Tables 4--5, A&A 696, A15 (2025)."""
+    import numpy as np
+    import pandas as pd
+    state_path = final.parent / 'init/artifacts/state.json'
+    table = _table(final, 'posterior_summary')
+    if table is None or not state_path.exists():
+        return {}
+    table = table.set_index('parameter')
+    state = _read(state_path)
+    scale = state['kpc_per_arcsec']
+    result = {}
+    components = [('HaloOne','1'), ('HaloTwo','2'), ('HaloThree','3'), ('HaloFour','4'),
+                  ('Foreground','5'), ('BCGNorth','bcg_2526'), ('BCGSouth','bcg_3158'),
+                  ('SouthernGalaxy','los736'), ('SouthernDark','dark_s')]
+    for label, component in components:
+        for suffix, field, factor, decimals in [('Sigma','v_disp',1,0),
+                ('Core','core_radius_kpc',scale,1), ('Cut','cut_radius_kpc',scale,1)]:
+            key = component+'.'+field
+            if key in table.index:
+                row = table.loc[key]
+                result[label+suffix] = interval(row['median']/factor,
+                    (row['median']-row.p16)/factor, (row.p84-row['median'])/factor, decimals)
+    for label, field, decimals in [('ScalingAlpha','alpha_sigma',3), ('ScalingBeta','beta_radius',3),
+            ('ScalingSigmaScatter','velocity_log_scatter',3), ('ScalingRadiusScatter','radius_log_scatter',2)]:
+        key = 'potfile_1.'+field
+        if key in table.index:
+            row = table.loc[key]
+            result[label] = interval(row['median'],row['median']-row.p16,row.p84-row['median'],decimals)
+    result['ComparisonMagnitude'] = '17.02'
+    posterior_path = final / 'artifacts/posterior.h5'
+    if posterior_path.exists() and store.has_table(final, 'member_diagnostics'):
+        archive = load_arrays(posterior_path)
+        physical = archive['physical']
+        index = {spec['name']:i for i,spec in enumerate(state['parameter_specs'])}
+        for key in table.index:
+            if key in index:
+                np.testing.assert_allclose(np.median(physical[:,index[key]]), table.loc[key,'median'],rtol=1e-9,atol=1e-10)
+        def v(field):
+            return physical[:,index['potfile_1.'+field]]
+        def quantile(key, values, decimals):
+            low, median, high = np.quantile(values,[.16,.5,.84])
+            result[key] = interval(median,median-low,high-median,decimals)
+        members = _table(final, 'member_diagnostics')
+        group = members[members.potfile_id == 'potfile_1']
+        pivots = group.catalog_mag + 2.5*np.log10(group.luminosity_ratio)
+        pivot = float(pivots.median())
+        np.testing.assert_allclose(pivots,pivot,atol=1e-8)
+        quantile('ScalingSigma',v('sigma')*10**(.4*v('alpha_sigma')*(pivot-17.02)),0)
+        quantile('ScalingCut',v('cutkpc')/scale*10**(.4*v('beta_radius')*(pivot-17.02)),1)
+        match = np.flatnonzero(members.member_id.to_numpy() == 'potfile_1:8971')
+        if len(match)==1 and store.has_arrays(final, 'member_diagnostic_draws'):
+            j = int(match[0])
+            archive = store.read_arrays(final, 'member_diagnostic_draws')
+            deviations = archive['deviations']
+            if deviations.shape != (len(physical),len(members),2):
+                raise ValueError('Member deviation draws do not align with saved posterior')
+            # Saved deviations already include centering/scatter transformations.
+            row = members.iloc[j]
+            for axis, prefix in [(0,'velocity'),(1,'radius')]:
+                np.testing.assert_allclose(np.quantile(deviations[:,j,axis],[.16,.5,.84]),
+                    [row[prefix+'_p16'],row[prefix+'_median'],row[prefix+'_p84']],atol=1e-9)
+            lum = float(row.luminosity_ratio)
+            quantile('GalEightNineSevenOneSigma',v('sigma')*lum**v('alpha_sigma')*np.exp(deviations[:,j,0]),0)
+            quantile('GalEightNineSevenOneCut',v('cutkpc')/scale*lum**v('beta_radius')*np.exp(deviations[:,j,1]),1)
+    return result
+
+
+_HALO_ROWS = (('x_centre', 'X', r'$x$ (arcsec)', 2), ('y_centre', 'Y', r'$y$ (arcsec)', 2),
+              ('e1', 'EOne', r'$e_1$', 2), ('e2', 'ETwo', r'$e_2$', 2),
+              ('core_radius_kpc', 'Core', r'$r_{\rm core}$ (kpc)', 1), ('cut_radius_kpc', 'Cut', r'$r_{\rm cut}$ (kpc)', 0),
+              ('v_disp', 'Sigma', r'$\sigma_0$ (km\,s$^{-1}$)', 0))
+_COMPONENT_LABELS = {'bcg_2526': 'Northern BCG', 'bcg_3158': 'Southern BCG', 'los736': 'Southern galaxy', 'dark_s': 'Southern dark halo'}
+_CLUSTER_NAMES = (('hera', 'Hera'), ('ares', 'Ares'), ('as1063', 'Abell~S1063'), ('m0416', 'MACS~J0416'), ('mj0416', 'MACS~J0416'))
+
+
+def _compact(value) -> str:
+    """A prior bound or location in TeX with three significant figures; powers of ten below 0.01."""
+    value = float(value)
+    if math.isinf(value):
+        return r'\infty' if value > 0 else r'-\infty'
+    if value == 0:
+        return '0'
+    if abs(value) < 1e-2:
+        exponent = math.floor(math.log10(abs(value)))
+        mantissa = value / 10 ** exponent
+        return (rf'10^{{{exponent}}}' if abs(mantissa - 1) < 5e-3 else rf'{mantissa:.3g}\times10^{{{exponent}}}')
+    return f'{float(f"{value:.3g}"):.0f}' if abs(value) >= 100 else f'{value:.3g}'
+
+
+def prior_tex(prior) -> str:
+    """A saved prior (``state.json``) in the notation of the priors table, for math mode: U and LU with physical bounds,
+    LN_[a,b](ln m, s) with m the median, TN_[a,b](mu, s^2); bounds are omitted when the prior has none."""
+    family, log = prior.get('family'), bool(prior.get('log'))
+    bound = lambda key: math.exp(float(prior[key])) if log else float(prior[key])
+    if family == 'Uniform':
+        return rf'\mathcal{{{"LU" if log else "U"}}}({_compact(bound("low"))},{_compact(bound("high"))})'
+    if family in ('TruncatedNormal', 'Normal'):
+        support = ''
+        if family == 'TruncatedNormal':
+            high = float(prior['high'])
+            support = (rf'_{{[{_compact(bound("low"))},\infty)}}' if math.isinf(high)
+                       else rf'_{{[{_compact(bound("low"))},{_compact(bound("high"))}]}}')
+        if log:
+            return rf'\mathcal{{LN}}{support}(\ln {_compact(math.exp(float(prior["loc"])))},{float(prior["scale"]):.2f})'
+        return rf'\mathcal{{{"TN" if support else "N"}}}{support}({_compact(prior["loc"])},{_compact(prior["scale"])}^2)'
+    return rf'\textnormal{{{family}}}'
+
+
+def _component_stem(component: str) -> str:
+    return ''.join(_DIGITS[int(w)] if w.isdigit() else w[:1].upper() + w[1:].lower() for w in re.findall(r'[A-Za-z]+|[0-9]', component))
+
+
+def halo_table_metrics(final, name=''):
+    """Prior and posterior macros of the independent dPIE components (cluster halos, separately fitted galaxies) that
+    have a sampled parameter, and the rows of their table.
+
+    Returns ``(metrics, rows)``.  ``metrics`` maps ``Comp<Id><Field>`` to the posterior (median with the 16-84% range
+    over the saved draws) and ``Comp<Id><Field>Prior`` to the prior (``prior_tex``); a fixed parameter gives its value
+    and ``\\textnormal{fixed}``.  ``<Id>`` is the component id with digits spelled out; ``<Field>`` is X, Y, EOne, ETwo,
+    Core, Cut or Sigma (arcsec, kpc, km/s), or E and Angle (degrees) for a fixed shape.  The cut radius is the sampled
+    excess plus the core radius of the same draw; its prior is the prior of the excess.  ``rows`` holds
+    ``(component label, parameter label, macro suffix)``.  Empty when the saved state, config or posterior is missing."""
+    import numpy as np
+    state = _read(final.parent / 'init/artifacts/state.json')
+    config = _read(final.parent / 'init/artifacts/config.json') or _read(final / 'artifacts/config.json')
+    posterior_path = final / 'artifacts/posterior.h5'
+    halos = config.get('model', {}).get('large_halos', [])
+    if not state or not halos or not posterior_path.exists():
+        return {}, []
+    physical = load_arrays(posterior_path)['physical']
+    index = {spec['name']: i for i, spec in enumerate(state['parameter_specs'])}
+    priors = {spec['name']: spec['prior'] for spec in state['parameter_specs']}
+    metrics, rows = {}, []
+
+    def add(label, component, text, suffix, decimals, draws=None, prior=None, value=None):
+        key = 'Comp' + _component_stem(component) + suffix
+        if draws is None:
+            metrics[key], metrics[key + 'Prior'] = ('0' if float(value) == 0 else f'{float(value):.4g}'), r'\textnormal{fixed}'
+        else:
+            low, median, high = np.quantile(draws, [.16, .5, .84])
+            metrics[key], metrics[key + 'Prior'] = interval(median, median - low, high - median, decimals), prior_tex(prior)
+        rows.append((label, text, key))
+
+    for halo in halos:
+        component = str(halo['id'])
+        sampled = lambda field: f'{component}.{field}' in index
+        if 'v_disp' not in halo or not any(name_.startswith(component + '.') for name_ in index):
+            continue                                                    # shear, or a component with every parameter fixed
+        label = _COMPONENT_LABELS.get(component)
+        if label is None and component == '5' and '0416' in name:
+            label = 'Foreground galaxy'
+        if label is None:
+            label = (f'Halo {component}' if component.isdigit() else
+                     'BCG ' + component[4:] if component.lower().startswith('bcg_') else component.replace('_', ' '))
+        for field, suffix, text, decimals in _HALO_ROWS:
+            if field in ('e1', 'e2') and not sampled(field):
+                if field == 'e1':
+                    add(label, component, '$e$', 'E', 2, value=halo.get('ellipticite', 0.0))
+                    if float(halo.get('ellipticite', 0.0)) != 0.0:
+                        add(label, component, r'$\phi$ (deg)', 'Angle', 1, value=halo.get('angle_pos', 0.0))
+                continue
+            if field == 'cut_radius_kpc' and sampled('cut_excess_kpc'):
+                core = physical[:, index[f'{component}.core_radius_kpc']] if sampled('core_radius_kpc') else float(halo['core_radius_kpc'])
+                add(label, component, text, suffix, decimals, draws=physical[:, index[f'{component}.cut_excess_kpc']] + core,
+                    prior=priors[f'{component}.cut_excess_kpc'])
+            elif sampled(field):
+                add(label, component, text, suffix, decimals, draws=physical[:, index[f'{component}.{field}']], prior=priors[f'{component}.{field}'])
+            else:
+                add(label, component, text, suffix, decimals, value=halo.get(field))
+    return metrics, rows
+
+
+def write_halo_table(path, name, prefix, rows) -> Path:
+    r"""The table of ``halo_table_metrics`` as a ``table*`` whose cells are the run's macros (``\<prefix>Comp...``), so it
+    follows the results file it is written beside.  Label ``tab:halos_<name>``."""
+    cluster = next((label for key, label in _CLUSTER_NAMES if key in name.lower()), name.replace('_', r'\_'))
+    lines = ['% Generated with the results macros of the same run. Do not edit; regenerate from saved artifacts.',
+             r'\begin{table*}[!ht]', r'\centering',
+             rf'\caption{{Priors and posteriors of the independent mass components of {cluster}. Positions are offsets from the '
+             r'reference point of the model. The prior of $r_{\rm cut}$ is that of $r_{\rm cut}-r_{\rm core}$. Components with '
+             r'every parameter fixed are not listed. The prior notation follows Table~\ref{tab:priors}.}',
+             rf'\label{{tab:halos_{re.sub(r"[^A-Za-z0-9]", "_", name)}}}', r'\begin{tabular}{llll}', r'\toprule',
+             r'Component & Parameter & Prior & Posterior \\']
+    previous = None
+    for label, text, key in rows:
+        if label != previous:
+            lines.append(r'\midrule')
+        lines.append(rf'{label if label != previous else ""} & {text} & $\{prefix}{key}Prior$ & $\{prefix}{key}$ \\')
+        previous = label
+    lines += [r'\bottomrule', r'\end{tabular}', r'\end{table*}']
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('\n'.join(lines) + '\n')
+    return path
+
+
+def footprint_metrics(final, cfg):
+    """Mean model/true ratios within the image footprint (``truth_recovery.footprint_mean_ratios``) from the saved
+    profile tables, for a simulated cluster with a truth map; empty otherwise.  This work's numbers are the medians over
+    the saved posterior draws (tables ``truth_recovery_*_ratio_draws``), with ``...Interval`` macros carrying the 16-84 per
+    cent range; without those tables they come from the median profile and the intervals are not available."""
+    import numpy as np
+    import pandas as pd
+    from ..config import TruthOutputConfig, _from_jsonable
+    from ..diagnostics.truth_recovery import footprint_mean_ratios, literature_ratios
+    names = ('truth_recovery_m2d_aperture_profile', 'truth_recovery_kappa_annulus_profile', 'image_fit_quality')
+    if not all(store.has_table(final, name) for name in names) or not cfg.get('outputs', {}).get('truth', {}).get('kappa_true_fits'):
+        return {}
+    mass, kappa, images = (_table(final, name) for name in names)
+    draws = ('truth_recovery_m2d_aperture_ratio_draws', 'truth_recovery_kappa_annulus_ratio_draws')
+    mass_draws, kappa_draws = (_table(final, name) for name in draws) if all(store.has_table(final, name) for name in draws) else (None, None)
+    radii = np.hypot(images['x_obs_arcsec'] - mass['center_x_arcsec'].iloc[0], images['y_obs_arcsec'] - mass['center_y_arcsec'].iloc[0])
+    truth = _from_jsonable(cfg['outputs']['truth'], TruthOutputConfig)
+    found = footprint_mean_ratios(mass, kappa, radii.to_numpy(float), literature_ratios(truth, 'mass'),
+                                  literature_ratios(truth, 'kappa'), mass_draws, kappa_draws)
+    result = {'FootprintInnerArcsec': number(found['inner_arcsec'], 1), 'FootprintOuterArcsec': number(found['outer_arcsec'], 1),
+              'FootprintNDraws': number(None if mass_draws is None else mass_draws['draw'].nunique(), 0)}
+    for quantity, label in (('mass', 'Mass'), ('kappa', 'Kappa')):
+        for model, value in found[quantity].items():
+            ours = model == 'This work'
+            suffix = '' if ours else re.sub(r'[^A-Za-z]', '', model)
+            for index, (name, scale, decimals) in enumerate((('Ratio', 1, 3), ('MeanAbsPercent', 100, 1), ('RMSPercent', 100, 1))):
+                key = f'Footprint{label}{name}{suffix}'
+                if value is None:
+                    result[key] = number(None)
+                elif ours and np.ndim(value) == 2:
+                    median, low, high = scale * value[:, index]
+                    result[key] = number(median, decimals)
+                    result[key + 'Interval'] = interval(median, median - low, high - median, decimals)
+                    result[key + 'Minus'] = number(median - low, decimals)
+                    result[key + 'Plus'] = number(high - median, decimals)
+                else:
+                    result[key] = number(scale * value[index], decimals)
+                    if ours:
+                        for extra in ('Interval', 'Minus', 'Plus'):
+                            result[key + extra] = number(None)
+    return result
+
+
+_REFERENCE_NAMES = {3: 'Three', 10: 'Ten', 30: 'Thirty'}
+
+
+def truth_magnification_metrics(final):
+    """Magnification against the truth of a simulated cluster, from the tables ``magnification_scatter`` and
+    ``cumulative_source_area``; every macro is "not available" without its table.
+
+    ``MagnificationScatterMu<Three|Ten>Percent`` and ``MagnificationBiasMu...Percent``: scatter and bias of the model
+    magnification over the reporting draws at the map pixels where the truth has that magnification
+    (``plotting.scatter_summary.conditional_scatter``), in per cent.  ``SourceAreaRatioMu<Three|Ten|Thirty>``: median
+    over the draws of the source-plane area magnified above that threshold, over the true area (interpolated in
+    log mu).  No prefix is the lens of each draw, parametric plus its realization of the GRF (the parametric lens
+    when the run has no field); ``LensOnly...`` the same draws without the GRF."""
+    import numpy as np
+    import pandas as pd
+    result = {}
+    scatter = _table(final, 'magnification_scatter')
+    scatter = scatter.set_index(['model', 'mu_ref']) if scatter is not None else None
+    area = _table(final, 'cumulative_source_area')
+    for prefix, model in (('', 'model'), ('LensOnly', 'parametric')):
+        for mu in (3, 10):
+            for suffix, column in (('Scatter', 'scatter'), ('Bias', 'bias')):
+                value = None
+                if scatter is not None:
+                    key = (model if (model, float(mu)) in scatter.index else 'parametric', float(mu))
+                    value = 100 * scatter.loc[key, column] if key in scatter.index else None
+                result[f'{prefix}Magnification{suffix}Mu{_REFERENCE_NAMES[mu]}Percent'] = number(
+                    value if value is None or not math.isfinite(value) else round(value) + 0., 0)   # + 0. turns -0 into 0
+        for mu in (3, 10, 30):
+            value = None
+            if area is not None:
+                column = f'area_{model}_median_arcsec2'
+                column = column if column in area else 'area_parametric_median_arcsec2'
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    ratio = area[column].to_numpy(float) / area['area_true_arcsec2'].to_numpy(float)
+                value = float(np.interp(np.log(mu), np.log(area['mu'].to_numpy(float)), ratio, left=np.nan, right=np.nan))
+            result[f'{prefix}SourceAreaRatioMu{_REFERENCE_NAMES[mu]}'] = number(value, 2)
+    return result
+
+
+def error_budget_metrics(final):
+    """Total positional scatter per coordinate and the share of its variance in the GRF, from the saved posterior.
+
+    ``SigmaTotal`` (arcsec) is the quadrature sum of ``images.sigma_grf``, ``images.sigma_gp`` and
+    ``images.sigma_meas`` of each posterior draw (those the run samples), for an image at the GRF reference redshift;
+    ``GRFVariancePercent`` is ``sigma_grf^2`` over that sum of squares, in per cent.  Both are the median over the draws,
+    with ``...Interval`` the 16-84% range for math mode; "not available" without ``final/artifacts/posterior.h5``,
+    ``init/artifacts/state.json`` or any of the three scales (the share also needs ``sigma_grf``)."""
+    import numpy as np
+    result = {key: number(None) for key in ('SigmaTotal', 'SigmaTotalInterval', 'GRFVariancePercent', 'GRFVariancePercentInterval')}
+    posterior_path, state_path = final / 'artifacts/posterior.h5', final.parent / 'init/artifacts/state.json'
+    if not posterior_path.exists() or not state_path.exists():
+        return result
+    index = {spec['name']: i for i, spec in enumerate(_read(state_path).get('parameter_specs', []))}
+    physical = np.asarray(load_arrays(posterior_path)['physical'], float)
+    squares = {name: physical[:, index['images.' + name]]**2 for name in ('sigma_grf', 'sigma_gp', 'sigma_meas') if 'images.' + name in index}
+    if not squares:
+        return result
+    total = sum(squares.values())
+
+    def spread(prefix, values, decimals):
+        low, median, high = np.percentile(values, [16, 50, 84])
+        result[prefix] = number(median, decimals)
+        result[prefix + 'Interval'] = interval(median, median - low, high - median, decimals)
+    spread('SigmaTotal', np.sqrt(total), 3)
+    if 'sigma_grf' in squares:
+        spread('GRFVariancePercent', 100 * squares['sigma_grf'] / total, 0)
+    return result
+
+
+def count_metrics(suffix, values, decimals=0):
+    """``<suffix>`` (the median over draws) and ``<suffix>Interval`` (median with its 16-84% range, for math mode)
+    from ``{"median", "q16", "q84"}``; "not available" without it."""
+    if not values:
+        return {suffix: number(None, decimals), suffix + 'Interval': number(None)}
+    median = values['median']
+    return {suffix: number(median, decimals),
+            suffix + 'Interval': interval(median, median - values['q16'], values['q84'] - median, decimals)}
+
+
+def posterior_residual_metrics(final, name, prefix):
+    """``<prefix>RMS`` and ``<prefix>MedianResidual`` (arcsec, three decimals, for math mode): the median and 16th-84th
+    percentile range over the posterior draws in the table ``name`` of the stage ``final``
+    (``posterior_image_residual_draws*``) of each draw's RMS and median residual of its recovered images; "not
+    available" without the table."""
+    import numpy as np
+    import pandas as pd
+    result = {prefix + 'RMS': number(None), prefix + 'MedianResidual': number(None)}
+    draws = _table(final, name)
+    if draws is None:
+        return result
+    values = pd.to_numeric(draws['image_residual_arcsec'], errors='coerce')
+    draws = draws.assign(r=values)[draws['recovered'].astype(bool) & np.isfinite(values) & (values >= 0)]
+    if draws.empty:
+        return result
+    grouped = draws.groupby('draw_index')['r']
+    for name, per_draw in (('RMS', grouped.apply(lambda r: float(np.sqrt(np.mean(r ** 2))))), ('MedianResidual', grouped.median())):
+        low, median, high = np.percentile(per_draw.to_numpy(float), [16, 50, 84])
+        result[prefix + name] = interval(median, median - low, high - median, 3)
+    return result
+
+
+def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path:
+    r"""Write LaTeX macros of a finished run's recorded results.
+
+    Reads only saved outputs under ``final_dir`` (no inference, no plots) and
+    writes one ``\newcommand`` per metric to
+    ``final/figures/<name>_results.tex``. Each command is the prefix of
+    :func:`command_prefix` (``name`` with known clusters aliased, e.g. ``m0416``
+    to ``MJZeroFourOneSix``, digits spelled out) followed by a suffix. A quantity
+    that is missing from the saved files is written as ``\textnormal{not
+    available}``; nothing is inferred.
+
+    Files read (relative to the run root; all except the first are optional):
+    ``final/artifacts/summary.json``, ``final/artifacts/config.json``,
+    ``final/artifacts/posterior_diagnostics.json``,
+    and from ``final/results.h5`` (:mod:`lumina.io.store`) the records
+    ``run_summary``, ``runtime`` and ``aperture_mass_histogram`` and the tables
+    ``posterior_summary``, ``posterior_image_residual_draws*``,
+    ``posterior_image_rms``, ``position_coverage`` and ``image_fit_quality``.
+    For an M0416 run (``name`` containing ``m0416`` or ``mj0416``) it also
+    reads ``final/artifacts/posterior.h5``, the table ``member_diagnostics``,
+    the arrays ``member_diagnostic_draws`` and ``init/artifacts/state.json`` to
+    add halo and scaling-relation macros comparable with Rihtarsic et al.
+    (2025).
+
+    Main suffixes: counts (``NImages``, ``NRecovered``, ``NMissed``,
+    ``NFamilies``, ``NFamiliesRecovered``, ``NParameters``, ``NMembers``,
+    ``NExactMembers``, ``NFarFieldMembers``, ``NDivergences``, ``NChains``,
+    ``NWarmupPerChain``, ``NSamplesPerChain``, ``NExtraImages``); image
+    residuals in arcsec as posterior median and 16-84% range over the saved draws
+    (``RMS``, ``MedianResidual``, and ``LensOnlyRMS``, ``LensOnlyMedianResidual``
+    for the same draws without the GRF; ``posterior_residual_metrics``),
+    ``RecoveredPercent`` and ``NPosteriorRMSDraws`` (counts and percentages are medians over the reporting draws,
+    with ``...Interval`` the 16-84% range); position coverage (``PositionCoverageOneSigmaPercent``,
+    ``PositionCoverageTwoSigmaPercent`` and ``NPositionCoverage``); likelihood-noise posterior
+    medians and intervals (``SigmaGP``, ``SigmaMeas``,
+    ``EllGP``, ``SigmaGRF``, ``LambdaB``;
+    angular scales in arcsec), their quadrature sum per draw ``SigmaTotal`` and the
+    share of the GRF in its variance ``GRFVariancePercent`` (``error_budget_metrics``); convergence (``MaxRhat``, ``MinESS``); run time
+    (``Runtime``, ``SamplingRuntime`` as h/min/s, plus ``...Seconds`` and
+    ``...Hours``); and ``ApertureMassRatio...`` macros when the aperture
+    histogram exists; and, for a simulated cluster, the magnification against
+    the truth (``MagnificationScatterMuThreePercent``, ``SourceAreaRatioMuTen``
+    and the like, with ``LensOnly...``; ``truth_magnification_metrics``).
+
+    Parameters
+    ----------
+    final_dir : str or pathlib.Path
+        The run's ``final`` directory (``<run root>/final``).
+    name : str or None, optional
+        Name used for the file name (non-alphanumeric characters other than
+        ``_`` and ``-`` replaced by ``_``) and the macro prefix. None (default)
+        uses ``paths.figure_prefix`` from ``final/artifacts/config.json``, or
+        else the name of the run root directory.
+
+    Returns
+    -------
+    pathlib.Path
+        The written file, ``final/figures/<name>_results.tex``.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``final/artifacts/summary.json`` does not exist.
+    ValueError
+        If ``name`` yields no valid TeX command name (letters only), or, for an
+        M0416 run, the saved member deviation draws do not align with the saved
+        posterior.
+    AssertionError
+        For an M0416 run, if the saved posterior draws disagree with the
+        tables ``posterior_summary`` or ``member_diagnostics``.
+    """
+    final = Path(final_dir)
+    if not (final / 'artifacts/summary.json').is_file():
+        raise FileNotFoundError(f'No saved run summary under {final / "artifacts"}')
+    cfg = _read(final / 'artifacts/config.json')
+    name = name or cfg.get('paths', {}).get('figure_prefix') or final.parent.name
+    filename = re.sub(r'[^A-Za-z0-9_-]', '_', name)
+    summary = _read(final / 'artifacts/summary.json')
+    fit = _record(final, 'run_summary').get('fit', {})
+    diag = _read(final / 'artifacts/posterior_diagnostics.json') or summary.get('nuts', {})
+    timing = _record(final, 'runtime')
+    metrics = {}
+    for suffix, value in {
+        'NImages': fit.get('observed_image_count', summary.get('images')),
+        'NFamilies': summary.get('families'), 'NFamiliesRecovered': fit.get('families_fully_recovered'),
+        'NParameters': summary.get('n_parameters'), 'NMembers': summary.get('members'),
+        'NExactMembers': summary.get('exact_members'), 'NDivergences': summary.get('divergences'),
+        'NChains': cfg.get('runtime', {}).get('chains'),
+        'NWarmupPerChain': cfg.get('sampling', {}).get('warmup'),
+        'NSamplesPerChain': cfg.get('sampling', {}).get('samples'),
+    }.items():
+        metrics[suffix] = number(value, 0)
+    members, exact = summary.get('members'), summary.get('exact_members')
+    metrics['NFarFieldMembers'] = number(members-exact if members is not None and exact is not None else None, 0)
+    # Image residuals: median and 16-84% range over the saved posterior draws (each draw's own lens, and the parametric lens without its GRF realization).
+    for prefix, table in (('', 'posterior_image_residual_draws'), ('LensOnly', 'posterior_image_residual_draws_lens_only')):
+        metrics.update(posterior_residual_metrics(final, table, prefix))
+    # Counts over the reporting draws: median, with the 16-84% range in ...Interval (knee-GP runs have LensOnly...).
+    total = fit.get('observed_image_count')
+    for suffix, key in (('NRecovered', 'recovered_image_count'), ('NLensOnlyRecovered', 'lens_only_recovered_image_count'),
+                        ('NExtraImages', 'extra_image_count')):
+        metrics.update(count_metrics(suffix, fit.get(key)))
+    recovered = fit.get('recovered_image_count')
+    metrics.update(count_metrics('NMissed', None if recovered is None or total is None else
+                                 {'median': total - recovered['median'], 'q16': total - recovered['q84'], 'q84': total - recovered['q16']}))
+    metrics.update(count_metrics('RecoveredPercent', None if recovered is None or not total else
+                                 {k: 100 * v / total for k, v in recovered.items()}, decimals=1))
+    # Keep the median individual residual distinct from the median of draw RMSs.
+    import numpy as np
+    import pandas as pd
+    parameters = _table(final, 'posterior_summary')
+    parameters = parameters.set_index('parameter') if parameters is not None else pd.DataFrame()
+    for suffix, parameter, decimals in [
+        ('SigmaGP', 'images.sigma_gp', 3),
+        ('SigmaMeas', 'images.sigma_meas', 3),
+        ('EllGP', 'images.ell_gp', 1),
+        ('SigmaGRF', 'images.sigma_grf', 2),
+        ('LambdaB', 'images.lambda_b', 1),
+    ]:
+        value = parameters.loc[parameter, 'median'] if parameter in parameters.index else None
+        metrics[suffix] = number(value, decimals)
+        metrics[suffix+'Interval'] = number(None)
+        if parameter in parameters.index and {'p16', 'p84'}.issubset(parameters.columns):
+            row = parameters.loc[parameter]
+            metrics[suffix+'Interval'] = interval(value, value-row.p16, row.p84-value, decimals)
+    metrics.update(error_budget_metrics(final))
+    metrics['GRFReferenceRedshift'] = number(cfg.get('likelihood', {}).get('gp_reference_redshift'), 1)
+    rms = _table(final, 'posterior_image_rms')
+    metrics['NPosteriorRMSDraws'] = number(None, 0)
+    if rms is not None:
+        metrics['NPosteriorRMSDraws'] = str(int(np.isfinite(rms['image_rms_arcsec'].to_numpy(float)).sum()))
+    coverage = _table(final, 'position_coverage')
+    coverage = coverage if coverage is not None else pd.DataFrame()
+    levels = coverage['credible_level'].to_numpy(float) if 'credible_level' in coverage else np.empty(0)
+    levels = levels[np.isfinite(levels)]
+    metrics['NPositionCoverage'] = str(len(levels)) if len(coverage) else number(None, 0)
+    for suffix, probability in (('OneSigma', .682689492), ('TwoSigma', .954499736)):
+        metrics['PositionCoverage'+suffix+'Percent'] = number(100*np.mean(levels <= probability) if len(levels) else None, 0)
+    metrics['MaxRhat'] = number(diag.get('max_r_hat'), 4)
+    metrics['MinESS'] = number(diag.get('min_n_eff'), 1)
+    for suffix, seconds in [('Runtime', timing.get('total')), ('SamplingRuntime', diag.get('elapsed_seconds'))]:
+        metrics[suffix] = duration(seconds)
+        metrics[suffix+'Seconds'] = number(seconds, 1)
+        metrics[suffix+'Hours'] = number(seconds/3600 if seconds is not None else None, 3)
+    if 'm0416' in name.lower() or 'mj0416' in name.lower():
+        metrics.update(m0416_table_metrics(final))
+    halo_metrics, halo_rows = halo_table_metrics(final, name)
+    metrics.update(halo_metrics)
+    if halo_rows:
+        write_halo_table(final / 'figures' / f'{filename}_halo_table.tex', name, command_prefix(name), halo_rows)
+    aperture = _record(final, 'aperture_mass_histogram')
+    if aperture:
+        metrics['ApertureEffectiveRadiusNormalizationKpc'] = number(aperture['normalization_kpc'], 1)
+        for sample, label in [('all', 'All'), ('image_hull', 'ImageFootprint')]:
+            row = aperture['samples'][sample]
+            stem = 'ApertureMassRatio' + label
+            metrics[stem + 'NMembers'] = str(int(row['n']))
+            for field, suffix in [('median','Median'), ('p25','LowerQuartile'),
+                                  ('p75','UpperQuartile'), ('iqr','IQR'), ('Q','Score')]:
+                metrics[stem + suffix] = number(row[field], 3)
+    metrics.update(footprint_metrics(final, cfg))
+    metrics.update(truth_magnification_metrics(final))
+    return _write(final / 'figures' / f'{filename}_results.tex', command_prefix(name), metrics,
+                  ['Image recovery over the reporting posterior draws: counts are medians, ...Interval the 16-84% range; no reduced chi-square exported.',
+                   'This work: median over the saved posterior draws (FootprintNDraws), ...Interval with the 16-84% range,',
+                   '...Minus and ...Plus the distances from the median to the 16th and 84th percentiles.',
+                   'Footprint...Ratio: mean model/true ratio; Footprint...MeanAbsPercent and ...RMSPercent: mean |model/true - 1|',
+                   'and rms of model/true - 1, in per cent,',
+                   'of the enclosed mass (Mass) or the azimuthally averaged',
+                   'convergence (Kappa), uniform in log R from FootprintInnerArcsec to FootprintOuterArcsec (the outermost image, cut',
+                   'at the edge of the published figure); no suffix is this work (median over draws), a model name suffix is that',
+                   'published parametric reconstruction of Meneghetti et al. (2017), over the part of the range its curve covers.',
+                   'RMS and MedianResidual (and LensOnly...): median and 16-84% range over posterior draws of each draw RMS and median residual of its recovered images, for math mode.',
+                   'RMS and MedianResidual use the lens of each draw, parametric plus its realization of the GRF; LensOnlyRMS and LensOnlyMedianResidual the same draws without the GRF.',
+                   'MagnificationScatterMu...Percent and MagnificationBiasMu...Percent: scatter (half the 16-84% range over the median) and bias (median - 1)',
+                   'of model/true magnification over all reporting draws, at map pixels inside the image hull whose true magnification is within 10% of 3 or 10',
+                   '(after Raney et al. 2020); SourceAreaRatioMu...: median over draws of the source-plane area magnified above 3, 10 or 30, over the true area.',
+                   'Both at the truth-map source redshift; no prefix is parametric plus the GRF realization of each draw, LensOnly the same draws without the GRF.',
+                   'GP and GRF parameter macros are posterior medians; angular scales are in arcseconds.',
+                   'Comp<Id><Field> and Comp<Id><Field>Prior: posterior (median, 16-84% range) and prior of the independent components, for math mode;',
+                   'arcsec, kpc and km/s; the table that uses them is <name>_halo_table.tex (halo_table_metrics).',
+                   'SigmaTotal: quadrature sum of SigmaGRF, SigmaGP and SigmaMeas per posterior draw, per coordinate, for an image at GRFReferenceRedshift;',
+                   'GRFVariancePercent: share of SigmaGRF^2 in that sum of squares; both medians over the draws with ...Interval the 16-84% range.',
+                   'ApertureMassRatio macros, when present: galaxy-distribution median and quartiles, not posterior intervals.',
+                   'Apertures use twice the estimated effective radius; normalization is Re at F160W=20 in kpc.',
+                   'ImageFootprint means galaxy centers inside the observed-image convex hull. Score is -log10(IQR*abs(median-1)).',
+                   'NPosteriorRMSDraws counts the draws with a finite RMS.',
+                   'PositionCoverageOneSigma/TwoSigmaPercent: catalog positions inside the 68.3% and 95.4% regions of their predicted observed positions '
+                   '(each draw lens position plus one draw of the image-plane GP and measurement error); NPositionCoverage images have a region.',
+                   'These are in-sample checks of the size of the fitted scatter, not held-out predictive errors.',
+                   'Runtime is recorded full-run wall time, including initialization and outputs.',
+                   'SamplingRuntime is the saved sampler elapsed time, not total run time.',
+                   'NSamplesPerChain is configured sampling iterations before thinning.',
+                   'Unavailable values are not inferred from modification timestamps.'])
+
+
+def spread_interval(values, decimals=3):
+    """Median and 16-84% range of ``values`` as a math-mode interval; "not available" when empty."""
+    import numpy as np
+    if not len(values):
+        return number(None)
+    low, median, high = np.percentile(values, [16, 50, 84])
+    return interval(median, median - low, high - median, decimals)
+
+
+def _range_pair(pair) -> tuple[str, str]:
+    """Both ends of a range with the fewest decimals (at most four) that write both exactly: (0.04, 0.1) gives
+    0.04 and 0.10; "not available" twice when the range is missing."""
+    try:
+        low, high = (float(v) for v in pair)
+    except (TypeError, ValueError):
+        return number(None), number(None)
+    decimals = next((d for d in range(5) if all(abs(round(v, d) - v) < 1e-9 for v in (low, high))), 4)
+    return number(low, decimals), number(high, decimals)
+
+
+def mock_injection_metrics(campaign) -> dict[str, str]:
+    """Macros for what the mocks of a campaign inject, read from ``seed_*/mock/truth.json`` of the included mocks.
+
+    Medians over the mocks of the injected error scales: ``InjectedSigmaGRF``, ``InjectedSigmaGP``,
+    ``InjectedSigmaMeas`` (arcsec), ``InjectedLambdaB``, ``InjectedEllGP`` (arcsec) and ``InjectedGammaKappa``.  The
+    ranges they are drawn from, as ``<Name>Min`` and ``<Name>Max`` for ``SigmaGRF``, ``LambdaB``, ``GammaKappa``,
+    ``SigmaGP``, ``EllGP`` and ``SigmaMeas``, with ``FieldReferenceRedshift`` (the source redshift ``SigmaGRF`` is
+    quoted at).  The member population: ``SchechterAlpha``, ``SchechterMagnitude``, ``PivotMagnitude`` and the scatter
+    of the velocity dispersion at fixed luminosity, ``VelocityScatterDex`` and ``VelocityScatterPercent``.  The ranges
+    and the member population are those of the first included mock.  The catalogs: ``NSystemsPerMock`` (lensed
+    systems), ``NFamiliesPerMock`` (image families; a knot of a system is its own family) and ``NImagesPerMock``, each
+    the median over the mocks, with ``...Min`` and ``...Max``.  Every value is "not available" without the truth files.
+    """
+    import json
+    import numpy as np
+    truths = []
+    root = getattr(campaign, 'root', None)
+    for seed in (campaign.seeds if root is not None else []):
+        path = Path(root) / f'seed_{int(seed):08d}' / 'mock' / 'truth.json'
+        if path.exists():
+            truths.append(json.loads(path.read_text()))
+
+    def median(section, key, decimals):
+        values = [(t.get(section) or {}).get(key) for t in truths]          # a mock without a field has "field": null
+        values = [float(v) for v in values if v is not None]
+        return number(float(np.median(values)) if values else None, decimals)
+
+    config = (truths[0].get('config') or {}) if truths else {}
+    relation = (truths[0].get('relation') or {}) if truths else {}
+    metrics = {'InjectedSigmaGRF': median('field', 'sigma_grf_arcsec', 3), 'InjectedLambdaB': median('field', 'knee_arcsec', 1),
+               'InjectedGammaKappa': median('field', 'gamma', 1), 'InjectedSigmaGP': median('image_plane_error', 'sigma_arcsec', 3),
+               'InjectedEllGP': median('image_plane_error', 'ell_arcsec', 1), 'InjectedSigmaMeas': median('config', 'measurement_noise_arcsec', 3)}
+    for name, key in (('SigmaGRF', 'field_sigma_grf_range_arcsec'), ('LambdaB', 'field_knee_range_arcsec'),
+                      ('GammaKappa', 'field_gamma_range'), ('SigmaGP', 'image_plane_sigma_range_arcsec'),
+                      ('EllGP', 'image_plane_ell_range_arcsec'), ('SigmaMeas', 'measurement_noise_range_arcsec')):
+        metrics[name + 'Min'], metrics[name + 'Max'] = _range_pair(config.get(key))
+    scatter = relation.get('sigma_scatter_ln')
+    metrics.update({'FieldReferenceRedshift': _range_pair((config.get('field_reference_redshift'),) * 2)[0],
+                    'SchechterAlpha': _range_pair((relation.get('schechter_alpha'),) * 2)[0],
+                    'SchechterMagnitude': _range_pair((relation.get('schechter_magnitude'),) * 2)[0],
+                    'PivotMagnitude': _range_pair((relation.get('pivot_magnitude'),) * 2)[0],
+                    'VelocityScatterDex': number(None if scatter is None else float(scatter) / math.log(10.0), 2),
+                    'VelocityScatterPercent': number(None if scatter is None else 100.0 * float(scatter), 0)})
+    # The catalog of each mock: lensed systems, image families (a knot of a system is its own family) and images.
+    counts = {'NSystemsPerMock': [len({im.get('system_id') for im in t.get('images', [])}) for t in truths],
+              'NFamiliesPerMock': [len({im.get('family_id') for im in t.get('images', [])}) for t in truths],
+              'NImagesPerMock': [len(t.get('images', [])) for t in truths]}
+    for name, values in counts.items():
+        metrics[name] = number(float(np.median(values)) if values else None, 0)
+        metrics[name + 'Min'] = number(min(values) if values else None, 0)
+        metrics[name + 'Max'] = number(max(values) if values else None, 0)
+    return metrics
+
+
+def write_mock_results(campaign, output: Path, *, rhat_cut: float, min_ess: float) -> Path:
+    r"""Write LaTeX macros summarizing a mock-validation campaign.
+
+    Writes ``output/mock_results.tex`` with ``\newcommand`` macros prefixed
+    ``Mock``. Aggregates follow the residual figure rather than pooling all
+    images: for each (seed, posterior draw) group of
+    ``campaign.residual_draws``, the RMS and median of the finite, nonnegative
+    residuals of recovered images are computed, and the macros report the
+    median of each across groups.
+
+    Macros: ``MockNCompleted`` (realizations in ``campaign.summary``),
+    ``MockNIncluded`` (``campaign.seeds``), ``MockNExcluded``, ``MockRhatCut``,
+    ``MockMinESSCut``, ``MockRMS`` and ``MockMedianResidual`` (arcsec, median and 16-84% range over the groups, math mode),
+    ``MockInjectedOffset`` (arcsec, median and 16-84% range over the included mocks of the rms separation between each
+    mock's observed and true image positions, the line of the residual figure; not available without the mock catalogs),
+    ``MockNImages``, ``MockNRecovered``, ``MockNMissed`` (sums over included
+    seeds; not available if any value is missing), and ``MockRuntime``,
+    ``MockRuntimeSeconds``, ``MockRuntimeHours`` (always not available: a
+    campaign's run time is not inferred), and the macros of
+    :func:`mock_injection_metrics` (the injected error scales, their ranges and the member population).
+
+    Parameters
+    ----------
+    campaign : lumina.mock_validation.aggregate_plots.Campaign
+        The loaded campaign. Uses ``root`` (the folder with ``seed_*/mock/mock_images.json``), ``summary`` (DataFrame with ``seed``,
+        ``observed_image_count``, ``recovered_image_count`` (the median over the
+        reporting draws)), ``seeds`` (the included seeds) and
+        ``residual_draws`` (DataFrame with ``seed``, ``draw_index``,
+        ``image_residual_arcsec``, ``recovered``).
+    output : pathlib.Path
+        Directory to write into, normally ``<campaign root>/aggregate_plots``
+        (created if needed).
+    rhat_cut : float
+        Convergence cut recorded as ``MockRhatCut`` (dimensionless; a seed
+        converges with max R-hat strictly below it). Only reported here.
+    min_ess : float
+        Minimum effective sample size recorded as ``MockMinESSCut``. Only
+        reported here.
+
+    Returns
+    -------
+    pathlib.Path
+        The written file, ``output / "mock_results.tex"``.
+    """
+    import numpy as np
+    import pandas as pd
+    selected = campaign.summary[campaign.summary.seed.isin(campaign.seeds)]
+    rms, medians = [], []
+    for _, group in campaign.residual_draws.groupby(['seed', 'draw_index']):
+        values = pd.to_numeric(group.image_residual_arcsec, errors='coerce').to_numpy(float)
+        values = values[group.recovered.astype(bool).to_numpy() & np.isfinite(values) & (values >= 0)]
+        if len(values):
+            rms.append(np.sqrt(np.mean(values**2)))
+            medians.append(np.median(values))
+    from ..mock_validation.aggregate_plots import injected_position_offsets
+    injected = injected_position_offsets(campaign).to_numpy(float) if getattr(campaign, 'root', None) is not None else []
+    metrics = {'NCompleted': str(len(campaign.summary)), 'NIncluded': str(len(campaign.seeds)),
+               'NExcluded': str(len(campaign.summary)-len(campaign.seeds)),
+               'RhatCut': number(rhat_cut, 2), 'MinESSCut': number(min_ess, 0),
+               'RMS': spread_interval(rms), 'MedianResidual': spread_interval(medians),
+               'InjectedOffset': spread_interval(injected),
+               'Runtime': duration(None), 'RuntimeSeconds': number(None),
+               'RuntimeHours': number(None)}
+    totals = {}
+    for suffix, col in [('NImages','observed_image_count'),('NRecovered','recovered_image_count')]:
+        values = pd.to_numeric(selected[col], errors='coerce') if col in selected else None
+        totals[suffix] = values.sum() if values is not None and values.notna().all() else None
+        metrics[suffix] = number(totals[suffix], 0)
+    missed = None if None in totals.values() else totals['NImages'] - totals['NRecovered']
+    metrics['NMissed'] = number(missed, 0)
+    metrics.update(mock_injection_metrics(campaign))
+    return _write(output / 'mock_results.tex', 'Mock', metrics,
+                  ['Counts sum over included mocks the per-mock median count over its reporting draws.',
+                   'RMS and MedianResidual: median and 16-84% range across recovered-image mock/draw groups, for math mode.',
+                   'InjectedOffset: median and 16-84% range across mocks of the rms separation between observed and true image positions, for math mode.',
+                   'Injected<Scale>: median across mocks of the injected value; <Scale>Min and <Scale>Max: the range it is drawn from. SigmaGRF is at FieldReferenceRedshift.',
+                   'Schechter, pivot and velocity-scatter values are those of the first included mock.',
+                   'Convergence diagnostics: max Rhat strictly below RhatCut; min ESS at least MinESSCut.',
+                   'Aggregates include all completed mocks by default; optional converged-only selection is recorded in campaign_selection.json.',
+                   'No campaign runtime inferred: concurrent/resumed runs cannot be timed by summing draws.'])
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('final_dirs', nargs='+', type=Path)
+    args = parser.parse_args()
+    for path in args.final_dirs:
+        print(write_run_results(path))
+
+
+if __name__ == '__main__':
+    main()

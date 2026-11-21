@@ -1,6 +1,6 @@
-# kappaccino Documentation
+# lumina Documentation
 
-kappaccino builds Bayesian strong-lensing mass models of galaxy clusters with JAX. The lens is a sum of cluster-scale
+lumina builds Bayesian strong-lensing mass models of galaxy clusters with JAX. The lens is a sum of cluster-scale
 halos (dPIE or elliptical NFW), an optional external shear and mass sheet, and a population of cluster-member dPIE
 subhalos that follow luminosity scaling relations, with per-member deviations from the relation. Multiple-image
 positions constrain the model through an image-plane likelihood; the default adds a Gaussian random field of

@@ -6,9 +6,9 @@ from dataclasses import replace
 
 import numpy as np
 
-from kappaccino import priors
-from kappaccino.config import MemberPopulationConfig, ScalingModelConfig
-from kappaccino.core.state import build_state
+from lumina import priors
+from lumina.config import MemberPopulationConfig, ScalingModelConfig
+from lumina.core.state import build_state
 
 
 def _population(synthetic_config, factory):

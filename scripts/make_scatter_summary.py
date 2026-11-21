@@ -20,7 +20,7 @@ def main():
     import matplotlib
     matplotlib.use('Agg')
     import pandas as pd
-    from kappaccino.plotting.scatter_summary import render_scatter_summary, run_scatter_table
+    from lumina.plotting.scatter_summary import render_scatter_summary, run_scatter_table
     tables = {}
     for run in args.runs:
         saved = run / 'final/tables/magnification_scatter.csv'
@@ -29,9 +29,9 @@ def main():
             tables[name] = pd.read_csv(saved)
             continue
         import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
-        from kappaccino.outputs.saved_run import load_run
-        from kappaccino.diagnostics.truth_recovery import truth_maps_on_grid
-        from kappaccino.reporting.draws import reporting_draws
+        from lumina.outputs.saved_run import load_run
+        from lumina.diagnostics.truth_recovery import truth_maps_on_grid
+        from lumina.reporting.draws import reporting_draws
         config, state, evaluator, posterior, paths = load_run(run)
         if args.draws is not None:
             config = replace(config, reporting=replace(config.reporting, draws=args.draws))

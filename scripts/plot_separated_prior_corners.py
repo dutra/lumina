@@ -12,10 +12,10 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.ticker import MaxNLocator
 from scipy.stats import norm
 import corner
-from kappaccino.io.hdf5 import load_arrays
-from kappaccino.plotting.block_corner import posterior_corner_data
-from kappaccino.plotting.corner import DisplayPrior
-from kappaccino.plotting.style import PAPER_STYLE
+from lumina.io.hdf5 import load_arrays
+from lumina.plotting.block_corner import posterior_corner_data
+from lumina.plotting.corner import DisplayPrior
+from lumina.plotting.style import PAPER_STYLE
 
 
 def main():
@@ -45,7 +45,7 @@ def main():
     path=run/'final/figures/hera_corner_separated_priors.pdf'
     metadata={'run':str(run),'prior_overlay':'Marginal normalized densities only; joint panels show posterior only',
               'layout':'one block per page','contour_probabilities':[.68,.95],'blocks':{},'source_prior':'Physical Gaussian transformed with each source posterior median and s68; equal source weights; displayed over posterior range'}
-    style=Path(__file__).resolve().parents[1]/'src/kappaccino/plotting/style.mplstyle'
+    style=Path(__file__).resolve().parents[1]/'src/lumina/plotting/style.mplstyle'
     with plt.rc_context(fname=style,rc=PAPER_STYLE), PdfPages(path) as pdf:
         for b,(block,indices,color) in enumerate(blocks):
             n=len(indices)

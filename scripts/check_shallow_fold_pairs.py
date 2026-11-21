@@ -11,7 +11,7 @@ from dataclasses import replace
 import numpy as np
 
 import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
-from kappaccino.outputs.saved_run import load_run
+from lumina.outputs.saved_run import load_run
 
 
 def main():
@@ -24,7 +24,7 @@ def main():
     parser.add_argument('--max-separation', type=float, default=3.0, help='pairs closer than this (arcsec)')
     parser.add_argument('--output', default=None, help='JSON table; default final/tables/shallow_fold_pairs.json')
     args = parser.parse_args()
-    from kappaccino.likelihood.gp_image_plane import shallow_fold_pair_report, shallow_fold_pairs
+    from lumina.likelihood.gp_image_plane import shallow_fold_pair_report, shallow_fold_pairs
     config, state, evaluator, posterior, paths = load_run(args.run_directory)
     likelihood = config.likelihood
     ell = args.ell if args.ell is not None else getattr(likelihood, 'gp_correlation_length_arcsec', 7.0)

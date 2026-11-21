@@ -5,7 +5,7 @@ posterior.
     python scripts/geometry_quick_tests.py                 # run all variants, at most --parallel at a time
     python scripts/geometry_quick_tests.py --summarize     # table of the sampler diagnostics from the logs
 
-Each run claims chains x 2 cores on Linux (the kappaccino command pins them, skipping cores other runs hold), so on 32 cores four
+Each run claims chains x 2 cores on Linux (the lumina command pins them, skipping cores other runs hold), so on 32 cores four
 runs fit side by side; starts are staggered so that each run sees the cores the previous one claimed.  Outputs go to
 results/<campaign>/<cluster>/<label>/, logs to results/<campaign>/logs/<label>.log.
 """
@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Cluster folders of the clusters below (outputs under their run.yaml name, the lower-case key).
 FOLDERS = {"AS1063": "catalogs/as1063/bergamini2019", "AS1063_JWST": "catalogs/as1063/diego2026"}
 
-# label, cluster, extra kappaccino overrides, what it tests
+# label, cluster, extra lumina overrides, what it tests
 VARIANTS = [
     # Defaults since 2026-11-04: dense block = globals + centered members, Student-t tails, log-normal BCG cut prior.
     ("h0_baseline", "AS1063", ["--set", "sampling.dense_offset_members=all", "--set", "scaling.member_deviation_tail=normal"], "old defaults: all offsets dense, normal tails"),
@@ -66,7 +66,7 @@ def run_all(args):
                 running.remove((label, proc))
         if queue and len(running) < args.parallel and time.time() - last_start >= args.stagger:
             label, cluster, extra, what = queue.pop(0)
-            command = [sys.executable, "-m", "kappaccino", FOLDERS[cluster], "--results", f"results/{args.campaign}", "--run-label", label,
+            command = [sys.executable, "-m", "lumina", FOLDERS[cluster], "--results", f"results/{args.campaign}", "--run-label", label,
                        "--set", f"sampling.warmup={args.warmup}", "--set", f"sampling.samples={args.samples}",
                        "--set", "runtime.skip_plots=true", *extra]
             log = open(logs / f"{label}.log", "w")

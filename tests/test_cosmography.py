@@ -10,12 +10,12 @@ import numpy as np
 import numpyro.distributions as dist
 import pytest
 
-from kappaccino import pipeline
-from kappaccino.config import ImagesOutputConfig, OutputsConfig, PartitionConfig, RuntimeConfig, SamplingConfig, SearchConfig
-from kappaccino.core.state import build_state
-from kappaccino.lens.cosmology import flat_wcdm_kpc_per_arcsec, flat_wcdm_lensing_efficiency
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.run_files import load_priors, load_run
+from lumina import pipeline
+from lumina.config import ImagesOutputConfig, OutputsConfig, PartitionConfig, RuntimeConfig, SamplingConfig, SearchConfig
+from lumina.core.state import build_state
+from lumina.lens.cosmology import flat_wcdm_kpc_per_arcsec, flat_wcdm_lensing_efficiency
+from lumina.likelihood.evaluator import Evaluator
+from lumina.run_files import load_priors, load_run
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIORS = {"Om0": dist.Uniform(0.05, 0.95), "w0": dist.Uniform(-2.0, -0.2)}

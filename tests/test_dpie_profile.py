@@ -5,7 +5,7 @@ import mpmath as mp
 import numpy as np
 import pytest
 
-from kappaccino.lens.profiles import dpie
+from lumina.lens.profiles import dpie
 
 
 def reference_nie(x, y, theta, e1, e2, r):
@@ -86,7 +86,7 @@ def test_analytic_derivatives_match_forward_mode_and_the_geometry_split():
 
 
 def test_batched_kernel_and_registry_interface():
-    from kappaccino.lens import profiles
+    from lumina.lens import profiles
     x, y = jnp.linspace(-5.0, 5.0, 7), jnp.linspace(3.0, -4.0, 7)
     batch = [jnp.asarray(v) for v in ([1.0, 2.0], [0.2, 0.3], [5.0, 9.0], [0.1, 0.0], [-0.2, 0.0], [0.5, -1.0], [0.0, 2.0])]
     for flag in (True, False):

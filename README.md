@@ -1,6 +1,15 @@
-# kappaccino
+# lumina
 
-`kappaccino` builds Bayesian strong-lensing mass models of galaxy clusters with JAX and NumPyro. The lens is a sum of
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Tests](https://github.com/dutra/lumina/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/dutra/lumina/actions/workflows/tests.yml)
+[![Documentation](https://readthedocs.org/projects/kappaccino/badge/?version=latest)](https://kappaccino.readthedocs.io/)
+[![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2Fdutra%2Flumina%2Fmain%2Fpyproject.toml)](pyproject.toml)
+[![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdutra%2Flumina%2Fmain%2Fpyproject.toml&query=%24.project.version&label=version)](pyproject.toml)
+[![Last commit](https://img.shields.io/github/last-commit/dutra/lumina/main)](https://github.com/dutra/lumina/commits/main)
+[![Built with JAX](https://img.shields.io/badge/built%20with-JAX-9c27b0.svg)](https://github.com/jax-ml/jax)
+[![Built with NumPyro](https://img.shields.io/badge/built%20with-NumPyro-ff6f00.svg)](https://github.com/pyro-ppl/numpyro)
+
+`lumina` builds Bayesian strong-lensing mass models of galaxy clusters with JAX and NumPyro. The lens is a sum of
 cluster-scale halos (dPIE or elliptical NFW), an optional external shear and mass sheet, and a population of
 cluster-member dPIE subhalos on luminosity scaling relations, each member free to deviate from the relation. The
 multiple-image positions constrain the model through an image-plane likelihood that, by default, includes a Gaussian
@@ -9,7 +18,7 @@ there.
 
 Documentation: [https://kappaccino.readthedocs.io/](https://kappaccino.readthedocs.io/)
 
-At a high level, `kappaccino` includes:
+At a high level, `lumina` includes:
 
 - dPIE, elliptical NFW, external-shear and mass-sheet lens components in JAX, with exact and far-field member
   evaluation
@@ -22,7 +31,7 @@ At a high level, `kappaccino` includes:
 
 ## Install
 
-`kappaccino` requires Python 3.11 or newer. Clone this repository, then:
+`lumina` requires Python 3.11 or newer. Clone this repository, then:
 
 ```bash
 python -m pip install -e .
@@ -41,12 +50,12 @@ Set up the CPU chains first (one JAX device per chain), then build a configurati
 in Python, and run it:
 
 ```python
-from kappaccino.cpu_runtime import configure_cpu_runtime
+from lumina.cpu_runtime import configure_cpu_runtime
 
 configure_cpu_runtime(4, "parallel")          # before anything starts JAX
 
-from kappaccino.io.lenstool_par import config_from_lenstool_par
-from kappaccino.pipeline import dry_run, run
+from lumina.io.lenstool_par import config_from_lenstool_par
+from lumina.pipeline import dry_run, run
 
 config = config_from_lenstool_par(
     "catalogs/hera/source/hera_lenscluster.par",
@@ -65,8 +74,8 @@ Priors are `numpyro.distributions` objects of the sampled quantities:
 ```python
 from dataclasses import replace
 import numpyro.distributions as dist
-from kappaccino.config import DPIEHaloConfig
-from kappaccino.priors import ellipticity_box, lognormal_from_moments
+from lumina.config import DPIEHaloConfig
+from lumina.priors import ellipticity_box, lognormal_from_moments
 
 halo = DPIEHaloConfig("1", 0.0, 0.0, 0.3, 30.0, 10.0, 1500.0, 800.0, z_lens=0.5, priors={
     "x_centre": dist.Uniform(-5.0, 5.0),
@@ -85,7 +94,7 @@ and every [posterior parameter](https://kappaccino.readthedocs.io/en/latest/post
 ## Mock validation
 
 ```python
-from kappaccino.mock_validation import (MockConfig, MockValidationConfig, MockValidationPathsConfig,
+from lumina.mock_validation import (MockConfig, MockValidationConfig, MockValidationPathsConfig,
                                         MockValidationRuntimeConfig, run_mock_validation)
 
 campaign = MockValidationConfig(
@@ -107,9 +116,16 @@ paper figures. The scripts page of the documentation describes each.
 
 ## Tests
 
+The test packages (`pytest` and `pytest-xdist`) are the `test` extra:
+
 ```bash
-python -m pytest tests                 # the full suite
-python -m pytest tests -m "not slow"   # skip the validation tests that run inference
+python -m pip install -e ".[test]"
+```
+
+```bash
+python -m pytest tests                          # the full suite
+python -m pytest tests -m "not slow"            # skip the validation tests that run inference
+python -m pytest tests -m "not slow" -n auto    # the same, in parallel on every core
 ```
 
 ## Data and provenance
@@ -118,3 +134,7 @@ python -m pytest tests -m "not slow"   # skip the validation tests that run infe
 Caminha et al. (2016), Rihtarsic et al. (2025, CANUCS), Diego et al. (2024, 2026) and Beauchesne et al. (2025), the
 member kinematics of Granata et al. (2026), and the FF-SIMS simulations (Meneghetti et al. 2017). Cite those works when
 you use the catalogs.
+
+## License
+
+`lumina` is released under the MIT License. See [LICENSE](LICENSE).

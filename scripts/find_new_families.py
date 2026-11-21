@@ -53,7 +53,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import fit_arc_source as fas  # noqa: E402  (paths, x64, working directory)
 from find_missing_images import CLUSTER_Z, COLOUR_BANDS, HAS_PHOTOZ, load_photometry, load_published  # noqa: E402
 from predict_counter_images import SkyPositions, draw_lenses, lens_at  # noqa: E402
-from kappaccino.io.hdf5 import load_arrays, save_arrays  # noqa: E402
+from lumina.io.hdf5 import load_arrays, save_arrays  # noqa: E402
 
 jnp, np, pd = fas.jnp, fas.np, fas.pd
 Z_CLUSTER = 0.396

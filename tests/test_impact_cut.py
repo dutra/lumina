@@ -6,12 +6,12 @@ from dataclasses import replace
 
 import numpy as np
 
-from kappaccino.io import artifacts
-from kappaccino import pipeline
-from kappaccino.core.classification import member_max_deflection_arcsec
-from kappaccino.config import OutputsConfig, RuntimeConfig, SamplingConfig, SearchConfig
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.core.state import build_state
+from lumina.io import artifacts
+from lumina import pipeline
+from lumina.core.classification import member_max_deflection_arcsec
+from lumina.config import OutputsConfig, RuntimeConfig, SamplingConfig, SearchConfig
+from lumina.likelihood.evaluator import Evaluator
+from lumina.core.state import build_state
 
 
 def test_drop_member_ids_removes_members_but_keeps_the_pivot(synthetic_config):

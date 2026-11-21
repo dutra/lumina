@@ -11,10 +11,10 @@ import jax
 jax.config.update('jax_enable_x64', True)
 import jax.numpy as jnp
 from scipy.linalg import cho_solve, block_diag
-from kappaccino.io import artifacts
-from kappaccino.io.hdf5 import save_arrays
-from kappaccino.likelihood import gp_knee
-from kappaccino.mock_validation.field import field_arrays, field_alpha_hessian_tiled
+from lumina.io import artifacts
+from lumina.io.hdf5 import save_arrays
+from lumina.likelihood import gp_knee
+from lumina.mock_validation.field import field_arrays, field_alpha_hessian_tiled
 from make_shared_grf_map import _evaluator
 
 
@@ -125,8 +125,8 @@ if __name__=='__main__':
     out=a.campaign/'aggregate_plots';out.mkdir(exist_ok=True)
     for path in sorted(a.campaign.glob('seed_*/recovery/recovery.json')):run(path.parents[1],out,a.draws,a.step)
 
-    from kappaccino.mock_validation.aggregate_plots import load_campaign
-    from kappaccino.mock_validation.field_recovery_plots import plot_field_recovery
+    from lumina.mock_validation.aggregate_plots import load_campaign
+    from lumina.mock_validation.field_recovery_plots import plot_field_recovery
     try: campaign=load_campaign(a.campaign)
     except ValueError: campaign=load_campaign(a.campaign,converged_only=False)
     print(plot_field_recovery(campaign,out))

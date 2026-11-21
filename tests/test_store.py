@@ -1,4 +1,4 @@
-"""The run-stage store (kappaccino.io.store): exact round trips, the old-layout fallback, replacement and repacking,
+"""The run-stage store (lumina.io.store): exact round trips, the old-layout fallback, replacement and repacking,
 recovery from an unreadable file, concurrent writers and the command line."""
 import json
 import threading
@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.io import store
-from kappaccino.io.hdf5 import load_arrays, save_arrays
+from lumina.io import store
+from lumina.io.hdf5 import load_arrays, save_arrays
 
 
 def _frames():
@@ -470,7 +470,7 @@ def test_an_exception_in_a_batch_leaves_the_file_as_it_was(tmp_path):
 _CRASH_SERVER = '''
     import contextlib, json, os, random, sys
     import numpy as np, pandas as pd
-    from kappaccino.io import store
+    from lumina.io import store
     batch = getattr(store, 'batch', lambda stage: contextlib.nullcontext())   # (so that the test also runs on old code)
     store.REPACK_MIN_BYTES = 1                    # rebuild (repack) often, so kills land in rebuilds too
     store.set_log(lambda message: None)
@@ -621,7 +621,7 @@ def test_readers_in_other_processes_do_not_block_or_miss_a_commit(tmp_path):
     ''', stage / store.RESULTS_FILE)
     poller = _python('''
         import sys, time
-        from kappaccino.io import store
+        from lumina.io import store
         stage, seen, problems = sys.argv[1], 0, []
         print('ready', flush=True)
         end = time.monotonic() + 3
@@ -660,7 +660,7 @@ def test_a_writer_in_another_process_makes_lookups_wait_never_miss(tmp_path, mon
     writer = _python('''
         import sys, time
         import pandas as pd
-        from kappaccino.io import store
+        from lumina.io import store
         with store.batch(sys.argv[1]):
             store.write_table(sys.argv[1], 'w', pd.DataFrame({'y': [2]}))
             print('holding', flush=True)
@@ -1072,7 +1072,7 @@ def test_room_is_checked_for_every_write_of_a_batch(tmp_path, monkeypatch):
 _FSIZE_CHILD = '''
     import os, resource, signal, sys
     import numpy as np
-    from kappaccino.io import store
+    from lumina.io import store
     folder, limit, target, check = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4] == 'check'
     if not check:
         store._no_room = lambda *args: None      # the check passes; the disk fills up after it

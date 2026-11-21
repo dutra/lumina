@@ -19,9 +19,9 @@ def main():
     import pandas as pd
     from astropy.io import fits
     from astropy.wcs import WCS
-    from kappaccino.outputs.saved_run import load_run
-    from kappaccino.diagnostics.truth_recovery import literature_ratios, mass_per_kappa_pixel_msun
-    from kappaccino.plotting import plots
+    from lumina.outputs.saved_run import load_run
+    from lumina.diagnostics.truth_recovery import literature_ratios, mass_per_kappa_pixel_msun
+    from lumina.plotting import plots
     for run in args.runs:
         config, state, _, _, paths = load_run(run, transform=redirect(args.catalogs, args.ffsims_dir))
         profile = pd.read_csv(paths.tables/'truth_recovery_m2d_aperture_profile.csv')

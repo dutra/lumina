@@ -1,4 +1,4 @@
-"""Model comparison (kappaccino.inference.model_comparison): the data log-likelihood and its tempered target, the data
+"""Model comparison (lumina.inference.model_comparison): the data log-likelihood and its tempered target, the data
 count and temperature, BIC, the WBIC estimator and the comparison table.  The WBIC run itself is exercised by the
 end-to-end test in test_pipeline.py."""
 from __future__ import annotations
@@ -10,10 +10,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from kappaccino.config import SamplingConfig
-from kappaccino.core.state import build_state, with_member_classes
-from kappaccino.inference import model_comparison as mc
-from kappaccino.likelihood.evaluator import Evaluator
+from lumina.config import SamplingConfig
+from lumina.core.state import build_state, with_member_classes
+from lumina.inference import model_comparison as mc
+from lumina.likelihood.evaluator import Evaluator
 from test_gp_knee import knee_config
 
 EXACT = np.asarray([0, 1])      # g1 and g2 lie among the images; g3 and g4 are far away

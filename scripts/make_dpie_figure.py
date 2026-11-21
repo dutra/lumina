@@ -60,7 +60,7 @@ def verify_geometry_and_profile():
     import jax
     jax.config.update("jax_enable_x64", True)
     import jax.numpy as jnp
-    from kappaccino.lens.profiles import dpie
+    from lumina.lens.profiles import dpie
     e = (1-Q)/(1+Q)
     # On the major axis, X=xi/sqrt(q).
     u = np.asarray(dpie.fields(jnp.asarray(radius/np.sqrt(Q)), jnp.zeros(radius.shape), 1.0, A, S, e, 0.0, 0.0, 0.0, derivative=False)[1])

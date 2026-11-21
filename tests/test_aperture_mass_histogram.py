@@ -1,6 +1,6 @@
 from types import SimpleNamespace as NS
 import json
-from kappaccino.io import store
+from lumina.io import store
 
 import numpy as np
 import pandas as pd
@@ -8,7 +8,7 @@ import pytest
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from kappaccino.plotting import aperture_mass_histogram as am
+from lumina.plotting import aperture_mass_histogram as am
 
 
 @pytest.mark.parametrize('prefix',['hera','ares'])

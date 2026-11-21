@@ -10,8 +10,8 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from kappaccino.plotting.plots import plot_scaling_relation
-from kappaccino.io.hdf5 import load_arrays
+from lumina.plotting.plots import plot_scaling_relation
+from lumina.io.hdf5 import load_arrays
 
 
 def main():

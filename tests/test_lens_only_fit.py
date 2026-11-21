@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from types import SimpleNamespace
 
-from kappaccino.diagnostics import image_recovery as diagnostics
+from lumina.diagnostics import image_recovery as diagnostics
 
 
 def _rows(residuals):

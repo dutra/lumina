@@ -1,10 +1,10 @@
 """Eigenvalue ranking must select the near-singular direction, including saddles."""
 import numpy as np
-from kappaccino.io import store
+from lumina.io import store
 import pytest
 
-from kappaccino.plotting import small_lambda_jwst as module
-from kappaccino.io.hdf5 import load_arrays
+from lumina.plotting import small_lambda_jwst as module
+from lumina.io.hdf5 import load_arrays
 
 
 def test_near_zero_eigenvalue_not_most_negative():
@@ -34,7 +34,7 @@ def test_render_from_the_reporting_draws(tmp_path, monkeypatch):
              family_data=[NS(family_id='f',z_source=2.)],reference=None)
     config=NS(paths=NS(figure_prefix='test'),outputs=NS(rgb=NS(image_dir='test')))
     paths=NS(tables=tmp_path,figures=tmp_path)
-    from kappaccino.plotting import critical_fields
+    from lumina.plotting import critical_fields
     def critical(draws,centers,fovs,redshifts,path,**k):           # what median_cutout_determinants saves
         store.write_arrays(path.parent,path.stem,median_determinant=np.ones((1,2,2)),lower=np.ones((1,2,2)),upper=np.ones((1,2,2)),
                            centers=np.asarray(centers),fovs=np.asarray(fovs),redshifts=np.asarray(redshifts))

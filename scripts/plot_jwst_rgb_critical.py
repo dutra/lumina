@@ -23,21 +23,21 @@ def main():
     import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
-    from kappaccino.io import artifacts
-    from kappaccino.plotting import plots
-    from kappaccino.imaging.cutouts import imaging_variants, load_cluster_imaging
-    from kappaccino.likelihood.evaluator import Evaluator
-    from kappaccino.core.state import build_state, with_member_classes
+    from lumina.io import artifacts
+    from lumina.plotting import plots
+    from lumina.imaging.cutouts import imaging_variants, load_cluster_imaging
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.core.state import build_state, with_member_classes
 
     run = args.run_directory.resolve()
     init, final = run / "init" / "artifacts", run / "final"
     config = with_ffsims_dir(with_catalogs(artifacts.load_config(final / "artifacts"), args.catalogs), args.ffsims_dir)
     if args.imaging != "saved":
         from dataclasses import replace
-        from kappaccino.imaging.rgb import DEFAULT_HFF_RGB_BANDS, DEFAULT_JWST_RGB_BANDS
+        from lumina.imaging.rgb import DEFAULT_HFF_RGB_BANDS, DEFAULT_JWST_RGB_BANDS
         jwst = args.imaging == "jwst"
-        from kappaccino.config import RGBDisplayConfig
-        from kappaccino.imaging.cutouts import cluster_from_config
+        from lumina.config import RGBDisplayConfig
+        from lumina.imaging.cutouts import cluster_from_config
         cluster = cluster_from_config(config.model, config.paths.run_name)
         jwst_dir = f"data/imaging/{cluster}/{'canucs_dr1' if cluster == 'm0416' else 'dja_v7.5'}"
         hst_dir = f"data/imaging/{cluster}/buffalo"
@@ -69,7 +69,7 @@ def main():
         extra = pd.read_csv(final / "tables" / "image_recovery_extra_images.csv", dtype={"family_id": str})
     except pd.errors.EmptyDataError:
         extra = pd.DataFrame()  # No extra images were recovered in this saved run.
-    from kappaccino.plotting.jwst_rgb import render_rgb_critical, rgb_overview_stem
+    from lumina.plotting.jwst_rgb import render_rgb_critical, rgb_overview_stem
     imaging = load_cluster_imaging(config.image_catalog, config.model, config.paths.run_name)
     render_rgb_critical(config,state,evaluator,theta,catalog,extra,imaging,
         plots.figure_path(final/'figures',rgb_overview_stem(config.image_catalog, imaging[1]) + '.pdf',config.paths.figure_prefix),

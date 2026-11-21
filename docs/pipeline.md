@@ -1,9 +1,9 @@
 # Running a fit
 
-{func}`kappaccino.pipeline.run` runs a fit in two stages, init and final. Run both, or one at a time:
+{func}`lumina.pipeline.run` runs a fit in two stages, init and final. Run both, or one at a time:
 
 ```python
-from kappaccino.pipeline import dry_run, run
+from lumina.pipeline import dry_run, run
 
 dry_run(config)                   # describe the model, write nothing
 result = run(config)              # init + final
@@ -11,12 +11,12 @@ init = run(config, stage="init")  # the search alone
 result = run(config, stage="final")  # sample from a completed init
 ```
 
-{func}`~kappaccino.pipeline.run_init` and {func}`~kappaccino.pipeline.run_final` are the two stages as separate
+{func}`~lumina.pipeline.run_init` and {func}`~lumina.pipeline.run_final` are the two stages as separate
 functions.
 
 ## Dry run
 
-{func}`~kappaccino.pipeline.dry_run` builds the model and prints, as JSON, the number of parameters,
+{func}`~lumina.pipeline.dry_run` builds the model and prints, as JSON, the number of parameters,
 the provisional member classification, and the search and sampling sizes. It writes nothing.
 
 ## Init stage
@@ -84,7 +84,7 @@ still run. Parameters the old run lacks start at the configured model.
    change the exact set. The result is in `final/artifacts/audit.json`.
 4. **Outputs**: tables, figures and FITS maps under `final/`, written by the output modules (see {doc}`outputs`).
    The `outputs` section holds their settings (one section per module, each with an `enabled` switch), and
-   `kappaccino outputs RUN_DIR` reruns them on a finished run without fitting.
+   `lumina outputs RUN_DIR` reruns them on a finished run without fitting.
 
 ## Resuming
 
@@ -102,10 +102,10 @@ Use a new run label for each changed configuration.
 ## CPU chains
 
 NUTS runs one chain per JAX CPU device. `RuntimeConfig(chains, nuts_chain_method)` sets the
-plan, and {func}`kappaccino.cpu_runtime.configure_cpu_runtime` must run before JAX initializes:
+plan, and {func}`lumina.cpu_runtime.configure_cpu_runtime` must run before JAX initializes:
 
 ```python
-from kappaccino.cpu_runtime import configure_cpu_runtime
+from lumina.cpu_runtime import configure_cpu_runtime
 
 configure_cpu_runtime(4, "parallel")    # at the top of the script, before JAX starts
 ```
@@ -118,7 +118,7 @@ rather than silently running the chains on one device.
 For exploration, shorten the search and the chains and use independent GP blocks:
 
 ```python
-from kappaccino.config import SamplingConfig
+from lumina.config import SamplingConfig
 
 quick = replace(
     config,

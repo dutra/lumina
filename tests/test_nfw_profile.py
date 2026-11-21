@@ -7,15 +7,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from kappaccino.lens.profiles import nfw
+from lumina.lens.profiles import nfw
 import numpyro.distributions as dist
 
-from kappaccino import priors
-from kappaccino.config import NFWHaloConfig
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.lens.cosmology import flat_wcdm_config, kpc_per_arcsec_from_config
-from kappaccino.lens.profiles.nfw import nfw_angular_parameters
-from kappaccino.core.state import build_state
+from lumina import priors
+from lumina.config import NFWHaloConfig
+from lumina.likelihood.evaluator import Evaluator
+from lumina.lens.cosmology import flat_wcdm_config, kpc_per_arcsec_from_config
+from lumina.lens.profiles.nfw import nfw_angular_parameters
+from lumina.core.state import build_state
 
 
 def _circular_nfw_deflection(r, rs, alpha_rs):

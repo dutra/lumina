@@ -12,8 +12,8 @@ from astropy.io import fits
 
 from scipy.optimize import least_squares
 
-from kappaccino.diagnostics.true_lens import true_lens_residuals, true_lens_rms
-from kappaccino.plotting import plots
+from lumina.diagnostics.true_lens import true_lens_residuals, true_lens_rms
+from lumina.plotting import plots
 
 COSMO = FlatLambdaCDM(H0=70.0, Om0=0.3)
 CENTER = np.array([3.0, -2.0])             # map frame (x east), off axis so a flipped x would not close
@@ -95,7 +95,7 @@ def test_run_histogram_gets_the_true_lens_entry(monkeypatch, tmp_path):
 
 
 def test_mock_campaign_histogram_is_unchanged(monkeypatch, tmp_path):
-    from kappaccino.mock_validation.aggregate_plots import plot_image_residual_distribution
+    from lumina.mock_validation.aggregate_plots import plot_image_residual_distribution
     offsets = {}
     for seed, shift in ((1, 0.30), (2, 0.40), (3, 0.50)):
         (tmp_path / f"seed_{seed:08d}" / "mock").mkdir(parents=True)
@@ -111,8 +111,8 @@ def test_mock_campaign_histogram_is_unchanged(monkeypatch, tmp_path):
 
 
 def test_outputs_save_the_true_lens_table_and_record(tmp_path):
-    from kappaccino.io import store
-    from kappaccino.outputs.images import write_true_lens_rms
+    from lumina.io import store
+    from lumina.outputs.images import write_true_lens_rms
     theta_e = _sis_map(tmp_path / "defl.fits")
     record = write_true_lens_rms(tmp_path, _catalog(theta_e, families=30), tmp_path / "defl.fits", {"H0": 70.0, "Om0": 0.3}, log=lambda m: None)
     assert store.read_record(tmp_path, "true_lens_rms")["rms_arcsec"] == record["rms_arcsec"]
@@ -194,8 +194,8 @@ def test_true_lens_with_no_usable_image_raises(tmp_path):
 
 
 def test_a_missing_configured_map_fails_the_true_lens_rms(monkeypatch, tmp_path):
-    from kappaccino.io import store
-    from kappaccino.outputs.images import write_true_lens_rms
+    from lumina.io import store
+    from lumina.outputs.images import write_true_lens_rms
     messages = []
     # A configured map that cannot be read is an error (the step fails), never a quiet skip.
     with pytest.raises(OSError):
@@ -208,7 +208,7 @@ def test_a_missing_configured_map_fails_the_true_lens_rms(monkeypatch, tmp_path)
 
 
 def test_true_lens_counts_solutions_far_from_the_catalog_position(monkeypatch, tmp_path):
-    import kappaccino.diagnostics.true_lens as true_lens
+    import lumina.diagnostics.true_lens as true_lens
     theta_e = _sis_map(tmp_path / "defl.fits")
     monkeypatch.setattr(true_lens, "MATCH_LIMIT_ARCSEC", 0.03)          # below the 0.05" scatter: most images fail
     table, _ = true_lens_residuals(_catalog(theta_e, families=30), tmp_path / "defl.fits", COSMO)

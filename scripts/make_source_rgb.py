@@ -21,9 +21,9 @@ sys.path.insert(0, str(ROOT / "src"))
 import numpy as np
 from scipy.ndimage import zoom
 
-from kappaccino.imaging import cutouts
-from kappaccino.io.hdf5 import load_arrays
-from kappaccino.imaging.rgb import make_calibrated_rgb
+from lumina.imaging import cutouts
+from lumina.io.hdf5 import load_arrays
+from lumina.imaging.rgb import make_calibrated_rgb
 
 
 def parse_args():
@@ -111,8 +111,8 @@ def main():
     import matplotlib
     matplotlib.use("pdf")
     import matplotlib.pyplot as plt
-    from kappaccino.plotting.style import PAPER_STYLE
-    plt.style.use(str(ROOT / "src/kappaccino/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
+    from lumina.plotting.style import PAPER_STYLE
+    plt.style.use(str(ROOT / "src/lumina/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
     fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.6), constrained_layout=True)
     image_extent = [ext[0], ext[1], ext[2], ext[3]]
     axes[0].imshow(rgb_data, origin="lower", extent=image_extent)

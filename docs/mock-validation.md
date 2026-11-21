@@ -1,38 +1,38 @@
 # Mock validation
 
-{mod}`kappaccino.mock_validation` generates analytic mock clusters, fits each one with the same pipeline as a real
+{mod}`lumina.mock_validation` generates analytic mock clusters, fits each one with the same pipeline as a real
 cluster, and scores the recovery against the known truth. A **campaign** is one generator configuration
-({class}`~kappaccino.mock_validation.MockConfig`), one solver template (a `LensClusterSolverConfig` whose settings
+({class}`~lumina.mock_validation.MockConfig`), one solver template (a `LensClusterSolverConfig` whose settings
 every realization uses), and a number of **realizations** (seeds).
 
 ## From the command line
 
-`kappaccino-mock` (or `python -m kappaccino.mock_validation`, {mod}`kappaccino.mock_validation.cli`) runs a campaign
+`lumina-mock` (or `python -m lumina.mock_validation`, {mod}`lumina.mock_validation.cli`) runs a campaign
 with the injection settings and solver presets of the paper:
 
 ```bash
-kappaccino-mock --campaign nov11_smoke --dry-run
-kappaccino-mock --campaign nov11 --preset production --realizations 4 --fast
-kappaccino-mock --campaign nov11 --preset production --chains 8 --set likelihood.gp_blocks=system
+lumina-mock --campaign nov11_smoke --dry-run
+lumina-mock --campaign nov11 --preset production --realizations 4 --fast
+lumina-mock --campaign nov11 --preset production --chains 8 --set likelihood.gp_blocks=system
 ```
 
 `--preset smoke` (the default) has 10 members and 4 + 1 families with short chains; `--preset production` has 150
 members and 15 + 5 families with 128 starts and 2000 + 500 draws. `--mode idealized` centres the priors on each
 realization's truth. `--fast` applies the exploratory settings of the cluster fast profile. `--chains`, `--starts`,
 `--warmup`, `--samples`, `--tree-depth`, `--target-accept` and `--draws` set those fields of the solver template, and
-`--set section.field=value` any other, as for `kappaccino`. `--fisher-only`, `--rescore` and `--aggregate-only` run
+`--set section.field=value` any other, as for `lumina`. `--fisher-only`, `--rescore` and `--aggregate-only` run
 the pre-check, rescore finished realizations or redraw the aggregate plots. Outputs go to
 `validation_runs/<campaign>/analytic_<mode>_<preset>[_fast][_<likelihood>]/seed_<seed>/`.
 
 ## A smoke test in Python
 
 ```python
-from kappaccino.cpu_runtime import configure_cpu_runtime
+from lumina.cpu_runtime import configure_cpu_runtime
 
 configure_cpu_runtime(4, "parallel")
 
-from kappaccino.config import LensClusterSolverConfig, MemberConfig, SamplingConfig, ScalingModelConfig, SearchConfig
-from kappaccino.mock_validation import (
+from lumina.config import LensClusterSolverConfig, MemberConfig, SamplingConfig, ScalingModelConfig, SearchConfig
+from lumina.mock_validation import (
     MockConfig, MockValidationConfig, MockValidationPathsConfig, MockValidationRuntimeConfig, run_mock_validation,
 )
 
@@ -82,7 +82,7 @@ The lens redshift is drawn between 0.3 and 0.5. Every range is a field of `MockC
 
 ## Fisher forecast
 
-{func}`~kappaccino.mock_validation.fisher_precheck` generates (or reuses) the mocks and forecasts how well the GP
+{func}`~lumina.mock_validation.fisher_precheck` generates (or reuses) the mocks and forecasts how well the GP
 hyperparameters are constrained, from a Fisher matrix at the truth, without running the solver. It writes `fisher.json`
 per mock and `fisher_precheck.csv`.
 
@@ -90,7 +90,7 @@ per mock and `fisher_precheck.csv`.
 
 A campaign writes to `<output_dir>/<campaign_name>/<run_name>/`. Each `seed_*/` holds a full run and
 `seed_*/recovery/recovery.json`, which compares parameters, magnification, image residuals, subhalo masses and aperture
-masses with the truth. {func}`~kappaccino.mock_validation.rescore_mock_validation` recomputes the recovery of
+masses with the truth. {func}`~lumina.mock_validation.rescore_mock_validation` recomputes the recovery of
 finished realizations.
 
 `aggregate_plots/` holds the campaign figures:
@@ -113,14 +113,14 @@ intervals.
 ## Re-aggregating
 
 ```python
-from kappaccino.mock_validation import write_aggregate_plots
+from lumina.mock_validation import write_aggregate_plots
 
 root = "validation_runs/smoke_check/analytic_smoke"
 write_aggregate_plots(root)
 write_aggregate_plots(root, f"{root}/converged", converged_only=True)
 ```
 
-or from the shell, `python -m kappaccino.mock_validation.aggregate_plots ROOT [--converged-only --output-dir DIR]`.
+or from the shell, `python -m lumina.mock_validation.aggregate_plots ROOT [--converged-only --output-dir DIR]`.
 
 Aggregates include every completed realization. Convergence failures are recorded in
 `aggregate_plots/campaign_selection.json` and `seed_summary.csv`. `converged_only=True` keeps realizations with max

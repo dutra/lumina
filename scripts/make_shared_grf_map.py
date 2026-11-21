@@ -29,10 +29,10 @@ PROJECT_MODES = ("translation", "convergence", "shear")
 def _evaluator(config, blocks, project, classes, init, start):
     from dataclasses import replace
     import numpy as np
-    from kappaccino.io import artifacts
-    from kappaccino.io.hdf5 import save_arrays
-    from kappaccino.likelihood.evaluator import Evaluator
-    from kappaccino.core.state import build_state, with_member_classes
+    from lumina.io import artifacts
+    from lumina.io.hdf5 import save_arrays
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.core.state import build_state, with_member_classes
     likelihood = replace(config.likelihood, gp_blocks=blocks)
     if project is not None:
         likelihood = replace(likelihood, gp_knee_project_modes=project)
@@ -79,8 +79,8 @@ def main():
     from matplotlib.colors import TwoSlopeNorm
     import numpy as np
     import pandas as pd
-    from kappaccino.io import artifacts
-    from kappaccino.plotting.style import PAPER_STYLE
+    from lumina.io import artifacts
+    from lumina.plotting.style import PAPER_STYLE
 
     run = args.run_directory.resolve()
     init, final = run / "init" / "artifacts", run / "final"
@@ -179,7 +179,7 @@ def main():
     save_arrays(tables / "shared_grf_map.h5", x=gx, y=gy, deflection_x=gdx, deflection_y=gdy, kappa=kappa, gamma1=gamma1, gamma2=gamma2)
     table.to_csv(tables / "shared_grf_images.csv", index=False)
 
-    plt.style.use(str(ROOT / "src/kappaccino/plotting/style.mplstyle"))
+    plt.style.use(str(ROOT / "src/lumina/plotting/style.mplstyle"))
     plt.rcParams.update(PAPER_STYLE)
     fig, axes = plt.subplots(1, 2, figsize=(7.1, 3.7), constrained_layout=True)
     lim = float(np.percentile(np.abs(kappa), 99.5)) or 1e-6
