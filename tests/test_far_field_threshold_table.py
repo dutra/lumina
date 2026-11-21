@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.pipeline import classify
-from kappaccino.reporting.text import far_field_threshold_table
-from kappaccino.core.state import build_state
+from lumina.likelihood.evaluator import Evaluator
+from lumina.pipeline import classify
+from lumina.reporting.text import far_field_threshold_table
+from lumina.core.state import build_state
 
 
 def test_threshold_study_rows_and_table(synthetic_config):

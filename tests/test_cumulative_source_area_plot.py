@@ -1,12 +1,12 @@
 import json
-from kappaccino.io import store
+from lumina.io import store
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from astropy.cosmology import FlatLambdaCDM
 
-from kappaccino.plotting.cumulative_source_area import (
+from lumina.plotting.cumulative_source_area import (
     area_table, cumulative_area, render_cumulative_source_area, save_cumulative_source_area, shell_volume_per_arcsec2,
 )
 

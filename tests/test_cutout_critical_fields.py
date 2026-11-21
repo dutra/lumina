@@ -1,7 +1,7 @@
 from types import SimpleNamespace as NS
 import numpy as np
-from kappaccino.io import store
-from kappaccino.plotting.critical_fields import median_cutout_determinants
+from lumina.io import store
+from lumina.plotting.critical_fields import median_cutout_determinants
 
 
 class Draws:

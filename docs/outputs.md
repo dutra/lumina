@@ -3,7 +3,7 @@
 This page lists the files a run writes; {doc}`posterior` defines each posterior parameter and derived quantity.
 
 A run writes everything under its run root, `<output_dir>/<run_name>/` from
-{class}`~kappaccino.config.RunPathsConfig`. Figure names start with `RunPathsConfig.figure_prefix`, for example
+{class}`~lumina.config.RunPathsConfig`. Figure names start with `RunPathsConfig.figure_prefix`, for example
 `m0416_critical_curves.pdf`.
 
 ## Directory layout
@@ -23,9 +23,9 @@ A run writes everything under its run root, `<output_dir>/<run_name>/` from
   {doc}`likelihoods`), `model_comparison.json` (BIC and, with `SamplingConfig.wbic`, WBIC) and with WBIC
   `wbic_draws.h5` (see {doc}`model-comparison`).
 
-Arrays are saved as HDF5 (`.h5`, one dataset per array; read them with `kappaccino.io.hdf5.load_arrays` or `h5py`) and
+Arrays are saved as HDF5 (`.h5`, one dataset per array; read them with `lumina.io.hdf5.load_arrays` or `h5py`) and
 everything else as JSON. `config.json` restores the run configuration exactly
-(`kappaccino.io.artifacts.load_config`). Nothing is pickled.
+(`lumina.io.artifacts.load_config`). Nothing is pickled.
 
 ### Results and cache files
 
@@ -71,13 +71,13 @@ written in place, and any failure to read or write it only costs a recomputation
 List, print or export the entries of a run or stage from the repository root:
 
 ```bash
-python -m kappaccino.io.store results/<cluster>/<run>                       # every entry with its shape
-python -m kappaccino.io.store results/<cluster>/<run> --table image_fit_quality > image_fit_quality.csv
-python -m kappaccino.io.store results/<cluster>/<run> --record run_summary
-python -m kappaccino.io.store results/<cluster>/<run> --figure-record <prefix>_corner_globals
-python -m kappaccino.io.store results/<cluster>/<run> --arrays conditional_field_maps
-python -m kappaccino.io.store results/<cluster>/<run> --stage init --record shallow_fold_pairs
-python -m kappaccino.io.store results/<cluster>/<run> --export /tmp/<run>_loose  # loose csv/json/h5 files
+python -m lumina.io.store results/<cluster>/<run>                       # every entry with its shape
+python -m lumina.io.store results/<cluster>/<run> --table image_fit_quality > image_fit_quality.csv
+python -m lumina.io.store results/<cluster>/<run> --record run_summary
+python -m lumina.io.store results/<cluster>/<run> --figure-record <prefix>_corner_globals
+python -m lumina.io.store results/<cluster>/<run> --arrays conditional_field_maps
+python -m lumina.io.store results/<cluster>/<run> --stage init --record shallow_fold_pairs
+python -m lumina.io.store results/<cluster>/<run> --export /tmp/<run>_loose  # loose csv/json/h5 files
 ```
 
 `--cache` makes `--table`, `--record` and `--arrays` read `cache.h5`. The export writes `<stage>/tables/<name>.csv`,
@@ -175,7 +175,7 @@ Everything else (figures, fold diagnostics, the GRF critical band, contours) is 
 
 ## Output modules
 
-The outputs stage after the fit is five modules ({mod}`kappaccino.outputs`), run in this order. Each module works in
+The outputs stage after the fit is five modules ({mod}`lumina.outputs`), run in this order. Each module works in
 three phases, each a sequence of named steps:
 
 - **compute** evaluates what the module needs (the lens of the reporting draws, the image solver) and writes every
@@ -211,7 +211,7 @@ The tables come back as they were written, with their column order and dtypes, a
 
 `mass` and `rgb` also run after `fit` without needing its product (it has none), because their computes read tables
 the compute of `fit` writes: `member_diagnostics` (aperture and zeta masses) and `covariance_errors_both_planes`
-(covariance cutouts, which save what they draw of it in their own table). The steps of `rgb` are named per variant, for example `fold_cutouts:jwst`. `kappaccino outputs --list`
+(covariance cutouts, which save what they draw of it in their own table). The steps of `rgb` are named per variant, for example `fold_cutouts:jwst`. `lumina outputs --list`
 prints the modules with these relations and their compute and render steps.
 
 ### The `fit` module
@@ -291,11 +291,11 @@ recorded figure cannot be drawn.
 : compute, product and render; the default, and what the run command does after the fit.
 
 `compute`
-: compute and product, no figures (`kappaccino outputs RUN --compute`), for example `--compute --skip rgb` on a
+: compute and product, no figures (`lumina outputs RUN --compute`), for example `--compute --skip rgb` on a
   machine without the imaging.
 
 `render`
-: product and render only (`kappaccino outputs RUN --render`): every figure drawn again from
+: product and render only (`lumina outputs RUN --render`): every figure drawn again from
   what the last compute saved. The run is loaded without its evaluator (`saved_run.load_saved_run`: configuration,
   state and posterior; on Hera 3 s, of which 0.8 s go to about 40 one-operation JAX kernels the state's arrays need,
   and no model function is compiled), the reporting draws are never built, and the files the computes read (truth
@@ -329,7 +329,7 @@ Completeness is per step. A render step is drawn when the compute step it needs 
 last compute, whatever the other steps did; its figure never comes from an older compute. A render pass refuses a
 module only when there is no record of a compute with its steps: never computed in this run folder, or interrupted
 before the compute recorded them (the record is still the marker). The module then fails with `ModuleUnavailable`
-and a message that says to run its compute first (`kappaccino outputs RUN --only <module>`, or `--compute --only
+and a message that says to run its compute first (`lumina outputs RUN --only <module>`, or `--compute --only
 <module>`). Otherwise the render pass draws what it can and reports each render step it could not draw, with the
 reason; the module ends as failed when a compute step of its last compute failed or a render step could not be drawn,
 and as done otherwise. A module whose last compute gave no product (`unavailable`) draws what it can and is failed
@@ -387,9 +387,9 @@ as stale. The warning never blocks a pass; computing the modules together over t
 ### The outputs section
 
 Every setting of the stage lives in the `outputs` section of the configuration
-({class}`~kappaccino.config.OutputsConfig`): the settings the modules share at its top level, then one section per
+({class}`~lumina.config.OutputsConfig`): the settings the modules share at its top level, then one section per
 module, named after it, with its `enabled` switch and the module's own settings. The section never changes a fit:
-it is not part of the run hash, a resume ignores it, and `kappaccino outputs --set` may change any of it.
+it is not part of the run hash, a resume ignores it, and `lumina outputs --set` may change any of it.
 
 ```yaml
 outputs:
@@ -422,18 +422,18 @@ products alone. `runtime.skip_plots` turns the whole stage off.
 ### Rerunning the outputs of a finished run
 
 ```bash
-kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c
-kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --only truth,mass
-kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --render            # figures only, from the store
-kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --compute --skip rgb
-kappaccino outputs results/m0416_canucs2025/<run> --skip rgb --fail-fast --draws 32
-kappaccino outputs RUN --remap /home/dutra/sdev/burkelenscluster=$PWD --only truth
-kappaccino outputs RUN --all --set outputs.truth.deflection_true_fits=data/imaging/hera/defl.fits
-kappaccino outputs RUN --set outputs.rgb.enabled=false --set outputs.workers=8
-kappaccino outputs --list results/hera/w500s250t7_allblocks-3f9a1c
+lumina outputs results/hera/w500s250t7_allblocks-3f9a1c
+lumina outputs results/hera/w500s250t7_allblocks-3f9a1c --only truth,mass
+lumina outputs results/hera/w500s250t7_allblocks-3f9a1c --render            # figures only, from the store
+lumina outputs results/hera/w500s250t7_allblocks-3f9a1c --compute --skip rgb
+lumina outputs results/m0416_canucs2025/<run> --skip rgb --fail-fast --draws 32
+lumina outputs RUN --remap /home/dutra/sdev/burkelenscluster=$PWD --only truth
+lumina outputs RUN --all --set outputs.truth.deflection_true_fits=data/imaging/hera/defl.fits
+lumina outputs RUN --set outputs.rgb.enabled=false --set outputs.workers=8
+lumina outputs --list results/hera/w500s250t7_allblocks-3f9a1c
 ```
 
-The command loads the saved run ({mod}`kappaccino.outputs.saved_run`) and runs the stage into its `final/` folder,
+The command loads the saved run ({mod}`lumina.outputs.saved_run`) and runs the stage into its `final/` folder,
 without fitting. The saved paths are as the run wrote them: relative to the folder the run was started from (run the
 command from the same folder, usually the repository root) or absolute, as in a run made on another machine.
 `--remap OLD=NEW` (repeatable) replaces the prefix `OLD` of every saved path, catalogs, imaging folders and truth and
@@ -464,10 +464,10 @@ variants (`paths.figure_prefix=../../X` would write figures outside the run fold
 (also one that failed), `final/artifacts/config.json` takes the `outputs` section of that pass: the saved one with
 `--set` and `--draws` applied, its paths as saved (`--remap` only says where the same files are on this machine;
 `--fail-fast` is a flag of the command, not a setting). The saved configuration then describes the settings behind the
-products, and a later `kappaccino outputs RUN` uses them. A render pass changes nothing, since it computes nothing. A
+products, and a later `lumina outputs RUN` uses them. A render pass changes nothing, since it computes nothing. A
 pass that computes only some modules (`--only truth --draws 4`) still records its settings for the whole section; the
 completeness record of each module keeps the draws its own compute used, and the draws check below warns when they
-differ. The run command does the same: resuming a finished run (`kappaccino catalogs/hera --draws 8`) saves the new
+differ. The run command does the same: resuming a finished run (`lumina catalogs/hera --draws 8`) saves the new
 `outputs` section in `final/artifacts/config.json` before the outputs stage runs, and leaves the rest of the saved
 configuration alone. `--list` prints the modules
 with their `requires`, `after` and compute and render steps; given a run, it also says whether each is enabled and
@@ -511,13 +511,13 @@ column such as `exposure_seconds` is always compared. It exits with 1 on any oth
 
 ### Writing a new module with compute, product and render
 
-A module is three things: a subclass of {class}`~kappaccino.outputs.base.OutputModule`, a frozen dataclass of its
+A module is three things: a subclass of {class}`~lumina.outputs.base.OutputModule`, a frozen dataclass of its
 settings in `config.py`, and one entry in the registry. The class has a `name`, the modules whose products it reads
 (`requires`) or that it should follow (`after`), an optional `active` that returns the reason it does not apply, its
 `compute_steps` and `render_steps`, and the three methods:
 
 ```python
-from kappaccino.outputs.base import ModuleUnavailable, OutputModule
+from lumina.outputs.base import ModuleUnavailable, OutputModule
 
 
 class GGSLModule(OutputModule):
@@ -553,11 +553,11 @@ class GGSLModule(OutputModule):
                                                          ctx.figures, ctx.prefix))
 ```
 
-Its settings are a frozen dataclass in `src/kappaccino/config.py`, documented like its neighbours, with an `enabled`
+Its settings are a frozen dataclass in `src/lumina/config.py`, documented like its neighbours, with an `enabled`
 switch and a `validate(where)` method that names `outputs.<module>.<field>` in its errors (it starts with
 `_check_field_types`, which checks every field against its annotation, then checks ranges and choices), added as one
 field of
-{class}`~kappaccino.config.OutputsConfig` under the module's name:
+{class}`~lumina.config.OutputsConfig` under the module's name:
 
 ```python
 @dataclass(frozen=True)
@@ -586,8 +586,8 @@ class GGSLOutputConfig:
 
 `OutputsConfig.validate` calls the section's `validate`, the runner reads its `enabled`, and the module reads the
 section as `ctx.settings`; a file the compute reads is a path field of the section, named in the module's
-`path_fields` as a dotted name under `outputs` (`"ggsl.catalog_path"`), which `kappaccino outputs` checks before a
-pass and `--remap` moves. Put the module class in a file of `src/kappaccino/outputs/` and add an instance to
+`path_fields` as a dotted name under `outputs` (`"ggsl.catalog_path"`), which `lumina outputs` checks before a
+pass and `--remap` moves. Put the module class in a file of `src/lumina/outputs/` and add an instance to
 `MODULES` in `outputs/registry.py`, where its position sets its place among modules with no ordering between them.
 Nothing else needs to change: the section is outside the run hash with the rest of `outputs`, and `--set
 outputs.ggsl.FIELD=VALUE` already accepts it. The context (`ctx`) holds `config`, `state`,
@@ -713,8 +713,8 @@ not define one cluster-wide field and skip these figures.
 
 ## Simulated clusters
 
-With truth maps (`outputs.truth`, {class}`~kappaccino.config.TruthOutputConfig`, set for Hera and Ares), the run also writes the following. Every figure is
-drawn from the store (`kappaccino outputs RUN --render` draws them again): the residual maps from the arrays
+With truth maps (`outputs.truth`, {class}`~lumina.config.TruthOutputConfig`, set for Hera and Ares), the run also writes the following. Every figure is
+drawn from the store (`lumina outputs RUN --render` draws them again): the residual maps from the arrays
 `truth_recovery_residuals`, the profiles from the profile tables, the record `truth_recovery` (centre, mass per unit
 convergence per pixel) and the published ratios saved as `truth_literature_m2d_ratios` and
 `truth_literature_kappa_ratios`, the magnification figure from the arrays `magnification_recovery` (the true and model
@@ -775,7 +775,7 @@ When imaging is configured and present under `data/imaging/`:
 - for M0416 and AS1063, JWST versions with an `_jwst` suffix, including contours of the predicted observed image positions (68.3% solid,
   95.4% dashed).
 
-A compute reports missing imaging and leaves that variant out. `kappaccino outputs RUN --render --only rgb` draws all
+A compute reports missing imaging and leaves that variant out. `lumina outputs RUN --render --only rgb` draws all
 of these again from the store and the imaging, and fails for a variant whose imaging the compute had but the render
 cannot load (see [The rgb module](#the-rgb-module)). The marker sizes of the M0416 overview come from the F200W
 photometry that the compute saved (`<stem>_marker_photometry`), so the render reads no packaged data file.
@@ -795,7 +795,7 @@ image's positions. A finished run's overview can be drawn again from its saved r
 determinant maps, from the repository root:
 
 ```bash
-python -m kappaccino.plotting.jwst_rgb results/<cluster>/<run> [results/<cluster>/<run> ...]
+python -m lumina.plotting.jwst_rgb results/<cluster>/<run> [results/<cluster>/<run> ...]
 ```
 
 It reads the band from the arrays `<stem>`, the catalog from the table `image_fit_quality` and the contours from
@@ -812,8 +812,8 @@ It rewrites the figures, their records, the marker tables, `posterior_overview_p
 ## Reading results in Python
 
 ```python
-from kappaccino.io import store
-from kappaccino.io.hdf5 import load_arrays
+from lumina.io import store
+from lumina.io.hdf5 import load_arrays
 
 run = "results/demo/hera"
 summary = store.read_table(f"{run}/final", "posterior_summary")       # a DataFrame
@@ -894,7 +894,7 @@ lens alone. They are "not available" until the run has those tables.
 Regenerate from saved artifacts, without inference or plotting:
 
 ```bash
-PYTHONPATH=src python -m kappaccino.reporting.results_tex path/to/run/final
+PYTHONPATH=src python -m lumina.reporting.results_tex path/to/run/final
 ```
 
 To regenerate individual figures without rerunning inference, see {doc}`scripts`.

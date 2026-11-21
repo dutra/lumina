@@ -1,5 +1,5 @@
 import json
-from kappaccino.io import store
+from lumina.io import store
 import pytest
 from types import SimpleNamespace
 
@@ -8,10 +8,10 @@ import numpy as np
 import pandas as pd
 from astropy.wcs import WCS
 
-from kappaccino.plotting import covariance_cutouts as cc
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.diagnostics.exact_images import ExactImageSolver
-from kappaccino.core.state import build_state
+from lumina.plotting import covariance_cutouts as cc
+from lumina.likelihood.evaluator import Evaluator
+from lumina.diagnostics.exact_images import ExactImageSolver
+from lumina.core.state import build_state
 
 
 def test_quadratic_contour_linear_limit_and_curved_map():
@@ -51,7 +51,7 @@ def test_small_catalog_pdf_and_style(synthetic_config, tmp_path, monkeypatch):
     # FamilyData order is not necessarily the flattened image-family order.
     state.family_data = list(reversed(state.family_data))
     posterior=SimpleNamespace(samples=np.array([state.initial_theta]), physical=np.array([np.asarray(evaluator.physical(state.initial_theta))]))
-    from kappaccino.reporting.draws import ReportingDraws
+    from lumina.reporting.draws import ReportingDraws
     draws=ReportingDraws(evaluator, posterior, 1, 0)
     paths=SimpleNamespace(tables=tmp_path/'tables',figures=tmp_path/'figures')
     wcs=WCS(naxis=2);wcs.wcs.crpix=[1000,1000];wcs.wcs.crval=list(state.reference[1:]);wcs.wcs.cdelt=[-.05/3600,.05/3600];wcs.wcs.ctype=['RA---TAN','DEC--TAN']
@@ -75,10 +75,10 @@ def test_small_catalog_pdf_and_style(synthetic_config, tmp_path, monkeypatch):
 @pytest.mark.parametrize("cluster,missing_hst,expected", [("toy",False,1),("m0416",False,2),("as1063",True,1),("hera",False,1),("ares",False,1)])
 def test_output_reuses_loaded_imaging(monkeypatch, synthetic_config, tmp_path, cluster, missing_hst, expected):
     from dataclasses import replace
-    from kappaccino.reporting import outputs, results_tex
-    from kappaccino.imaging import cutouts
-    from kappaccino.diagnostics import image_recovery
-    from kappaccino.plotting import mass_figure, plots, covariance_cutouts, fold_pairs
+    from lumina.reporting import outputs, results_tex
+    from lumina.imaging import cutouts
+    from lumina.diagnostics import image_recovery
+    from lumina.plotting import mass_figure, plots, covariance_cutouts, fold_pairs
     config=replace(synthetic_config,paths=replace(synthetic_config.paths,run_name=cluster),outputs=replace(synthetic_config.outputs,rgb=replace(synthetic_config.outputs.rgb,image_dir='already-loaded')))
     state=SimpleNamespace(parameter_specs=[],reference=(3,0,0),z_lens=.3,z_source_values=[2.])
     posterior=SimpleNamespace(samples=np.zeros((1,1)),physical=np.zeros((1,1)),log_prob=np.zeros(1))
@@ -100,14 +100,14 @@ def test_output_reuses_loaded_imaging(monkeypatch, synthetic_config, tmp_path, c
     monkeypatch.setattr(mass_figure,'draw_cluster_mass_figure',lambda *a,**k:None)
     calls=[];monkeypatch.setattr(covariance_cutouts,'save_covariance_cutouts',lambda *a,**k:calls.append(a[4]) or 'saved')
     renders=[];monkeypatch.setattr(covariance_cutouts,'render_covariance_cutouts',lambda *a,**k:renders.append(a[3]))
-    from kappaccino.diagnostics import position_contours
+    from lumina.diagnostics import position_contours
     monkeypatch.setattr(position_contours,"load_or_compute_contours",lambda *a,**k:{})
     monkeypatch.setattr(position_contours,"load_position_contours",lambda *a,**k:{})
-    from kappaccino.plotting import small_lambda_jwst, paper_cutouts
+    from lumina.plotting import small_lambda_jwst, paper_cutouts
     lambda_calls=[]
     monkeypatch.setattr(small_lambda_jwst,'save_small_lambda_jwst',lambda *a,**k:lambda_calls.append(a))
     monkeypatch.setattr(paper_cutouts,'prepare_paper_cutouts',lambda *a,**k:None)
-    from kappaccino.plotting import jwst_rgb
+    from lumina.plotting import jwst_rgb
     rgb_calls=[]
     monkeypatch.setattr(jwst_rgb,'save_rgb_critical',lambda *a,**k:'saved')
     monkeypatch.setattr(jwst_rgb,'render_saved_rgb_critical',lambda *a,**k:rgb_calls.append(a))
@@ -135,9 +135,9 @@ def test_output_reuses_loaded_imaging(monkeypatch, synthetic_config, tmp_path, c
 
 def test_default_jwst_variants(synthetic_config):
     from dataclasses import replace
-    from kappaccino.imaging.cutouts import imaging_variants, variant_config
-    from kappaccino.imaging.rgb import DEFAULT_JWST_RGB_BANDS
-    from kappaccino.config import RGBDisplayConfig
+    from lumina.imaging.cutouts import imaging_variants, variant_config
+    from lumina.imaging.rgb import DEFAULT_JWST_RGB_BANDS
+    from lumina.config import RGBDisplayConfig
     for name in ['m0416_bergamini2023', 'as1063']:
         config = replace(synthetic_config, paths=replace(synthetic_config.paths, run_name=name))
         primary, jwst = imaging_variants(config)

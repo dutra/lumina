@@ -1,16 +1,16 @@
 # Pipeline
 
 ```{eval-rst}
-.. automodule:: kappaccino.pipeline
+.. automodule:: lumina.pipeline
    :no-members:
 
-.. autofunction:: kappaccino.pipeline.run
-.. autofunction:: kappaccino.pipeline.run_init
-.. autofunction:: kappaccino.pipeline.run_final
-.. autofunction:: kappaccino.pipeline.dry_run
-.. autoclass:: kappaccino.pipeline.InitResult
+.. autofunction:: lumina.pipeline.run
+.. autofunction:: lumina.pipeline.run_init
+.. autofunction:: lumina.pipeline.run_final
+.. autofunction:: lumina.pipeline.dry_run
+.. autoclass:: lumina.pipeline.InitResult
    :no-members:
-.. autoclass:: kappaccino.pipeline.RunResult
+.. autoclass:: lumina.pipeline.RunResult
    :no-members:
-.. autofunction:: kappaccino.pipeline.init_verdict
+.. autofunction:: lumina.pipeline.init_verdict
 ```

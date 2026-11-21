@@ -1,8 +1,8 @@
 # Configuration
 
-Every fit is described by one frozen dataclass, {class}`~kappaccino.config.LensClusterSolverConfig`. It groups the
+Every fit is described by one frozen dataclass, {class}`~lumina.config.LensClusterSolverConfig`. It groups the
 lens model, the likelihood, the search and the sampler, the run paths and the settings of the outputs stage. Build it, call
-`validate()`, and pass it to {func}`kappaccino.pipeline.run`. Build it in Python, as on this page, read the lens
+`validate()`, and pass it to {func}`lumina.pipeline.run`. Build it in Python, as on this page, read the lens
 model from a Lenstool parameter file (see {ref}`lenstool-par`), or declare it in a cluster folder's `priors.yaml` and
 `run.yaml` (see {doc}`run-files`). Change a field of a frozen config with
 `dataclasses.replace`:
@@ -69,7 +69,7 @@ sampled with the lens; see {ref}`cosmography <cosmography>`.
 : A uniform convergence `kappa` (for a source at infinite redshift; each family sees $\kappa\, D_{ls}/D_s$). Several
   source redshifts constrain it; one cannot, because of the mass-sheet degeneracy.
 
-The profiles the solver knows are registered in `kappaccino/profiles.py`.
+The profiles the solver knows are registered in `lumina/profiles.py`.
 
 ### Priors
 
@@ -79,7 +79,7 @@ its configured value.
 
 ```python
 import numpyro.distributions as dist
-from kappaccino.priors import ellipticity_box, lognormal_from_moments, truncated_lognormal
+from lumina.priors import ellipticity_box, lognormal_from_moments, truncated_lognormal
 
 priors = {
     "x_centre": dist.Uniform(-2.0, 4.0),                      # arcsec
@@ -162,9 +162,9 @@ population = replace(population, profile_type=102)                       # slope
 population = replace(population, profile_type=102, slope=2.4)             # with fixed_relation_fields=("slope",)
 ```
 
-With the `kappaccino` command, `--member-profile power-law` samples the slope and `--member-slope G` holds it at `G`.
+With the `lumina` command, `--member-profile power-law` samples the slope and `--member-slope G` holds it at `G`.
 
-The kernel (`kappaccino.lens.profiles.cored_power_law`) evaluates the elliptical deflection and its derivatives by Gauss–Legendre
+The kernel (`lumina.lens.profiles.cored_power_law`) evaluates the elliptical deflection and its derivatives by Gauss–Legendre
 quadrature of the integrals of Keeton (2001), to about $10^{-4}$ of the field. It costs about three times as much
 per exact member as the analytic dPIE. Far-field CPL members use the exact circular profile instead of the dPIE series.
 
@@ -173,7 +173,7 @@ member's half-light radius, and the images fix the mass inside larger radii. For
 the dPIE calibration `kinematics_aperture_factor` times the ratio $\sigma_\mathrm{ap}(\gamma)/\sigma_\mathrm{ap}(2)$.
 This ratio compares the member's aperture dispersion with that of the dPIE with the same dispersion parameter and
 radii. It comes from the isotropic Jeans equation, with light tracing mass, integrated over a circular aperture
-(`kappaccino.lens.profiles.cored_power_law.aperture_dispersion_ratio`). At slope 2 the ratio is 1. The aperture radius comes
+(`lumina.lens.profiles.cored_power_law.aperture_dispersion_ratio`). At slope 2 the ratio is 1. The aperture radius comes
 from the member catalog: each measurement's `aperture_arcsec`, else its source's. For dispersions measured inside a
 galaxy's half-light radius ($\sigma_e$), that is the galaxy's own radius. `kinematics_aperture_arcsec` replaces the
 catalog's aperture with one radius for every member, for sensitivity tests. A CPL population with kinematics needs an
@@ -292,15 +292,15 @@ the length of that run (see {doc}`model-comparison`).
 `OutputsConfig` (the `outputs` section) holds everything the outputs stage reads and nothing a fit reads: the
 reporting draws (`draws`, `image_draws`), `workers` (default 4, at least 1, the threads that evaluate the draws; the
 products are identical for any value and each thread holds one draw's working arrays), `caustic_source_redshift`,
-`fail_fast`, the exact-image solver (`image_solver`, {class}`~kappaccino.config.ImageSolverConfig`) and one section per
+`fail_fast`, the exact-image solver (`image_solver`, {class}`~lumina.config.ImageSolverConfig`) and one section per
 output module (`fit`, `images`, `mass`, `truth`, `rgb`), each with an `enabled` switch and its own settings: the truth
-maps of a simulated cluster in `truth` ({class}`~kappaccino.config.TruthOutputConfig`), the imaging, RGB display,
-paper cutouts and fold-pair search in `rgb` ({class}`~kappaccino.config.RGBOutputConfig`), the extra-image search in
+maps of a simulated cluster in `truth` ({class}`~lumina.config.TruthOutputConfig`), the imaging, RGB display,
+paper cutouts and fold-pair search in `rgb` ({class}`~lumina.config.RGBOutputConfig`), the extra-image search in
 `images`. The section is not part of the run hash and a resume ignores it, so `--set outputs.workers=8` or
 `--set outputs.rgb.enabled=false` reuses the existing run folder. See {doc}`outputs`.
 
 ```python
-from kappaccino.config import OutputsConfig, RGBOutputConfig, TruthOutputConfig
+from lumina.config import OutputsConfig, RGBOutputConfig, TruthOutputConfig
 
 config = replace(config, outputs=OutputsConfig(
     draws=64, image_draws=256,
@@ -323,7 +323,7 @@ The library defaults are conservative. The production fits of the supported clus
 
 ```python
 from dataclasses import replace
-from kappaccino.config import MemberConfig, SamplingConfig, SearchConfig
+from lumina.config import MemberConfig, SamplingConfig, SearchConfig
 
 config = replace(
     config,
@@ -359,11 +359,11 @@ Common changes on an existing configuration:
 (lenstool-par)=
 ## From a Lenstool `.par` file
 
-{func}`~kappaccino.io.lenstool_par.config_from_lenstool_par` reads a Lenstool parameter file and returns a
+{func}`~lumina.io.lenstool_par.config_from_lenstool_par` reads a Lenstool parameter file and returns a
 `LensClusterSolverConfig` with library defaults outside the lens model:
 
 ```python
-from kappaccino.io.lenstool_par import config_from_lenstool_par
+from lumina.io.lenstool_par import config_from_lenstool_par
 
 config = config_from_lenstool_par(
     "model.par",
@@ -414,4 +414,4 @@ config = replace(config, scaling=replace(config.scaling, fixed_relation_fields=(
 
 - The `.par` file does not set the likelihood, search or sampler. Apply the recommended settings above.
 - Reading the file starts JAX (for the distance calculation), so call
-  {func}`~kappaccino.cpu_runtime.configure_cpu_runtime` before it.
+  {func}`~lumina.cpu_runtime.configure_cpu_runtime` before it.

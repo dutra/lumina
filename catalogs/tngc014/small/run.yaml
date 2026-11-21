@@ -1,5 +1,5 @@
 # How the small tngc014 catalog is fitted: the settings of ../large/run.yaml.
-# kappaccino catalogs/tngc014/small [--profile fast] [--profile cosmography]
+# lumina catalogs/tngc014/small [--profile fast] [--profile cosmography]
 extends: ../large/run.yaml
 name: tngc014_small
 priors: priors.yaml

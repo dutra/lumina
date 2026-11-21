@@ -6,9 +6,9 @@ from dataclasses import replace
 import jax.numpy as jnp
 import numpy as np
 
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.diagnostics.exact_images import ExactImageSolver
-from kappaccino.core.state import build_state
+from lumina.likelihood.evaluator import Evaluator
+from lumina.diagnostics.exact_images import ExactImageSolver
+from lumina.core.state import build_state
 
 
 def test_global_search_matches_brute_force_and_recovers_observed_images(synthetic_config, brute_force_images):

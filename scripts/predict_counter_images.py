@@ -46,7 +46,7 @@ def draw_lenses(config, evaluator, posterior, rows):
     """The lenses of the posterior ``rows``, in that order: each is the parametric lens of the row plus one conditional
     realization of its GRF (``ReportingDraws``), so the spread of a prediction over the rows holds the uncertainty of
     the lens parameters and of the field."""
-    from kappaccino.reporting.draws import ReportingDraws
+    from lumina.reporting.draws import ReportingDraws
     return ReportingDraws(evaluator, posterior, len(rows), int(config.runtime.seed), rows=rows)
 
 
@@ -57,7 +57,7 @@ class SkyPositions:
     those offsets (``image_recovery.true_positions``).  Far from every catalog image it keeps the full sigma_gp."""
 
     def __init__(self, config, state, lenses):
-        from kappaccino.diagnostics.exact_images import ExactImageSolver
+        from lumina.diagnostics.exact_images import ExactImageSolver
         self.state, self.lenses = state, lenses
         self.solver = ExactImageSolver(lenses.evaluator, config.outputs.image_solver)
         self._draws = {}
@@ -65,7 +65,7 @@ class SkyPositions:
     def _catalog(self, k):
         """Catalog and lens positions of the catalog images in draw ``k``, its error scales and its random stream."""
         if k not in self._draws:
-            from kappaccino.diagnostics.image_recovery import image_plane_scales, predictions_at, window_corners
+            from lumina.diagnostics.image_recovery import image_plane_scales, predictions_at, window_corners
             lenses, evaluator = self.lenses, self.lenses.evaluator
             theta = np.asarray(lenses.samples[k], float)
             field = lenses.correction(k, lenses.reach(window_corners(self.solver, self.state))) if lenses.has_field else None
@@ -79,7 +79,7 @@ class SkyPositions:
     def displacement(self, k, points, chunk=2000):
         """One draw of the GP displacement of lens draw ``k`` at ``points`` (arcsec, shape (point, 2)), given the
         catalog.  The points of one chunk are drawn jointly; chunks are independent given the catalog."""
-        from kappaccino.diagnostics.image_recovery import true_positions
+        from lumina.diagnostics.image_recovery import true_positions
         catalog, lens, scales, rng = self._catalog(k)
         points = np.asarray(points, float).reshape(-1, 2)
         out = np.zeros_like(points)
@@ -134,7 +134,7 @@ def stamp_rgb(images, bands, ref_band, centre_xy, reference, size):
     for b in bands:
         cut = cutouts.extract_band_cutout_on_grid(images[b], ref, coord, size).astype(float)
         data[b] = np.where(np.isfinite(cut), cut, 0.0)
-    from kappaccino.imaging.rgb import make_calibrated_rgb
+    from lumina.imaging.rgb import make_calibrated_rgb
     return make_calibrated_rgb(data, bands=bands, display=cutouts.build_rgb_display(images, bands=bands))
 
 
@@ -192,8 +192,8 @@ def main():
     import matplotlib
     matplotlib.use("pdf")
     import matplotlib.pyplot as plt
-    from kappaccino.plotting.style import PAPER_STYLE
-    plt.style.use(str(ROOT / "src/kappaccino/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
+    from lumina.plotting.style import PAPER_STYLE
+    plt.style.use(str(ROOT / "src/lumina/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
     n = len(panels)
     fig, axes = plt.subplots(1, n, figsize=(2.4 * n, 2.6), constrained_layout=True, squeeze=False)
     half = args.stamp / 2

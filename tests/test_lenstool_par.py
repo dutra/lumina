@@ -8,8 +8,8 @@ import pytest
 
 import numpy as np
 
-from kappaccino import priors
-from kappaccino.io.lenstool_par import config_from_lenstool_par, prior_from_limit, read_lenstool_par
+from lumina import priors
+from lumina.io.lenstool_par import config_from_lenstool_par, prior_from_limit, read_lenstool_par
 
 REPO = Path(__file__).resolve().parents[1]
 AS1063 = REPO / "catalogs/as1063/bergamini2019"

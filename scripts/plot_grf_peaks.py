@@ -36,8 +36,8 @@ def main():
     parser.add_argument('--zero-arcsec', type=float, default=10.)
     parser.add_argument('--peak-separation-arcsec', type=float, default=10.)
     args = parser.parse_args()
-    from kappaccino.io import artifacts
-    from kappaccino.io.image_catalog import load_image_catalog
+    from lumina.io import artifacts
+    from lumina.io.image_catalog import load_image_catalog
     config = artifacts.load_config(args.run/'init/artifacts')
     z_source = float(config.truth.caustic_source_redshift)
 
@@ -71,8 +71,8 @@ def main():
     marks = [(item.split(':')[0], *map(float, item.split(':')[1].split(','))) for item in args.mark]
 
     from cmcrameri import cm
-    from kappaccino.plotting.style import PAPER_STYLE
-    plt.style.use(Path(__file__).resolve().parents[1]/'src/kappaccino/plotting/style.mplstyle')
+    from lumina.plotting.style import PAPER_STYLE
+    plt.style.use(Path(__file__).resolve().parents[1]/'src/lumina/plotting/style.mplstyle')
     plt.rcParams.update(PAPER_STYLE)
     limit = np.ceil(np.percentile(np.abs(before[weight > 0]), 99.5) * 500) / 500
     norm = TwoSlopeNorm(0., -limit, limit)

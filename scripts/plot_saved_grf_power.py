@@ -7,8 +7,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'src'))
-from kappaccino.plotting.style import PAPER_STYLE
-from kappaccino.io.hdf5 import load_arrays, save_arrays
+from lumina.plotting.style import PAPER_STYLE
+from lumina.io.hdf5 import load_arrays, save_arrays
 
 def main():
  p=argparse.ArgumentParser();p.add_argument('run',type=Path);a=p.parse_args();r=a.run.resolve()
@@ -26,7 +26,7 @@ def main():
  fine=np.geomspace(k[0],k[-1],4801);fi=simpson(1/(1+(fine[None,:]*knee[:,None]/(2*np.pi))**gamma),x=np.log(fine),axis=1)
  assert np.max(abs(fi/integrals-1))<1e-8
  lo,med,hi=np.quantile(P,[.16,.5,.84],axis=0);q=np.quantile(knee,[.16,.5,.84])
- plt.style.use(ROOT/'src/kappaccino/plotting/style.mplstyle');plt.rcParams.update(PAPER_STYLE)
+ plt.style.use(ROOT/'src/lumina/plotting/style.mplstyle');plt.rcParams.update(PAPER_STYLE)
  fig,ax=plt.subplots(figsize=(7.1,4.2));color='#0072B2'
  ax.fill_between(k,lo,hi,color=color,alpha=.22,label='Saved draws: 16–84%')
  ax.loglog(k,med,c=color,label='Saved draws: median')

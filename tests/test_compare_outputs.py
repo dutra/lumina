@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.io import store
+from lumina.io import store
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "compare_outputs.py"
 

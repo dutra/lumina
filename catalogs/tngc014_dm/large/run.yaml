@@ -1,5 +1,5 @@
 # How the dark-matter-only TNG-Cluster zoom 014 mock is fitted, with the settings of ../../tngc014/large/run.yaml.
-# kappaccino catalogs/tngc014_dm/large [--profile fast] [--profile cosmography]
+# lumina catalogs/tngc014_dm/large [--profile fast] [--profile cosmography]
 name: tngc014_dm
 priors: priors.yaml
 

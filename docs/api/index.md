@@ -9,19 +9,19 @@ The package is organized as:
 
 | module or subpackage | contents |
 |---|---|
-| `kappaccino.config`, `kappaccino.priors` | the configuration of a run and its priors |
-| `kappaccino.pipeline`, `kappaccino.cpu_runtime` | running a fit: the two stages, and the CPU devices of the chains |
-| `kappaccino.core` | the model: parameter specifications, the model state, inputs and member classification |
-| `kappaccino.lens` | lens physics in JAX: profiles, deflections and Jacobians, cosmology, the far-field series |
-| `kappaccino.likelihood` | the evaluator and the position likelihoods (smoothed, image-plane GP, GRF) |
-| `kappaccino.inference` | the multi-start MAP search, NUTS and model comparison (BIC, WBIC) |
-| `kappaccino.io` | catalogs, Lenstool parameter files, sky coordinates, run artifacts and HDF5 arrays |
-| `kappaccino.imaging` | HST and JWST images: cutouts, RGB display, photometry |
-| `kappaccino.diagnostics` | numerical diagnostics: image recovery, exact images, members, priors, truth recovery |
-| `kappaccino.plotting` | figures and the shared matplotlib style |
-| `kappaccino.reporting` | tables, text reports and publication macros written after a run |
-| `kappaccino.partition` | uncertain images: the sum over their partitions into groups |
-| `kappaccino.mock_validation` | analytic mock clusters, their fits and recovery scores |
+| `lumina.config`, `lumina.priors` | the configuration of a run and its priors |
+| `lumina.pipeline`, `lumina.cpu_runtime` | running a fit: the two stages, and the CPU devices of the chains |
+| `lumina.core` | the model: parameter specifications, the model state, inputs and member classification |
+| `lumina.lens` | lens physics in JAX: profiles, deflections and Jacobians, cosmology, the far-field series |
+| `lumina.likelihood` | the evaluator and the position likelihoods (smoothed, image-plane GP, GRF) |
+| `lumina.inference` | the multi-start MAP search, NUTS and model comparison (BIC, WBIC) |
+| `lumina.io` | catalogs, Lenstool parameter files, sky coordinates, run artifacts and HDF5 arrays |
+| `lumina.imaging` | HST and JWST images: cutouts, RGB display, photometry |
+| `lumina.diagnostics` | numerical diagnostics: image recovery, exact images, members, priors, truth recovery |
+| `lumina.plotting` | figures and the shared matplotlib style |
+| `lumina.reporting` | tables, text reports and publication macros written after a run |
+| `lumina.partition` | uncertain images: the sum over their partitions into groups |
+| `lumina.mock_validation` | analytic mock clusters, their fits and recovery scores |
 
 ```{toctree}
 :maxdepth: 1

@@ -9,11 +9,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from kappaccino.core.state import build_state
-from kappaccino.io import store
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.outputs.base import OutputContext, completion_name, run_modules
-from kappaccino.outputs.fit import FitModule
+from lumina.core.state import build_state
+from lumina.io import store
+from lumina.likelihood.evaluator import Evaluator
+from lumina.outputs.base import OutputContext, completion_name, run_modules
+from lumina.outputs.fit import FitModule
 
 
 def likelihood(config, kind):
@@ -42,7 +42,7 @@ def fit_pass(config, state, evaluator, posterior, root, mode):
 
 def no_evaluation(monkeypatch):
     """Make any lens evaluation fail: what a render pass must never need."""
-    from kappaccino.reporting import draws as draws_module
+    from lumina.reporting import draws as draws_module
 
     def refuse(*args, **kwargs):
         raise AssertionError("a render pass evaluated the lens")
@@ -114,10 +114,10 @@ def test_a_render_pass_draws_every_fit_figure_again_without_evaluating(kind, syn
 def test_render_reads_what_compute_saved(synthetic_config, tmp_path):
     """The covariance figure is drawn from its table alone and the member figures from the saved diagnostics, which
     come back as they were computed."""
-    from kappaccino.plotting.covariance import render_covariance_errors, save_covariance_errors
-    from kappaccino.plotting.members import load_member_diagnostics, save_member_diagnostics
-    from kappaccino.diagnostics.members import compute_member_diagnostics
-    from kappaccino.reporting.draws import reporting_draws
+    from lumina.plotting.covariance import render_covariance_errors, save_covariance_errors
+    from lumina.plotting.members import load_member_diagnostics, save_member_diagnostics
+    from lumina.diagnostics.members import compute_member_diagnostics
+    from lumina.reporting.draws import reporting_draws
     config = likelihood(synthetic_config, "smoothed")
     state = build_state(config)
     evaluator = Evaluator(state, config.likelihood.likelihood_mode)

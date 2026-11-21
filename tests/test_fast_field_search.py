@@ -8,11 +8,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from kappaccino.config import NFWHaloConfig, ShearHaloConfig
-from kappaccino.core.state import build_state
-from kappaccino.diagnostics.exact_images import ExactImageSolver
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.plotting import grf
+from lumina.config import NFWHaloConfig, ShearHaloConfig
+from lumina.core.state import build_state
+from lumina.diagnostics.exact_images import ExactImageSolver
+from lumina.likelihood.evaluator import Evaluator
+from lumina.plotting import grf
 
 
 # ----------------------------------------------------------------------------- sincos
@@ -156,7 +156,7 @@ def _sheared(synthetic_config, *, nfw=False):
 
 
 def test_the_lens_at_any_redshift_is_the_reference_lens_scaled_with_the_shear_apart(synthetic_config):
-    from kappaccino.likelihood.grf_fields import _sigma0_factor
+    from lumina.likelihood.grf_fields import _sigma0_factor
     state, evaluator, solver, physical, _, _ = _sheared(synthetic_config, nfw=True)
     points = np.random.default_rng(8).uniform(-20, 20, (500, 2))
     reference = evaluator.packed_state_for_z(jnp.asarray(physical), 2.)
@@ -233,7 +233,7 @@ def _fallback_gives_the_per_redshift_search(solver, evaluator, families, physica
 
 
 def test_a_lens_that_does_not_scale_with_redshift_takes_the_search_per_redshift(synthetic_config, monkeypatch):
-    from kappaccino.likelihood import grf_fields
+    from lumina.likelihood import grf_fields
     state, evaluator, solver, physical, sources, families = _sheared(synthetic_config)
     assert len({f.z_source for f in families}) == 2
     true_factor = grf_fields._sigma0_factor
@@ -278,7 +278,7 @@ def test_the_fine_sub_grid_of_the_shared_lattice_finds_a_close_pair_the_coarse_l
 
 
 def test_a_lens_that_scales_at_the_extreme_redshifts_but_not_between_takes_the_search_per_redshift(synthetic_config, monkeypatch):
-    from kappaccino.likelihood import grf_fields
+    from lumina.likelihood import grf_fields
     state, evaluator, solver, physical, sources, families = _sheared(synthetic_config)
     assert [f.z_source for f in families] == [2., 3.]
     families = families + [replace(families[0], family_id="between", z_source=2.5)]       # a third redshift, between
@@ -300,7 +300,7 @@ class _Stop(Exception):
 def test_every_grid_point_of_the_search_lies_within_the_reach_of_the_field(synthetic_config, monkeypatch, shared):
     # A coarse pitch of 2" (fine 1") and windows whose edges miss the lattice; every node within the seed reach and
     # near a critical curve, so fine sub-grids surround the edge nodes too.
-    from kappaccino.diagnostics.image_recovery import window_corners
+    from lumina.diagnostics.image_recovery import window_corners
     state, evaluator, solver, physical, sources, families = _sheared(synthetic_config)
     config = replace(solver.config, exact_image_grid_pitch_arcsec=2., exact_image_fine_pitch_arcsec=1., exact_image_window_margin_arcsec=.3,
                      exact_image_critical_det_threshold=1e30, exact_image_seed_tolerance_pitches=1e30)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from kappaccino.inference.sampling import adaptation_diagnostics, e_bfmi
+from lumina.inference.sampling import adaptation_diagnostics, e_bfmi
 
 
 def test_e_bfmi_separates_independent_and_random_walk_energies():
@@ -22,9 +22,9 @@ def test_dense_member_offsets_join_the_hessian_seeded_block(synthetic_config):
     """SamplingConfig.dense_member_offsets: the member-offset sites move from the diagonal into the dense block, whose
     Hessian seed (chunked forward-over-reverse) is symmetric positive definite; the sources stay diagonal."""
     import numpy as np
-    from kappaccino.likelihood.evaluator import Evaluator
-    from kappaccino.inference.sampling import block_mass_seed, posterior_model
-    from kappaccino.core.state import build_state
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.inference.sampling import block_mass_seed, posterior_model
+    from lumina.core.state import build_state
     state = build_state(synthetic_config)
     specs = state.parameter_specs
     model = posterior_model(specs, Evaluator(state).log_likelihood)
@@ -45,7 +45,7 @@ def test_stiffest_direction_finds_the_largest_whitened_curvature():
     """Power iteration on W^T H W: for a quadratic with curvatures (1, 100, 4) the stiffest direction is the second axis
     (step limit 2/10); whitening that axis by 1/10 makes the third the stiffest (curvature 4)."""
     import jax.numpy as jnp
-    from kappaccino.inference.sampling import stiffest_direction
+    from lumina.inference.sampling import stiffest_direction
     curvature = jnp.asarray([1.0, 100.0, 4.0])
     potential = lambda x: 0.5 * jnp.sum(curvature * x * x)
     x0 = jnp.asarray([0.3, -0.2, 0.1])

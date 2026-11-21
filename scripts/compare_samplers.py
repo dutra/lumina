@@ -63,12 +63,12 @@ import blackjax                                                                #
 from dataclasses import replace                                               # noqa: E402
 from numpyro.diagnostics import effective_sample_size, split_gelman_rubin     # noqa: E402
 
-from kappaccino.io import artifacts  # noqa: E402
-from kappaccino.io.hdf5 import load_arrays, save_arrays  # noqa: E402
-from kappaccino.likelihood.evaluator import Evaluator  # noqa: E402
-from kappaccino.inference.sampling import LATENT_FAMILIES, block_mass_seed, sample_sites  # noqa: E402
-from kappaccino.inference.search import Objective  # noqa: E402
-from kappaccino.core.state import build_state, with_member_classes  # noqa: E402
+from lumina.io import artifacts  # noqa: E402
+from lumina.io.hdf5 import load_arrays, save_arrays  # noqa: E402
+from lumina.likelihood.evaluator import Evaluator  # noqa: E402
+from lumina.inference.sampling import LATENT_FAMILIES, block_mass_seed, sample_sites  # noqa: E402
+from lumina.inference.search import Objective  # noqa: E402
+from lumina.core.state import build_state, with_member_classes  # noqa: E402
 
 KEY_PARAMETERS = ("4.x_centre", "4.y_centre", "4.v_disp", "1.v_disp", "2.v_disp", "potfile_1.sigma", "potfile_1.cutkpc",
                   "potfile_1.velocity_log_scatter", "potfile_1.radius_log_scatter", "images.sigma_grf", "images.lambda_b",

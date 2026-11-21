@@ -10,11 +10,11 @@ import numpy as np
 import numpyro.distributions as dist
 import pytest
 
-from kappaccino.core.model import CORED_POWER_LAW_PROFILE, DP_IE_PROFILE
-from kappaccino.core.state import build_state, with_member_classes
-from kappaccino.lens.profiles import cored_power_law as cpl, dpie, frame
-from kappaccino.lens.farfield import evaluate_farfield_per_member, member_farfield_geometry
-from kappaccino.likelihood.evaluator import Evaluator
+from lumina.core.model import CORED_POWER_LAW_PROFILE, DP_IE_PROFILE
+from lumina.core.state import build_state, with_member_classes
+from lumina.lens.profiles import cored_power_law as cpl, dpie, frame
+from lumina.lens.farfield import evaluate_farfield_per_member, member_farfield_geometry
+from lumina.likelihood.evaluator import Evaluator
 
 SHAPES = ((0.0, 0.0), (0.2, -0.1), (-0.35, 0.3), (0.45, 0.4))
 RADII = ((0.005, 2.0), (0.3, 5.0))
@@ -318,7 +318,7 @@ def test_power_law_kinematics_use_the_jeans_ratio(synthetic_config, tmp_path):
     expected = -0.5 * np.sum(z ** 2) - np.sum(np.log(kinematics["log_err"])) - 0.5 * z.size * np.log(2 * np.pi)
     np.testing.assert_allclose(float(b.kinematics_log_likelihood(physical)), expected, rtol=1e-10)
     assert np.all(ratio > 1.0) and len(MEASURED) == len(components)
-    from kappaccino.pipeline import kinematics_table
+    from lumina.pipeline import kinematics_table
     table = kinematics_table(state, b, theta)
     np.testing.assert_allclose(table["sigma_model_ap"], c * sigma * ratio, rtol=1e-10)      # the diagnostic uses the same model
     fixed = replace(power_law, model=replace(power_law.model, member_populations=(

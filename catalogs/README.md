@@ -4,9 +4,9 @@ The image and member catalogs the pipeline reads, one folder per cluster and per
 
 ```
 catalogs/<cluster>/<source>/
-    images.yaml          multiple images (format lenscluster-images/1, src/kappaccino/image_catalog.py)
-    members.yaml|.cat    cluster members (src/kappaccino/member_catalog.py)
-    priors.yaml          what is fitted: halos, members, priors (src/kappaccino/run_files.py, docs/run-files.md)
+    images.yaml          multiple images (format lenscluster-images/1, src/lumina/image_catalog.py)
+    members.yaml|.cat    cluster members (src/lumina/member_catalog.py)
+    priors.yaml          what is fitted: halos, members, priors (src/lumina/run_files.py, docs/run-files.md)
     run.yaml             how it is fitted: likelihood, sampler, products, figures, profiles
     README.*             the source's own notes
     source/              the published files the YAML was converted from (Lenstool catalogs, par files, MAST tables)

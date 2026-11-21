@@ -3,7 +3,7 @@ import numpy as np
 from scipy.integrate import quad
 from scipy.special import gammainc
 
-from kappaccino.mock_validation.aggregate_plots import _schechter_curve
+from lumina.mock_validation.aggregate_plots import _schechter_curve
 
 
 def test_reference_normalization_and_generator_cdf():
@@ -28,7 +28,7 @@ def test_missing_selection_does_not_invent_reference():
 
 def test_cutoff_magnitude_shifts_draw_and_curve_together():
     """Members drawn with schechter_magnitude != pivot_magnitude follow the plotted curve."""
-    from kappaccino.mock_validation.truth import truncated_schechter_luminosities
+    from lumina.mock_validation.truth import truncated_schechter_luminosities
     alpha, lower, upper = -0.8, 0.02, 20.0
     cutoff = 10 ** (-0.4 * (19.0 - 19.82))
     rng = np.random.default_rng(1)

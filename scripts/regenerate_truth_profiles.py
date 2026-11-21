@@ -17,13 +17,13 @@ def main():
     matplotlib.use('Agg')
     import numpy as np
     import pandas as pd
-    from kappaccino.outputs.saved_run import load_run
-    from kappaccino.diagnostics.truth_recovery import compute_truth_recovery
-    from kappaccino.plotting import plots
+    from lumina.outputs.saved_run import load_run
+    from lumina.diagnostics.truth_recovery import compute_truth_recovery
+    from lumina.plotting import plots
     for run in args.runs:
         config, state, evaluator, posterior, paths = load_run(run, transform=redirect(args.catalogs, args.ffsims_dir))
         images = pd.read_csv(paths.tables/'image_fit_quality.csv', dtype={'family_id': str, 'image_label': str})
-        from kappaccino.reporting.draws import reporting_draws
+        from lumina.reporting.draws import reporting_draws
         truth = compute_truth_recovery(state, reporting_draws(config, evaluator, posterior), config.truth, run/'final/fits', paths.tables,
                                        log=lambda text: print(text, flush=True))
         prefix = config.paths.figure_prefix

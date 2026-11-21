@@ -10,8 +10,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from kappaccino.plotting import potfile
-from kappaccino.io.hdf5 import load_arrays
+from lumina.plotting import potfile
+from lumina.io.hdf5 import load_arrays
 
 
 def main(kind):

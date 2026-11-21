@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 import json
-from kappaccino.io import store
+from lumina.io import store
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,11 +9,11 @@ import pytest
 
 import numpyro.distributions as dist
 
-from kappaccino.outputs import fit as posterior_module
-from kappaccino.plotting import plots
-from kappaccino.reporting import outputs, results_tex
-from kappaccino.plotting import potfile
-from kappaccino.core.model import ParameterSpec
+from lumina.outputs import fit as posterior_module
+from lumina.plotting import plots
+from lumina.reporting import outputs, results_tex
+from lumina.plotting import potfile
+from lumina.core.model import ParameterSpec
 
 
 def make_spec(name, field, prior, family="scaling"):
@@ -76,7 +76,7 @@ def test_short_fixed_and_empty_posteriors(tmp_path):
 
 def test_prior_quantiles_and_density_match_sampler():
     import jax
-    from kappaccino.inference.sampling import SampleSite, distribution_for_site
+    from lumina.inference.sampling import SampleSite, distribution_for_site
     jax.config.update("jax_enable_x64", True)
     for prior in (dist.Normal(.5, .2), dist.TruncatedNormal(.5, .2, low=0., high=1.5), dist.Uniform(0., 1.5)):
         spec = make_spec("potfile_1.beta_radius", "beta_radius", prior)
@@ -99,8 +99,8 @@ def test_corner_traces_preserve_chain_order(tmp_path):
 
 
 def test_uniform_global_prior_and_coordinate_transforms(tmp_path):
-    from kappaccino.plotting.corner import DisplayPrior, display_values
-    from kappaccino.plotting.plots import plot_corner
+    from lumina.plotting.corner import DisplayPrior, display_values
+    from lumina.plotting.plots import plot_corner
     specs = [make_spec(f'halo.{field}', field, dist.Uniform(-1., 1.), 'large') for field in ('x', 'y')]
     draws = np.random.default_rng(4).uniform(-.8, .8, (100, 2))
     path = plot_corner(draws, specs, tmp_path/'global.pdf')
@@ -113,7 +113,7 @@ def test_uniform_global_prior_and_coordinate_transforms(tmp_path):
 
 
 def test_corner_headers_physical_with_log_axes(tmp_path, monkeypatch):
-    from kappaccino.plotting.corner import plot_parameter_corner
+    from lumina.plotting.corner import plot_parameter_corner
     from matplotlib.figure import Figure
     spec = make_spec('images.sigma_def', 'sigma_def', dist.LogNormal(np.log(.01), .5), 'error_scale')
     samples = np.geomspace(.005, .02, 101)[:,None]

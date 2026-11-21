@@ -1,14 +1,14 @@
 """Regenerate the covariance corner from a saved run; no inference."""
 import argparse
 import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
-from kappaccino.outputs.saved_run import load_run
+from lumina.outputs.saved_run import load_run
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('run_directory')
     args = parser.parse_args()
-    from kappaccino.plotting.covariance import plot_covariance_corner
+    from lumina.plotting.covariance import plot_covariance_corner
     config, state, _, posterior, paths = load_run(args.run_directory)
     print(plot_covariance_corner(config, state, posterior, paths))
 

@@ -1,6 +1,6 @@
 """Geometric diagnostics of cached M0416 curves; not microlensing event rates.
 
-Run with the existing kappaccino interpreter. No fitting or cache mutation.
+Run with the existing lumina interpreter. No fitting or cache mutation.
 """
 from pathlib import Path
 import argparse
@@ -11,7 +11,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from astropy.cosmology import FlatLambdaCDM
-from kappaccino.io.hdf5 import load_arrays, save_arrays
+from lumina.io.hdf5 import load_arrays, save_arrays
 
 DEFAULT = 'results/nov3o_densemass_notfast/m0416_canucs2025/w500s250t8_gamma4_allblocks/final'
 

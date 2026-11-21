@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 import numpy as np
-from kappaccino.io import store
-from kappaccino.plotting.block_corner import posterior_corner_data, write_posterior_block_corner, BLOCK_COLORS
+from lumina.io import store
+from lumina.plotting.block_corner import posterior_corner_data, write_posterior_block_corner, BLOCK_COLORS
 
 
 def spec(name, family='large', field='v_disp', log=False):
@@ -38,7 +38,7 @@ def test_log_values_and_constant_exclusion():
 
 
 def test_cosmology_block_and_dedicated_corner(tmp_path):
-    from kappaccino.plotting.block_corner import write_cosmology_corner
+    from lumina.plotting.block_corner import write_cosmology_corner
     specs = [spec('halo.v_disp'), spec('cosmology.Om0', field='Om0'),
              spec('cosmology.w0', field='w0')]
     samples = np.random.default_rng(31).multivariate_normal(

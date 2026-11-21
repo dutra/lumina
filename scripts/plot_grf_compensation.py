@@ -88,8 +88,8 @@ def main():
 
     statistics = dict(weighted_statistics(target, field, weight), removed_target_mean=offset)
 
-    from kappaccino.plotting.style import PAPER_STYLE
-    plt.style.use(Path(__file__).resolve().parents[1]/'src/kappaccino/plotting/style.mplstyle')
+    from lumina.plotting.style import PAPER_STYLE
+    plt.style.use(Path(__file__).resolve().parents[1]/'src/lumina/plotting/style.mplstyle')
     plt.rcParams.update(PAPER_STYLE)
     from cmcrameri import cm
     limit = np.ceil(np.percentile(np.abs(target[weight > 0]), 95) * 100) / 100

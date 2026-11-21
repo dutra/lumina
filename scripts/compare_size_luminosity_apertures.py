@@ -21,12 +21,12 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from types import SimpleNamespace
-from kappaccino.io import artifacts
-from kappaccino.io.hdf5 import save_arrays
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.core.state import build_state, with_member_classes
-from kappaccino.diagnostics.truth_recovery import load_truth_fits, mass_per_kappa_pixel_msun
-from kappaccino.plotting.style import PAPER_STYLE
+from lumina.io import artifacts
+from lumina.io.hdf5 import save_arrays
+from lumina.likelihood.evaluator import Evaluator
+from lumina.core.state import build_state, with_member_classes
+from lumina.diagnostics.truth_recovery import load_truth_fits, mass_per_kappa_pixel_msun
+from lumina.plotting.style import PAPER_STYLE
 
 
 def polar_rule(nr, nt):
@@ -181,7 +181,7 @@ def main():
         normalizations_kpc=normalizations,radii_arcsec=radii,member_ids=members.member_id.to_numpy(dtype=str),
         complete_aperture=valid,inside_image_hull=inside,median_physical=physical)
     print(summary.to_string(index=False),flush=True)
-    plt.style.use(Path(__file__).resolve().parents[1]/'src/kappaccino/plotting/style.mplstyle')
+    plt.style.use(Path(__file__).resolve().parents[1]/'src/lumina/plotting/style.mplstyle')
     plt.rcParams.update(PAPER_STYLE)
     fig,axs=plt.subplots(1,2,figsize=(7.1,3.2),layout='constrained')
     for label,color,text in [('all','tab:blue','All members'),('image_hull','tab:orange','Inside image hull')]:

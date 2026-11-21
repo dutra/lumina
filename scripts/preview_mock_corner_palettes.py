@@ -20,9 +20,9 @@ from matplotlib.patches import Patch, Rectangle
 from matplotlib.collections import Collection
 import numpy as np
 
-from kappaccino.plotting.block_corner import render_block_corner, BLOCK_COLORS, STYLE, PAPER_STYLE
-from kappaccino.io.hdf5 import load_arrays
-from kappaccino.mock_validation.aggregate_plots import PARAMETER_LABELS
+from lumina.plotting.block_corner import render_block_corner, BLOCK_COLORS, STYLE, PAPER_STYLE
+from lumina.io.hdf5 import load_arrays
+from lumina.mock_validation.aggregate_plots import PARAMETER_LABELS
 
 
 def published_palettes():

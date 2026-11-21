@@ -8,13 +8,13 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from kappaccino.inference import search_split
+from lumina.inference import search_split
 import numpyro.distributions as dist
 
-from kappaccino import priors
-from kappaccino.config import LikelihoodConfig, SearchConfig
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.core.state import build_state
+from lumina import priors
+from lumina.config import LikelihoodConfig, SearchConfig
+from lumina.likelihood.evaluator import Evaluator
+from lumina.core.state import build_state
 from test_gp_knee import knee_config
 
 
