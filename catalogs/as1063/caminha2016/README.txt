@@ -28,7 +28,7 @@ confidence_levels.png
     Confidence levels of all free parameters in the strong lens modelling. The contours correspond to 68%, 95% and 99.7%.
 
 
-Converted on 2026-11-08 (kappaccino):
+Converted on 2026-11-08 (lumina):
 images.yaml    from A1063_obs_arcs_v11.dat by scripts/convert_lenstool_catalog.py: 22 systems, 60 images.  The commented
                rows (#3b, #11a-c, ...) are images the authors left out and are not converted.  Systems 50 and 51 have
                z = 0, Lenstool's free redshift: they cannot be fitted as they are.

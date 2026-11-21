@@ -10,11 +10,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from kappaccino.io import artifacts, store
-from kappaccino import pipeline
-from kappaccino.config import OutputsConfig, RuntimeConfig, SamplingConfig, SearchConfig
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.core.state import build_state
+from lumina.io import artifacts, store
+from lumina import pipeline
+from lumina.config import OutputsConfig, RuntimeConfig, SamplingConfig, SearchConfig
+from lumina.likelihood.evaluator import Evaluator
+from lumina.core.state import build_state
 
 
 def _fast(config):
@@ -82,9 +82,9 @@ def test_single_stage_end_to_end(synthetic_config, monkeypatch):
     assert {name for name, record in store.read_record(final, "run_summary")["modules"].items()
             if record["status"] == "done"} == {"fit", "images", "mass"}
 
-    # The outputs stage again on the saved run, fit module only (kappaccino outputs RUN --only fit): the
+    # The outputs stage again on the saved run, fit module only (lumina outputs RUN --only fit): the
     # saved fit numbers stay in run_summary.
-    from kappaccino.outputs.command import main as outputs_main
+    from lumina.outputs.command import main as outputs_main
     fit = store.read_record(final, "run_summary")["fit"]
     assert outputs_main([str(result.paths.root), "--only", "fit", "--fail-fast"]) == 0
     rerun = store.read_record(final, "run_summary")
@@ -104,8 +104,8 @@ def test_single_stage_end_to_end(synthetic_config, monkeypatch):
     assert drawn and macros
     for path in figures.glob("*.pdf"):
         path.unlink()
-    from kappaccino.outputs import saved_run
-    from kappaccino.reporting import draws as draws_module
+    from lumina.outputs import saved_run
+    from lumina.reporting import draws as draws_module
 
     def forbidden(*args, **kwargs):
         raise AssertionError("a render pass evaluated the lens")
@@ -154,7 +154,7 @@ def test_single_stage_end_to_end(synthetic_config, monkeypatch):
     assert record["bic"] == init_record["bic"] and np.isfinite(record["wbic"]["wbic"]) and record["wbic"]["draws"] == 20
     assert record["wbic"]["beta"] == pytest.approx(1.0 / np.log(record["wbic"]["n"]))
     assert (result.paths.final.artifacts / "wbic_draws.h5").is_file()
-    from kappaccino.inference.model_comparison import compare
+    from lumina.inference.model_comparison import compare
     assert compare([result.paths.root])["delta_wbic"].tolist() == [0.0]
     table = (result.paths.final.tables / "run_summary.txt").read_text()
     assert "Run summary" in table and "recovered / observed" in table and "total" in table
@@ -165,7 +165,7 @@ def test_single_stage_end_to_end(synthetic_config, monkeypatch):
 
 
 def test_far_field_barrier_is_finite_smooth_and_pushes_back(synthetic_config):
-    from kappaccino.core.state import with_member_classes
+    from lumina.core.state import with_member_classes
     state = build_state(synthetic_config)
     state = with_member_classes(state, np.asarray([0, 1], dtype=np.int32), {"exact_count": 2, "mandatory_count": 2})   # two far-field members
     evaluator = Evaluator(state)
@@ -196,7 +196,7 @@ def test_far_field_barrier_is_finite_smooth_and_pushes_back(synthetic_config):
 def test_gp_image_plane_model(synthetic_config):
     """The gp likelihood: sigma_gp and sigma_meas are its error scales, and the sources are the family
     conditional."""
-    from kappaccino.config import LikelihoodConfig
+    from lumina.config import LikelihoodConfig
     state = build_state(replace(synthetic_config, likelihood=LikelihoodConfig(likelihood_mode="gp_image_plane")).validate())
     evaluator = Evaluator(state, "gp_image_plane")
     names = [s.name for s in state.parameter_specs]

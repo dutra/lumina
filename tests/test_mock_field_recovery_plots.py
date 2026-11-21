@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 import numpy as np
 import pandas as pd
-from kappaccino.mock_validation.field_recovery_plots import plot_field_recovery
-from kappaccino.io.hdf5 import save_arrays
+from lumina.mock_validation.field_recovery_plots import plot_field_recovery
+from lumina.io.hdf5 import save_arrays
 
 
 def test_aggregate_field_recovery_uses_posterior_mean_and_mock_bins(tmp_path):

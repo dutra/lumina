@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 import numpy as np
 import pytest
-from kappaccino.mock_validation import aggregate_chains as plots
-from kappaccino.io.hdf5 import save_arrays
+from lumina.mock_validation import aggregate_chains as plots
+from lumina.io.hdf5 import save_arrays
 
 
 def test_chain_shape_rejects_incorrect_flat_order(tmp_path):

@@ -17,18 +17,18 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
-from kappaccino.io import artifacts
-from kappaccino.io.hdf5 import load_arrays, save_arrays
-from kappaccino.core.state import build_state, with_member_classes
-from kappaccino.core.model import convert_theta_to_latent
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.lens.cosmology import dpie_sigma0_factor_from_config
-from kappaccino.plotting.aperture_mass_histogram import render_histogram, aperture_masses
-from kappaccino.plotting.style import PAPER_STYLE
+from lumina.io import artifacts
+from lumina.io.hdf5 import load_arrays, save_arrays
+from lumina.core.state import build_state, with_member_classes
+from lumina.core.model import convert_theta_to_latent
+from lumina.likelihood.evaluator import Evaluator
+from lumina.lens.cosmology import dpie_sigma0_factor_from_config
+from lumina.plotting.aperture_mass_histogram import render_histogram, aperture_masses
+from lumina.plotting.style import PAPER_STYLE
 
 
 def render_plots(out,parametric,truth,grf,norms,valid,inside,summary,table):
-    plt.style.use(Path(__file__).resolve().parents[1]/'src/kappaccino/plotting/style.mplstyle');plt.rcParams.update(PAPER_STYLE)
+    plt.style.use(Path(__file__).resolve().parents[1]/'src/lumina/plotting/style.mplstyle');plt.rcParams.update(PAPER_STYLE)
     with PdfPages(out/'radius_histograms.pdf') as pdf:
         for label,select in [('all',valid),('image_hull',valid&inside)]:
             fig,axes=plt.subplots(3,3,figsize=(7.1,6.3),sharex=True,sharey=True)

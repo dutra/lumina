@@ -34,14 +34,14 @@ See {doc}`catalogs` for the converters (`convert_lenstool_catalog.py`, `convert_
 ## Regenerating figures from a saved run
 
 These scripts read a run directory and redraw one product without rerunning inference. They load the run with
-`kappaccino.outputs.saved_run.load_run`; `kappaccino outputs RUN --only MODULE` reruns whole output modules, and
-`kappaccino outputs RUN --render` draws the figures of every module again from the store
+`lumina.outputs.saved_run.load_run`; `lumina outputs RUN --only MODULE` reruns whole output modules, and
+`lumina outputs RUN --render` draws the figures of every module again from the store
 without evaluating the lens (see {doc}`outputs`). `compare_outputs.py RUN_A RUN_B` compares the outputs of two runs
 entry by entry and figure by figure (see {doc}`outputs`).
 
 | script | regenerates |
 |---|---|
-| `regenerate_outputs.py RUN [RUN ...] [--draws N] [--only A,B] [--skip C,D]` | every output of the final stage, over the reporting draws (one pass); `kappaccino outputs` for each run, plus `--catalogs` and `--ffsims-dir` |
+| `regenerate_outputs.py RUN [RUN ...] [--draws N] [--only A,B] [--skip C,D]` | every output of the final stage, over the reporting draws (one pass); `lumina outputs` for each run, plus `--catalogs` and `--ffsims-dir` |
 | `chain_traces.py RUN` | `<prefix>_chain_traces.pdf` and `chain_convergence.csv` |
 | `make_gp_illustrations.py RUN` | the GP diagnostics and shared-field maps |
 | `regenerate_cluster_mass_figure.py RUN --imaging jwst` | the cluster mass overview (JWST or HST) |
@@ -53,7 +53,7 @@ entry by entry and figure by figure (see {doc}`outputs`).
 | `regenerate_zeta_masses.py RUN [--draws N]` | the zeta masses and contrasts of the members and their two figures (Hera, Ares) |
 | `regenerate_member_diagnostics.py RUN [--draws N]` | the member and likelihood diagnostic suite |
 | `regenerate_scaling_relation.py RUN` | `scaling_relation.pdf` |
-| `python -m kappaccino.reporting.results_tex RUN/final` | `<prefix>_results.tex` |
+| `python -m lumina.reporting.results_tex RUN/final` | `<prefix>_results.tex` |
 
 Truth maps cached before the conditional GRF was added must be recomputed with `regenerate_truth_recovery.py` before
 regenerating the magnification figures that depend on them.

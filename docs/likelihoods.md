@@ -1,7 +1,7 @@
 # Likelihoods
 
 The data of a strong-lensing cluster model are the observed positions of multiple images. This page derives the
-probability of those positions given a lens model, the likelihood that kappaccino samples with NUTS. We start from the
+probability of those positions given a lens model, the likelihood that lumina samples with NUTS. We start from the
 lens equation for a single image ({ref}`§2 <sec-position-likelihood>`) and then extend the result to cluster members
 that may not belong to the cluster
 ({ref}`§3 <sec-membership>`) and to images whose family is unknown ({ref}`§4 <sec-uncertain-images>`). Section
@@ -328,7 +328,7 @@ of the uncertain images out of the likelihood, with the sources of the new famil
 NUTS samples the lens alone. The fit is configured with `PartitionConfig`,
 
 ```python
-from kappaccino.config import PartitionConfig
+from lumina.config import PartitionConfig
 
 config = replace(config, partition=PartitionConfig(catalog_path="uncertain_images.csv",
                                                    population_catalog_path="field_photometry.csv"))
@@ -676,8 +676,8 @@ a knee, because the longitudinal deflection correlation turns negative at 0.29 o
 `lambda_b_fixed_arcsec` holds the knee at one value instead. The production fits use the following settings.
 
 ```python
-from kappaccino.config import LikelihoodConfig
-from kappaccino.priors import truncated_lognormal
+from lumina.config import LikelihoodConfig
+from lumina.priors import truncated_lognormal
 
 grf_likelihood = LikelihoodConfig(
     likelihood_mode="gp_image_plane",

@@ -4,7 +4,7 @@ import numpy as np
 
 
 def evaluator(monkeypatch):
-    from kappaccino.lens import cosmology
+    from lumina.lens import cosmology
     monkeypatch.setattr(cosmology, 'dpie_sigma0_factor_from_config', lambda zl,z,c: z)
     e=SimpleNamespace(gp_knee=True, sigma_grf_index=0, gp_knee_spectrum='knee', state=SimpleNamespace(gp_blocks='all',z_lens=.3,
         gp_reference_redshift=2.,cosmo_config=None), gp_weights_per_family=np.array([3.]))
@@ -15,9 +15,9 @@ def evaluator(monkeypatch):
 def test_each_draw_gets_one_realization_of_the_shared_twin_field(monkeypatch):
     """A system-block run reports a field of its all-block twin, with the draw re-expressed for it; the realization of
     a draw is drawn once, from a generator fixed by the run seed and the posterior row, however far it is evaluated."""
-    from kappaccino.likelihood import grf_fields
-    from kappaccino.plotting import grf
-    from kappaccino.reporting import draws as reporting
+    from lumina.likelihood import grf_fields
+    from lumina.plotting import grf
+    from lumina.reporting import draws as reporting
     twin=evaluator(monkeypatch)
     run=evaluator(monkeypatch)
     run.state.gp_blocks='system'
@@ -44,7 +44,7 @@ def test_each_draw_gets_one_realization_of_the_shared_twin_field(monkeypatch):
 
 def test_observed_stretch_uses_the_jacobian_with_the_field():
     import pandas as pd
-    from kappaccino.plotting.mass_figure import arc_direction_table
+    from lumina.plotting.mass_figure import arc_direction_table
     # Parametric stretch is x, but the conditional mass field changes it to y.
     image=SimpleNamespace(image_labels=['a'],x_obs=np.array([0.]),y_obs=np.array([0.]),
                           family_index_per_image=np.array([0]),family_ids=('f',))
@@ -61,8 +61,8 @@ def test_observed_stretch_uses_the_jacobian_with_the_field():
 
 def test_latent_from_physical_reconstructs_gp_sources(monkeypatch):
     import jax.numpy as jnp
-    from kappaccino.core import model
-    from kappaccino.likelihood.grf_fields import latent_from_physical
+    from lumina.core import model
+    from lumina.likelihood.grf_fields import latent_from_physical
     monkeypatch.setattr(model, 'convert_theta_to_latent', lambda p,s:np.array(p,copy=True))
     e=SimpleNamespace(gp_knee=True,state=SimpleNamespace(parameter_specs=[],images=SimpleNamespace(
         source_x_param_index=np.array([1]),source_y_param_index=np.array([2]))),

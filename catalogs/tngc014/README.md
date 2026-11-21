@@ -13,7 +13,7 @@ Built on 2026-11-11 by `geometric_telescope/scripts/build_tngc014_mock.py`, chec
 |---|---|
 | `large/images.yaml` | observed catalog: 69 systems, 299 images, 362 positions with knots |
 | `large/members.yaml` | 246 members (245 + BCG), band F125W |
-| `large/priors.yaml`, `large/run.yaml` | the fit: one cluster halo, shear, the BCG off the relation, neutral member priors; `kappaccino catalogs/tngc014/large [--profile fast]` |
+| `large/priors.yaml`, `large/run.yaml` | the fit: one cluster halo, shear, the BCG off the relation, neutral member priors; `lumina catalogs/tngc014/large [--profile fast]` |
 | `data/tngc014/{kappa,gammax,gammay}_z9.fits` | the maps at z_s = 9 for the truth comparison (not tracked) |
 | `source/images_truth.yaml` | same systems with exact positions, every image and true redshifts |
 | `source/images_truth.csv` | one row per (system, knot, image): true and observed position, source position, z, mu, parity, kappa, shear, class, tied satellite |
@@ -22,7 +22,7 @@ Built on 2026-11-11 by `geometric_telescope/scripts/build_tngc014_mock.py`, chec
 
 ## Frame and cosmology
 
-Positions are offsets about (0, 0) in degrees, as for Hera and Ares. With `reference 3 0 0` the kappaccino offsets
+Positions are offsets about (0, 0) in degrees, as for Hera and Ares. With `reference 3 0 0` the lumina offsets
 are the map coordinates: x = -ra 3600, y = dec 3600 arcsec. The BCG is at (0, 0). Distance ratios use flat LCDM with
 H0 = 70 and Om0 = 0.3. The maps are 400" wide with 0.0977" pixels and scale with D_ds/D_s.
 
@@ -89,7 +89,7 @@ Small is a subset of medium, which is a subset of large. Medium retains every sm
 systems by class and coverage, then members by their deflection at the selected images. Entries are copied unchanged.
 The truth lens is identical for all three sizes; `source/` remains shared.
 
-Use `kappaccino catalogs/tngc014/medium --profile fast` for the medium fit.
+Use `lumina catalogs/tngc014/medium --profile fast` for the medium fit.
 The small and medium run files inherit from `large/`; there is no run file at the parent level.
 Rebuild medium with `scripts/build_tngc014_medium.py` using the existing lenstronomy interpreter.
 The original external mock and small builders predate this layout and must be pointed to `large/` before reuse.

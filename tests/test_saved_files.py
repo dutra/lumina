@@ -8,11 +8,11 @@ import numpy as np
 import numpyro.distributions as dist
 import pytest
 
-from kappaccino import priors
-from kappaccino.config import DPIEHaloConfig, LensClusterSolverConfig, MassSheetConfig, ShearHaloConfig
-from kappaccino.core.model import PosteriorResults
-from kappaccino.io import artifacts
-from kappaccino.io.hdf5 import load_arrays, save_arrays
+from lumina import priors
+from lumina.config import DPIEHaloConfig, LensClusterSolverConfig, MassSheetConfig, ShearHaloConfig
+from lumina.core.model import PosteriorResults
+from lumina.io import artifacts
+from lumina.io.hdf5 import load_arrays, save_arrays
 
 
 def test_config_round_trips_through_json(synthetic_config, tmp_path):

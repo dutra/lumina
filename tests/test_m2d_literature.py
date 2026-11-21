@@ -3,9 +3,9 @@ from dataclasses import replace
 import numpy as np
 import pandas as pd
 
-from kappaccino.config import TruthOutputConfig
-from kappaccino.diagnostics.truth_recovery import LITERATURE_RATIOS, annular_kappa_profile, literature_m2d_ratios, literature_ratios
-from kappaccino.plotting import plots
+from lumina.config import TruthOutputConfig
+from lumina.diagnostics.truth_recovery import LITERATURE_RATIOS, annular_kappa_profile, literature_m2d_ratios, literature_ratios
+from lumina.plotting import plots
 
 
 def test_literature_ratios_are_read_beside_the_truth_map_and_drawn(tmp_path):
@@ -36,7 +36,7 @@ def test_literature_ratios_are_read_beside_the_truth_map_and_drawn(tmp_path):
 
 def test_footprint_mean_ratios_shared_range():
     import numpy as np
-    from kappaccino.diagnostics.truth_recovery import footprint_mean_ratios, mean_ratio
+    from lumina.diagnostics.truth_recovery import footprint_mean_ratios, mean_ratio
     radius = np.geomspace(1.0, 200.0, 400)
     assert np.allclose(mean_ratio(radius, np.full(400, 1.02), 5.0, 50.0), (1.02, 0.02, 0.02))
     # Half the log range at 1.03 and half at 0.97: the mean ratio cancels, the rms does not.
@@ -54,7 +54,7 @@ def test_footprint_mean_ratios_shared_range():
 
 def test_footprint_mean_ratios_from_draws():
     import numpy as np
-    from kappaccino.diagnostics.truth_recovery import footprint_mean_ratios, ratio_draws_table
+    from lumina.diagnostics.truth_recovery import footprint_mean_ratios, ratio_draws_table
     radius = np.geomspace(1.0, 200.0, 100)
     profile = pd.DataFrame({"radius_arcsec": radius, "m2d_ratio_median": 1.0, "kappa_ratio_median": 1.0})
     # Four draws, each flat at 0.98, 0.99, 1.01, 1.02: per-draw rms 2, 1, 1, 2 per cent.
@@ -65,8 +65,8 @@ def test_footprint_mean_ratios_from_draws():
 
 
 def test_truth_recovery_reads_back_what_its_figures_draw(tmp_path):
-    from kappaccino.diagnostics.truth_recovery import load_truth_recovery, save_truth_recovery
-    from kappaccino.io import store
+    from lumina.diagnostics.truth_recovery import load_truth_recovery, save_truth_recovery
+    from lumina.io import store
     rng = np.random.default_rng(1)
     x, y = np.meshgrid(np.linspace(-1, 1, 5), np.linspace(-1, 1, 4))
     maps = {q: rng.normal(size=x.shape) for q in ("kappa", "abs_mu", "detA", "mu")}

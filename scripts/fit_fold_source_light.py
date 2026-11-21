@@ -12,10 +12,10 @@ import os
 from pathlib import Path
 import time
 
-os.environ.setdefault('NUMBA_CACHE_DIR', '/tmp/numba-kappaccino')
-os.environ.setdefault('MPLCONFIGDIR', '/tmp/matplotlib-kappaccino')
+os.environ.setdefault('NUMBA_CACHE_DIR', '/tmp/numba-lumina')
+os.environ.setdefault('MPLCONFIGDIR', '/tmp/matplotlib-lumina')
 from _covariance_plot_cli import ROOT
-from kappaccino.outputs.saved_run import load_run
+from lumina.outputs.saved_run import load_run
 import numpy as np
 import jax
 jax.config.update('jax_enable_x64', True)
@@ -328,8 +328,8 @@ def main():
         p.error('Use only one of --estimate-noise, --noise, --error')
     if args.noise is not None and (args.noise <= 0 or args.error is not None):
         p.error('--noise must be positive and cannot be combined with --error')
-    from kappaccino.io.image_catalog import load_image_catalog
-    from kappaccino.io.hdf5 import load_arrays, save_arrays
+    from lumina.io.image_catalog import load_image_catalog
+    from lumina.io.hdf5 import load_arrays, save_arrays
     config, state, evaluator, posterior, _ = load_run(args.run_directory)
     catalog = load_image_catalog(config.model.image_constraints.catalog_path)
     rows = catalog[catalog.system_id.eq(args.system) & catalog.image_id.isin(args.images)]
@@ -424,8 +424,8 @@ def main():
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
-        from kappaccino.plotting.style import PAPER_STYLE
-        with plt.rc_context(fname=ROOT/'src/kappaccino/plotting/style.mplstyle',rc=PAPER_STYLE):
+        from lumina.plotting.style import PAPER_STYLE
+        with plt.rc_context(fname=ROOT/'src/lumina/plotting/style.mplstyle',rc=PAPER_STYLE):
             fig, axes=plt.subplots(1,3,figsize=(10,3.5),layout='constrained')
             lo,hi=np.nanpercentile(data[mask],[2,99])
             ys,xs=np.nonzero(mask);view=(slice(max(0,ys.min()-8),min(data.shape[0],ys.max()+9)),slice(max(0,xs.min()-8),min(data.shape[1],xs.max()+9)))
@@ -466,7 +466,7 @@ def main():
         key.update(str((args.parametric_only,args.gp_displacement,'gp-warp-v1')).encode())
         for path in [Path(args.run_directory)/'final/artifacts/config.json',
                      Path(args.run_directory)/'init/artifacts/state.json',
-                     ROOT/'src/kappaccino/likelihood/evaluator.py',ROOT/'src/kappaccino/likelihood/gp_knee.py']:
+                     ROOT/'src/lumina/likelihood/evaluator.py',ROOT/'src/lumina/likelihood/gp_knee.py']:
             if path.exists(): key.update(path.read_bytes())
         key.update(str((z,family_indices)).encode())
         for path in [Path(config.model.image_constraints.catalog_path),Path(args.run_directory)/'init/artifacts/classification.json']:
@@ -613,8 +613,8 @@ def main():
             if unit.lower() in ['njy','ujy','jy']: source_image=source_image/scale**2
             fits.writeto(out/'best_source.fits',source_image,sh,overwrite=True)
             import matplotlib.pyplot as plt
-            from kappaccino.plotting.style import PAPER_STYLE
-            with plt.rc_context(fname=ROOT/'src/kappaccino/plotting/style.mplstyle',rc=PAPER_STYLE):
+            from lumina.plotting.style import PAPER_STYLE
+            with plt.rc_context(fname=ROOT/'src/lumina/plotting/style.mplstyle',rc=PAPER_STYLE):
                 fig,ax=plt.subplots(figsize=(4,3.6),layout='constrained')
                 center=(cmin+cmax)/2
                 im=ax.imshow(source_image,origin='lower',extent=[cmin[0]-center[0],cmax[0]-center[0],cmin[1]-center[1],cmax[1]-center[1]],cmap='viridis')

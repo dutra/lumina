@@ -13,8 +13,8 @@ def main():
     parser.add_argument("run_directory", type=Path)
     parser.add_argument("--output-dir", type=Path, help="Optional destination for figures/ and tables/")
     args = parser.parse_args()
-    from kappaccino.io.artifacts import load_posterior
-    from kappaccino.plotting.chain_traces import render_chain_traces, save_chain_traces
+    from lumina.io.artifacts import load_posterior
+    from lumina.plotting.chain_traces import render_chain_traces, save_chain_traces
     run = args.run_directory
     specs = [SimpleNamespace(**s) for s in json.loads((run / "init/artifacts/state.json").read_text())["parameter_specs"]]
     config = json.loads((run / "final/artifacts/config.json").read_text())

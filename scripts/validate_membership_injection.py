@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 
 import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
-from kappaccino.outputs.saved_run import load_run
+from lumina.outputs.saved_run import load_run
 
 DISTANCES = (1.0, 2.0, 4.0, 8.0)          # arcsec to the nearest image
 MAGNITUDES = (19.0, 20.5, 22.0)           # in the scaling-relation band
@@ -78,9 +78,9 @@ def _doubted_members(state, xy, exact_ids):
 def _case(config, base_state, draws, members_doc, population, exact_ids, uncertain_id, prior, workdir, label, log):
     import jax
     import jax.numpy as jnp
-    from kappaccino.likelihood.evaluator import Evaluator
-    from kappaccino.io.member_catalog import write_member_catalog
-    from kappaccino.core.state import build_state, with_member_classes
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.io.member_catalog import write_member_catalog
+    from lumina.core.state import build_state, with_member_classes
     catalog = write_member_catalog(workdir / f'members_{label}.yaml', members_doc['members'], band=members_doc['band'],
                                    kinematics_sources=members_doc.get('kinematics_sources'))
     members = replace(config.members, membership='marginalize', membership_default_probability=1.0, membership_max_enumerated=1,
@@ -116,8 +116,8 @@ def _figure(table, path, prior):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from importlib.resources import files
-    from kappaccino.plotting.style import PAPER_STYLE
-    plt.style.use(str(files('kappaccino') / 'plotting' / 'style.mplstyle'))
+    from lumina.plotting.style import PAPER_STYLE
+    plt.style.use(str(files('lumina') / 'plotting' / 'style.mplstyle'))
     plt.rcParams.update(PAPER_STYLE)
     fig, ax = plt.subplots(figsize=(3.5, 2.8))
     for kind, color, marker in (('interloper', 'tab:red', 'o'), ('member', 'tab:blue', 's')):
@@ -143,7 +143,7 @@ def main():
     parser.add_argument('--seed', type=int, default=1)
     args = parser.parse_args()
     import pandas as pd
-    from kappaccino.io.sky import offsets_to_radec
+    from lumina.io.sky import offsets_to_radec
     output = Path(args.output)
     workdir = output / 'catalogs'
     workdir.mkdir(parents=True, exist_ok=True)

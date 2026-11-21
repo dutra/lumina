@@ -1,6 +1,6 @@
 import numpy as np
 
-from kappaccino.plotting.zeta_masses import aperture_sums, pixel_weights, zeta_and_contrast
+from lumina.plotting.zeta_masses import aperture_sums, pixel_weights, zeta_and_contrast
 
 
 def test_pixel_weights_cover_the_circle_area():
@@ -22,7 +22,7 @@ def test_zeta_removes_a_uniform_sheet_and_keeps_a_point_mass():
 
 def test_rebinned_grid_holds_block_means_at_block_centres():
     from astropy.wcs import WCS
-    from kappaccino.plotting.zeta_masses import rebinned
+    from lumina.plotting.zeta_masses import rebinned
     wcs = WCS(naxis=2); wcs.wcs.ctype = ['RA---TAN', 'DEC--TAN']; wcs.wcs.crval = [10., -5.]
     wcs.wcs.crpix = [101.3, 57.]; wcs.wcs.cdelt = [-.1/3600, .1/3600]
     values = np.random.default_rng(0).normal(size=(201, 200))
@@ -36,7 +36,7 @@ def test_rebinned_grid_holds_block_means_at_block_centres():
 
 def test_the_cache_keeps_tables_with_list_cells(tmp_path):
     import pandas as pd
-    from kappaccino.plotting import zeta_masses as zm
+    from lumina.plotting import zeta_masses as zm
     table = pd.DataFrame({'member_id': ['a', 'b'], 'kinematics': [[], [1.0]], 'truth_zeta_msun': [1.0, 2.0]})
     model = {'full': {'zeta': np.ones((2, 2)), 'contrast': np.zeros((2, 2))}}
     zm.save_cache(tmp_path, {'10kpc': (table, model)}, 'key')

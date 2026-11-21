@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.reporting.results_tex import command_prefix, duration, write_run_results, write_mock_results
-from kappaccino.io import store
-from kappaccino.io.hdf5 import save_arrays
+from lumina.reporting.results_tex import command_prefix, duration, write_run_results, write_mock_results
+from lumina.io import store
+from lumina.io.hdf5 import save_arrays
 
 
 @pytest.mark.parametrize('name,expected', [('ares','Ares'), ('hera','Hera'), ('MJ0416','MJZeroFourOneSix'), ('as1063','ASOneZeroSixThree'), ('cluster-2','ClusterTwo')])
@@ -144,7 +144,7 @@ def test_mock_export(tmp_path):
 
 
 def test_member_table_uses_joint_deviation_draws(tmp_path):
-    from kappaccino.reporting.results_tex import m0416_table_metrics, interval
+    from lumina.reporting.results_tex import m0416_table_metrics, interval
     final = tmp_path / 'final'
     (final / 'tables').mkdir(parents=True)
     (final / 'artifacts').mkdir()
@@ -211,7 +211,7 @@ def test_error_budget_adds_the_scales_in_quadrature_per_draw(tmp_path):
 
 def test_halo_table_macros_and_table(tmp_path):
     """A sampled parameter gives its prior and posterior, a fixed one its value; the cut radius is excess plus core."""
-    from kappaccino.reporting.results_tex import halo_table_metrics, interval, write_halo_table
+    from lumina.reporting.results_tex import halo_table_metrics, interval, write_halo_table
     final = tmp_path / 'final'
     (final / 'artifacts').mkdir(parents=True)
     (tmp_path / 'init/artifacts').mkdir(parents=True)
@@ -242,7 +242,7 @@ def test_halo_table_macros_and_table(tmp_path):
 
 def test_macros_from_results_h5(tmp_path):
     """The macros of a run whose tables and records are in final/results.h5."""
-    from kappaccino.io import store
+    from lumina.io import store
     tables = {'posterior_image_residual_draws': pd.DataFrame({'draw_index': [0, 0, 1, 1], 'recovered': [True, False, True, True],
                                                               'family_id': ['1', '1', '1', '1'],
                                                               'image_residual_arcsec': [.3, np.nan, .4, .6]}),

@@ -17,12 +17,12 @@ from scipy.special import jv
 from conftest import synthetic_cluster_config, write_offset_catalog
 import numpyro.distributions as dist
 
-from kappaccino.likelihood import gp_knee
-from kappaccino import priors
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.io.image_catalog import write_image_catalog
-from kappaccino.io.sky import offsets_to_radec
-from kappaccino.core.state import build_state
+from lumina.likelihood import gp_knee
+from lumina import priors
+from lumina.likelihood.evaluator import Evaluator
+from lumina.io.image_catalog import write_image_catalog
+from lumina.io.sky import offsets_to_radec
+from lumina.core.state import build_state
 from test_gp_image_plane import big_config, fold_config, set_scale
 
 BLOCKS = ("family", "system", "all")
@@ -274,8 +274,8 @@ def test_critical_line_sweeping_across_an_image_keeps_the_target_smooth(tmp_path
 def test_fold_pair_in_a_two_knot_system_survives_a_displaced_source(tmp_path):
     """Knot A is a 4 mas fold pair.  With its source sampled four conditional sigmas off the centroid, the lens alone can
     lose the pair; the lens plus the GP mean deflection keeps both images for every direction of the offset."""
-    from kappaccino.diagnostics.image_recovery import predictions_at
-    from kappaccino.diagnostics.exact_images import ExactImageSolver
+    from lumina.diagnostics.image_recovery import predictions_at
+    from lumina.diagnostics.exact_images import ExactImageSolver
     config, _ = two_knot_config(tmp_path, depth=0.004)
     # A marginal toy: the (4, 4) offset loses one image when the spectrum's long end moves.  The test is about the
     # mean-deflection mechanism, so it keeps the 100" range and the short knee prior it was written for.
@@ -344,7 +344,7 @@ def test_block_whitening_and_gaussian_term_equal_the_direct_formulas(tmp_path):
     """The source conditional's Cholesky factor from the reversed precision equals chol(P^-1), and the Gaussian term from
     the whitening's solves (L^-1 b - L^-1 J beta) equals the direct one (residual per slot, then a triangular solve)."""
     from jax.scipy.linalg import solve_triangular
-    from kappaccino.likelihood import gp_image_plane as gp
+    from lumina.likelihood import gp_image_plane as gp
     config, _ = two_knot_config(tmp_path)
     state = build_state(knee_config(config, "system"))
     evaluator = Evaluator(state, "gp_image_plane")

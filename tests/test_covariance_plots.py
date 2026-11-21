@@ -1,6 +1,6 @@
 from dataclasses import replace
 import json
-from kappaccino.io import store
+from lumina.io import store
 from types import SimpleNamespace
 
 import jax
@@ -10,9 +10,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.plotting.covariance import render_covariance_plots, save_covariance_errors
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.core.state import build_state
+from lumina.plotting.covariance import render_covariance_plots, save_covariance_errors
+from lumina.likelihood.evaluator import Evaluator
+from lumina.core.state import build_state
 
 
 @pytest.mark.parametrize('selection', [True, False])
@@ -28,7 +28,7 @@ def test_covariance_outputs_with_one_draw(synthetic_config, tmp_path, selection)
                                 log_prob=np.arange(40.), grouped_samples=samples.reshape(2, 20, -1))
     paths = SimpleNamespace(figures=tmp_path / 'figures', tables=tmp_path / 'tables')
     style = dict(plt.rcParams)
-    from kappaccino.reporting.draws import reporting_draws
+    from lumina.reporting.draws import reporting_draws
     save_covariance_errors(config, state, reporting_draws(config, evaluator, posterior), paths)
     outputs = render_covariance_plots(config, state, posterior, paths, log=lambda _: None)
     assert len(outputs) == 2 and all(p.is_file() for p in outputs)
@@ -50,8 +50,8 @@ def test_covariance_outputs_with_one_draw(synthetic_config, tmp_path, selection)
 
 
 def test_normal_output_calls_covariance_suite(monkeypatch, synthetic_config, tmp_path):
-    from kappaccino.plotting import covariance
-    from kappaccino.reporting import outputs
+    from lumina.plotting import covariance
+    from lumina.reporting import outputs
     class ReachedCovariance(Exception):
         pass
     def reached(*args, **kwargs):
@@ -61,7 +61,7 @@ def test_normal_output_calls_covariance_suite(monkeypatch, synthetic_config, tmp
     posterior = SimpleNamespace(samples=np.zeros((1, 1)), physical=np.ones((1, 1)), log_prob=np.zeros(1))
     evaluator = SimpleNamespace(physical=lambda p: p)
     paths = SimpleNamespace(tables=tmp_path/'tables', figures=tmp_path/'figures', root=tmp_path)
-    from kappaccino.reporting import results_tex
+    from lumina.reporting import results_tex
     monkeypatch.setattr(results_tex, 'write_run_results', lambda *a, **k: None)
     summary = outputs.write_outputs(synthetic_config, state, evaluator, posterior, {}, paths, only=('fit',), log=lambda _: None)
     assert summary['modules']['fit']['steps']['covariance']['error'].startswith('ReachedCovariance')

@@ -21,10 +21,10 @@ def main():
     import jax
     jax.config.update('jax_enable_x64', True)
     import numpy as np
-    from kappaccino.io import artifacts
-    from kappaccino.likelihood.evaluator import Evaluator
-    from kappaccino.core.state import build_state, with_member_classes
-    from kappaccino.plotting.members import render_member_diagnostics, save_member_diagnostics
+    from lumina.io import artifacts
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.core.state import build_state, with_member_classes
+    from lumina.plotting.members import render_member_diagnostics, save_member_diagnostics
 
     run = args.run_directory.resolve()
     init = run / 'init/artifacts'

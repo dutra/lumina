@@ -1,4 +1,4 @@
-# How the TNG-Cluster zoom 014 mock is fitted.  kappaccino catalogs/tngc014/large [--profile fast] [--profile cosmography]
+# How the TNG-Cluster zoom 014 mock is fitted.  lumina catalogs/tngc014/large [--profile fast] [--profile cosmography]
 name: tngc014
 priors: priors.yaml
 

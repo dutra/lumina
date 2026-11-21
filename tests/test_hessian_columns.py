@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from kappaccino.inference.sampling import hessian_columns
+from lumina.inference.sampling import hessian_columns
 
 
 def _function(x):

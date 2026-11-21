@@ -4,8 +4,8 @@ import jax.numpy as jnp
 
 jax.config.update("jax_enable_x64", True)
 
-from kappaccino.core.model import ParameterSpec
-from kappaccino.inference.sampling import bound_pressure, lanczos_extremes, slow_modes
+from lumina.core.model import ParameterSpec
+from lumina.inference.sampling import bound_pressure, lanczos_extremes, slow_modes
 
 
 def _spec(name, prior=None):

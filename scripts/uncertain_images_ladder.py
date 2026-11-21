@@ -7,7 +7,7 @@ and fits three models.
 - ``full``: every family trusted (once per cluster).
 - ``<case>_ignore``: the trusted families only.
 - ``<case>_groups``: the trusted families plus the uncertain images, summed over their partitions
-  (``kappaccino.partition.groups``).  The library of groups is built at the ``ignore`` optimum, the lens is refit with
+  (``lumina.partition.groups``).  The library of groups is built at the ``ignore`` optimum, the lens is refit with
   the library summed and the library rebuilt (``PartitionConfig.library_refits`` times), then the lens is fit once more.
 
 Each fit is the init's stage A: the large-scale halos, shear, sources and the member scaling relation from ``--starts``
@@ -47,11 +47,11 @@ LIKELIHOODS = {"grf_gp": ("gp_image_plane", "knee"), "gp_image_plane": ("gp_imag
 
 def lens_fit(config, *, starts: int, seed: int, log) -> dict:
     """Stage A from prior starts: the state, evaluator, optimum ``theta``, its log posterior and the active sites."""
-    from kappaccino.core.state import build_state
-    from kappaccino.inference.search import multistart_map, prior_starts
-    from kappaccino.inference.search_split import STAGE_A_INACTIVE
-    from kappaccino.likelihood.evaluator import Evaluator
-    from kappaccino.pipeline import classify
+    from lumina.core.state import build_state
+    from lumina.inference.search import multistart_map, prior_starts
+    from lumina.inference.search_split import STAGE_A_INACTIVE
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.pipeline import classify
 
     mode = config.likelihood.likelihood_mode
     state = build_state(config)
@@ -69,8 +69,8 @@ def lens_fit(config, *, starts: int, seed: int, log) -> dict:
 def groups_fit(config, base: dict, *, seed: int, log) -> dict:
     """The uncertain images added at the trusted-only optimum ``base``, the library refit and rebuilt, and a last fit of
     the lens with the final library."""
-    from kappaccino.inference.search import multistart_map
-    from kappaccino.partition import add_uncertain_images
+    from lumina.inference.search import multistart_map
+    from lumina.partition import add_uncertain_images
 
     def fit(state, evaluator, theta):
         return multistart_map(state, evaluator, np.asarray(theta, dtype=float)[None], config.search, method="lbfgs", seed=seed,
@@ -85,9 +85,9 @@ def groups_fit(config, base: dict, *, seed: int, log) -> dict:
 
 def write_fit(config, result: dict, final: Path, *, draws: int, seed: int, seconds: float, log) -> None:
     """The artifacts of one best fit: the configuration, the optimum, the partition at the optimum and the truth maps."""
-    from kappaccino.diagnostics.truth_recovery import compute_truth_recovery
-    from kappaccino.io import artifacts
-    from kappaccino.partition import write_partition_outputs
+    from lumina.diagnostics.truth_recovery import compute_truth_recovery
+    from lumina.io import artifacts
+    from lumina.partition import write_partition_outputs
     stage = SimpleNamespace(artifacts=final / "artifacts", fits=final / "fits", tables=final / "tables")
     for directory in vars(stage).values():
         directory.mkdir(parents=True, exist_ok=True)
@@ -116,10 +116,10 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     sys.path[:0] = [str(ROOT / "src")]
-    from kappaccino.cpu_runtime import configure_cpu_runtime
+    from lumina.cpu_runtime import configure_cpu_runtime
     configure_cpu_runtime(1, "sequential")            # before the run files build their priors (and start JAX)
-    from kappaccino.run_files import load_run
-    from kappaccino.pipeline import RunLog
+    from lumina.run_files import load_run
+    from lumina.pipeline import RunLog
     root = ROOT / "results" / args.campaign / args.cluster.lower()
     root.mkdir(parents=True, exist_ok=True)
 

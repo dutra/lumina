@@ -1,7 +1,7 @@
 import json
 import pytest
 
-from kappaccino.mock_validation.aggregate_plots import load_campaign
+from lumina.mock_validation.aggregate_plots import load_campaign
 
 
 def test_completed_selection_does_not_shrink_when_first_mock_converges(tmp_path):
@@ -40,7 +40,7 @@ def test_aggregate_rechecks_saved_verdict_at_current_cut(tmp_path):
 def test_correlated_error_parameters_in_aggregate_figures(tmp_path):
     import pandas as pd
     from types import SimpleNamespace
-    from kappaccino.mock_validation import aggregate_plots as plots
+    from lumina.mock_validation import aggregate_plots as plots
 
     names = ['images.sigma_grf', 'images.lambda_b', 'images.gp_knee_gamma',
              'images.sigma_gp', 'images.ell_gp', 'images.sigma_meas']
@@ -67,7 +67,7 @@ def test_parameter_recovery_figure_fits_an_apj_page(tmp_path):
     import pandas as pd
     from types import SimpleNamespace
     from matplotlib.backends.backend_pdf import PdfPages  # noqa: F401  (the PDF backend must be importable)
-    from kappaccino.mock_validation import aggregate_plots as plots
+    from lumina.mock_validation import aggregate_plots as plots
 
     names = [n for n in plots.PAPER_PARAMETERS if not n.endswith(("grf2", "lambda_b2", "beta_low"))]
     names += ["source.1.beta_x", "source.1.beta_y", "source.2.beta_x", "source.2.beta_y"]
@@ -99,7 +99,7 @@ def test_halo_aperture_uses_inside_radius_and_preserves_unknown_coverage():
     import numpy as np
     import pandas as pd
     from types import SimpleNamespace
-    from kappaccino.mock_validation.aggregate_plots import halo_aperture_parameters, coverage_table
+    from lumina.mock_validation.aggregate_plots import halo_aperture_parameters, coverage_table
     rows = [dict(seed=1, component='halo', radius_kpc=r, outer_image_radius_kpc=255,
                  truth_m2d_msun=1e14, model_q16=8e13, model_q50=1.01e14, model_q84=1.2e14)
             for r in (100, 230, 280)]

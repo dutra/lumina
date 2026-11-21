@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import fit_arc_source as fas  # noqa: E402  (sets up paths, x64 and the working directory)
 from predict_counter_images import SkyPositions, draw_lenses, lens_at, stamp_rgb  # noqa: E402
-from kappaccino.io.hdf5 import save_arrays  # noqa: E402
+from lumina.io.hdf5 import save_arrays  # noqa: E402
 
 jnp, np, pd, cutouts = fas.jnp, fas.np, fas.pd, fas.cutouts
 

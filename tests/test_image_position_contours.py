@@ -1,13 +1,13 @@
 from types import SimpleNamespace
 import pytest
-from kappaccino.io import store
+from lumina.io import store
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
-from kappaccino.diagnostics import position_contours as ipc
-from kappaccino.core.model import FamilyData
-from kappaccino.diagnostics.exact_images import ExactImageSolver
-from kappaccino.io.hdf5 import load_arrays, save_arrays
+from lumina.diagnostics import position_contours as ipc
+from lumina.core.model import FamilyData
+from lumina.diagnostics.exact_images import ExactImageSolver
+from lumina.io.hdf5 import load_arrays, save_arrays
 
 
 def test_contour_positions_are_predicted_observed_for_catalog_images_and_true_for_extras(tmp_path):
@@ -36,7 +36,7 @@ def test_contour_positions_are_predicted_observed_for_catalog_images_and_true_fo
     np.testing.assert_allclose(data['extra_true'][:,0],[[10.3,.1],[9.8,-.1]])
     np.testing.assert_array_equal(data['draw_indices'],[5,7])
     # The table is saved as it is: the family ids of the extra images are strings, not objects.
-    from kappaccino.io.hdf5 import save_arrays
+    from lumina.io.hdf5 import save_arrays
     assert data['extra_family_ids'].dtype.kind=='U'
     save_arrays(tmp_path/'positions.h5',**data)
 
@@ -58,7 +58,7 @@ def test_gaussian_contour_probabilities_and_no_covariance_fallback():
 
 def test_overview_contours_have_tiny_catalog_crosses(monkeypatch):
     import matplotlib.pyplot as plt
-    from kappaccino.plotting import mass_figure as mf
+    from lumina.plotting import mass_figure as mf
     monkeypatch.setattr(mf.cutouts,'rgb_cutout',lambda *a:np.ones((16,16,3)))
     monkeypatch.setattr(mf,'aligned_rgb',lambda rgb,*a:rgb)
     geometry=dict(resolution=16,xlim=(-10.,10.),ylim=(-10.,10.),center_xy=(0.,0.),center=None,size=20.)

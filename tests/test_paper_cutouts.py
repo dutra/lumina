@@ -1,13 +1,13 @@
 from dataclasses import asdict
 from types import SimpleNamespace as NS
 import json
-from kappaccino.io import store
+from lumina.io import store
 
 import numpy as np
 import pytest
 
-from kappaccino.plotting import paper_cutouts as pc
-from kappaccino.config import RGBOutputConfig
+from lumina.plotting import paper_cutouts as pc
+from lumina.config import RGBOutputConfig
 
 
 NO_CRITICAL = dict(entry=None, index=[])

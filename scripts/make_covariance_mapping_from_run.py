@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import make_covariance_revision as m
-from kappaccino.io.hdf5 import load_arrays
+from lumina.io.hdf5 import load_arrays
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('run_directory',type=Path);p.add_argument('--image',default='K1A.a');args=p.parse_args()
@@ -29,7 +29,7 @@ def main():
         l=float(row.singular_value_best);total=np.sqrt((sm**2+sh**2)*l*l+effective**2)
         if row.plane=='image':total/=l
         errors.append(abs(total-row.total_arcsec));np.testing.assert_allclose(total,row.total_arcsec,rtol=1e-11,atol=1e-12)
-    m.OUT.mkdir(parents=True,exist_ok=True);m.plt.style.use(m.ROOT/'src/kappaccino/plotting/style.mplstyle');m.plt.rcParams.update(m.PAPER_STYLE)
+    m.OUT.mkdir(parents=True,exist_ok=True);m.plt.style.use(m.ROOT/'src/lumina/plotting/style.mplstyle');m.plt.rcParams.update(m.PAPER_STYLE)
     fig=m.mapping(sm=sm,sa=sa,sh=sh,lt=lt,lr=lr,angle_deg=angle,floor=floor)
     fig.savefig(m.OUT/'covariance_local_mapping.pdf');m.plt.close(fig)
     provenance=dict(run=str(run),draw=best,selection='maximum saved log_prob',image=args.image,z_source=float(image.z_source),

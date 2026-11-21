@@ -10,14 +10,14 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize, LinearSegmentedColormap
 from matplotlib.lines import Line2D
 import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
-from kappaccino.outputs.saved_run import load_run
-from kappaccino.diagnostics.truth_recovery import load_truth_fits, grid_arcsec
-from kappaccino.io.hdf5 import load_arrays, save_arrays
-from kappaccino.plotting.style import PAPER_STYLE
+from lumina.outputs.saved_run import load_run
+from lumina.diagnostics.truth_recovery import load_truth_fits, grid_arcsec
+from lumina.io.hdf5 import load_arrays, save_arrays
+from lumina.plotting.style import PAPER_STYLE
 
 
 def render(data, images, path):
-    plt.style.use(Path(__file__).resolve().parents[1]/'src/kappaccino/plotting/style.mplstyle')
+    plt.style.use(Path(__file__).resolve().parents[1]/'src/lumina/plotting/style.mplstyle')
     plt.rcParams.update(PAPER_STYLE)
     cmap=LinearSegmentedColormap.from_list('cropped_RdBu',plt.get_cmap('RdBu_r')(np.linspace(.25,1,768)),N=768)
     cmap.set_bad('#e8e8e8');norm=Normalize(-1,2,clip=True)
@@ -60,8 +60,8 @@ def main():
     images=pd.read_csv(final/'tables/image_fit_quality.csv')
     if not a.render_only:
         config,state,evaluator,posterior,paths=load_run(a.run)
-        from kappaccino.likelihood.grf_fields import shared_field_evaluator
-        from kappaccino.reporting.draws import reporting_draws
+        from lumina.likelihood.grf_fields import shared_field_evaluator
+        from lumina.reporting.draws import reporting_draws
         if shared_field_evaluator(evaluator) is None:
             raise ValueError('A single cluster field requires a knee mass field')
         # The reporting draws and grid of compute_truth_recovery; each map is the per-pixel median over the draws, with

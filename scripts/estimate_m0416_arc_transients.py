@@ -16,10 +16,10 @@ SCALE=5.340068651570361
 
 def maps(run, system, step, out):
     import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
-    from kappaccino.outputs.saved_run import load_run
+    from lumina.outputs.saved_run import load_run
     config,state,evaluator,posterior,paths=load_run(run)
-    from kappaccino.plotting.fold_pairs import load_fold_data
-    from kappaccino.io.hdf5 import load_arrays, save_arrays
+    from lumina.plotting.fold_pairs import load_fold_data
+    from lumina.io.hdf5 import load_arrays, save_arrays
     data=load_fold_data(paths.tables)
     s=next(s for s in data['systems'] if s['system_id']==system)
     knots=np.asarray(s['observed'])

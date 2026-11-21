@@ -1,5 +1,5 @@
 # How MACS J0416 is fitted with the CANUCS gold catalog: the settings of ../bergamini2023/run.yaml.
-# kappaccino catalogs/m0416/canucs2025 [--profile fast] [--profile jwst]
+# lumina catalogs/m0416/canucs2025 [--profile fast] [--profile jwst]
 extends: ../bergamini2023/run.yaml
 name: m0416_canucs2025
 priors: priors.yaml
@@ -8,7 +8,7 @@ outputs:
   rgb:
     # Proposed associations (counterimages of K66, K67, K20, weaker K28, K34, K115; a new family A at geometric
     # z = 1.385), drawn only in the additional RGB candidate map.
-    candidate_catalog_path: ../../../src/kappaccino/data/m0416_candidates.json
+    candidate_catalog_path: ../../../src/lumina/data/m0416_candidates.json
 
 profiles:
   # Cosmography: Om0 and w0 of flat wCDM sampled with the lens (priors_cosmography.yaml).

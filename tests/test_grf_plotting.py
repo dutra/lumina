@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 import numpy as np
 import jax.numpy as jnp
-from kappaccino.likelihood import gp_knee
-from kappaccino.plotting.grf import SmoothPlotDeflection
+from lumina.likelihood import gp_knee
+from lumina.plotting.grf import SmoothPlotDeflection
 
 
 def toy_field(monkeypatch,modes=()):
@@ -67,7 +67,7 @@ def test_radial_refinement_converges_to_analytic_potential_kernel(monkeypatch):
 
 
 def test_wide_plot_extends_tables_without_changing_conditioning():
-    from kappaccino.plotting.grf import display_tables
+    from lumina.plotting.grf import display_tables
     tables=gp_knee.knee_tables(r_max=2.,r_step=.05,lam_min=1.,lam_max=4.,n_lam=4,
         scale_min=.5,scale_max=10.,gamma=4.)
     base=SimpleNamespace(gp_tables=tables)
@@ -81,7 +81,7 @@ def test_wide_plot_extends_tables_without_changing_conditioning():
 
 def _toy_conditioning(modes,seed=0):
     """Five images of one block with unequal weights, data covariance C = W K_r W + noise^2, and some data."""
-    from kappaccino.plotting.grf import image_field_covariance
+    from lumina.plotting.grf import image_field_covariance
     rng=np.random.default_rng(seed)
     tables=gp_knee.knee_tables(r_max=12.,r_step=.05,lam_min=1.,lam_max=8.,n_lam=4,scale_min=.5,scale_max=40.,gamma=4.)
     xy=rng.uniform(-3,3,(5,2));weights=np.array([1.,.8,1.2,1.,.9]);sigma,lam,noise=.3,4.,.05
@@ -103,7 +103,7 @@ def _toy_conditioning(modes,seed=0):
 
 
 def _realizations(toy,points,modes,count):
-    from kappaccino.plotting.grf import FieldRealization,draw_field
+    from lumina.plotting.grf import FieldRealization,draw_field
     rng=np.random.default_rng(11)
     fields=[]
     for _ in range(count):
@@ -144,7 +144,7 @@ def test_realizations_with_low_order_modes_removed_match_the_projected_covarianc
 
 
 def test_a_realization_is_fixed_by_its_generator_and_its_jacobian_is_the_gradient_of_its_deflection():
-    from kappaccino.plotting.grf import FieldRealization,draw_field
+    from lumina.plotting.grf import FieldRealization,draw_field
     modes=('translation','convergence','shear')
     toy=_toy_conditioning(modes)
     build=lambda:FieldRealization(toy['layout'],toy['tables'],draw_field(toy['layout'],toy['tables'],toy['cholesky'],toy['v'],toy['sigma'],

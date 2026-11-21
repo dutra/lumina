@@ -81,8 +81,8 @@ def main():
     inside = cut_weight > 0
 
     from cmcrameri import cm
-    from kappaccino.plotting.style import PAPER_STYLE
-    plt.style.use(Path(__file__).resolve().parents[1]/'src/kappaccino/plotting/style.mplstyle')
+    from lumina.plotting.style import PAPER_STYLE
+    plt.style.use(Path(__file__).resolve().parents[1]/'src/lumina/plotting/style.mplstyle')
     plt.rcParams.update(PAPER_STYLE)
     fig = plt.figure(figsize=(7.2, 4.7))
     grid = fig.add_gridspec(2, 4, width_ratios=[1, 1, 1, .045], left=.095, right=.925, bottom=.095, top=.985, wspace=.07, hspace=.22)

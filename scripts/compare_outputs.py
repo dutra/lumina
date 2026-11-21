@@ -174,7 +174,7 @@ def compare_arrays(a: dict, b: dict, patterns) -> list[str]:
 def compare_store(stage_a: Path, stage_b: Path, report: Report, *, entry_patterns, key_patterns, record_keys=()) -> int:
     """Compare every entry of ``results.h5`` and ``cache.h5``; returns the number of entries compared.  ``key_patterns``
     apply to every kind of entry, ``record_keys`` (exact names) to the keys of records and figure records only."""
-    from kappaccino.io import store
+    from lumina.io import store
     compared = 0
     for cache in (False, True):
         label = "cache" if cache else "results"

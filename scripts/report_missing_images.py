@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import fit_arc_source as fas  # noqa: E402
 from find_missing_images import COLOUR_BANDS, colours, load_photometry, load_published, norm_label  # noqa: E402
 from predict_counter_images import stamp_rgb  # noqa: E402
-from kappaccino.io.hdf5 import load_arrays  # noqa: E402
+from lumina.io.hdf5 import load_arrays  # noqa: E402
 
 np, pd, cutouts = fas.np, fas.pd, fas.cutouts
 
@@ -133,8 +133,8 @@ def main():
     matplotlib.use("pdf")
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
-    from kappaccino.plotting.style import PAPER_STYLE
-    plt.style.use(str(ROOT / "src/kappaccino/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
+    from lumina.plotting.style import PAPER_STYLE
+    plt.style.use(str(ROOT / "src/lumina/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
     half = args.stamp / 2
     with PdfPages(folder / "new_candidates.pdf") as pdf:
         for _, r in new.iterrows():

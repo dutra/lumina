@@ -11,9 +11,9 @@ plots/
 *.par
 *.json
 !scripts/m0416_redshift_sources.json
-!src/kappaccino/data/m0416_image_f200w_photometry.csv
-!src/kappaccino/data/m0416_image_f200w_photometry.json
-!src/kappaccino/data/m0416_candidates.json
+!src/lumina/data/m0416_image_f200w_photometry.csv
+!src/lumina/data/m0416_image_f200w_photometry.json
+!src/lumina/data/m0416_candidates.json
 *.html
 *.log
 *.txt

@@ -1,6 +1,6 @@
 # Installation
 
-kappaccino needs Python 3.11 or newer. Install it from the repository root:
+lumina needs Python 3.11 or newer. Install it from the repository root:
 
 ```bash
 python -m pip install -e .

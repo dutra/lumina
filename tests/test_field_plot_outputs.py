@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from unittest.mock import Mock
 
-from kappaccino.plotting import gp, fields
+from lumina.plotting import gp, fields
 
 
 def test_standard_gp_outputs_include_field_figures(monkeypatch, tmp_path):
@@ -39,7 +39,7 @@ def test_no_mass_field_skips_the_shared_maps():
 def test_system_blocks_render_through_the_shared_twin(monkeypatch):
     """A system-block run's maps use the reporting draws, converted once to its all-block twin's coordinates."""
     import numpy as np
-    from kappaccino.reporting import draws as reporting
+    from lumina.reporting import draws as reporting
     twin = SimpleNamespace(gp_knee=True, sigma_grf_index=0, gp_knee_spectrum='knee', state=SimpleNamespace(gp_blocks='all'))
     run = SimpleNamespace(gp_knee=True, sigma_grf_index=0, gp_knee_spectrum='knee', state=SimpleNamespace(gp_blocks='system'),
                           _shared_field_twin=twin)

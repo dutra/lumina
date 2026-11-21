@@ -60,7 +60,7 @@ Small is a subset of medium, which is a subset of large. Medium retains every sm
 systems by class and coverage, then members by their deflection at the selected images. Entries are copied unchanged.
 The truth lens is identical for all three sizes; `source/` remains shared.
 
-Use `kappaccino catalogs/tngc014_dm/medium --profile fast` for the medium fit.
+Use `lumina catalogs/tngc014_dm/medium --profile fast` for the medium fit.
 The small and medium run files inherit from `large/`; there is no run file at the parent level.
 Rebuild medium with `scripts/build_tngc014_medium.py` using the existing lenstronomy interpreter.
 The original external mock and small builders predate this layout and must be pointed to `large/` before reuse.

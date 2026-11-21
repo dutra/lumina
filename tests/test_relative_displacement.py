@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.plotting import relative_displacement as rd
+from lumina.plotting import relative_displacement as rd
 
 
 def _points(n=300, seed=0):
@@ -121,7 +121,7 @@ def test_compute_skips_without_true_lens_field_or_images(tmp_path):
 
 
 def test_an_unreadable_map_fails_the_compute(tmp_path):
-    from kappaccino.io import store
+    from lumina.io import store
     lines = []
     store.write_table(tmp_path, "true_lens_residuals", pd.DataFrame({"status": ["used"]}))
     config = SimpleNamespace(outputs=SimpleNamespace(truth=SimpleNamespace(deflection_true_fits=str(tmp_path / "missing.fits"))),
@@ -189,10 +189,10 @@ class TruthSetup:
     ``truth`` module with the relative-displacement table and the true map faked, and passes."""
 
     def __init__(self, monkeypatch, tmp_path):
-        from kappaccino.diagnostics import truth_recovery
-        from kappaccino.io import store
-        from kappaccino.outputs.base import OutputModule
-        from kappaccino.reporting import draws as draws_module
+        from lumina.diagnostics import truth_recovery
+        from lumina.io import store
+        from lumina.outputs.base import OutputModule
+        from lumina.reporting import draws as draws_module
         self.monkeypatch, self.tmp_path, self.lines = monkeypatch, tmp_path, []
         self.kappa, self.deflection, self.has_field, self.true_lens, self.empty = None, "defl.fits", True, True, False
         self.mode, self.computed, self.rendered = "full", [], []
@@ -261,9 +261,9 @@ class TruthSetup:
         monkeypatch.setattr(truth_recovery, "compute_truth_recovery", lambda *a, **k: None)
 
     def context(self, mode="full"):
-        from kappaccino.outputs import OutputContext
+        from lumina.outputs import OutputContext
         self.mode = mode
-        from kappaccino.config import OutputsConfig, TruthOutputConfig
+        from lumina.config import OutputsConfig, TruthOutputConfig
         config = SimpleNamespace(outputs=OutputsConfig(truth=TruthOutputConfig(kappa_true_fits=self.kappa,
                                                                                deflection_true_fits=self.deflection)),
                                  paths=SimpleNamespace(figure_prefix="toy"))
@@ -273,8 +273,8 @@ class TruthSetup:
         return OutputContext(config, state, None, None, {}, paths, log=self.lines.append, mode=mode)
 
     def run(self, mode="full"):
-        from kappaccino.outputs import run_modules
-        from kappaccino.outputs.truth import TruthModule
+        from lumina.outputs import run_modules
+        from lumina.outputs.truth import TruthModule
         ctx = self.context(mode)
         return ctx, run_modules(ctx, [self.images, TruthModule()])
 
@@ -289,8 +289,8 @@ def truth_setup(monkeypatch, tmp_path):
 
 
 def test_a_deflection_map_alone_activates_truth_and_the_render_pass_redraws_the_figure(truth_setup):
-    from kappaccino.io import store
-    from kappaccino.outputs.base import ComputeOnly
+    from lumina.io import store
+    from lumina.outputs.base import ComputeOnly
     s = truth_setup
     ctx, records = s.run()
     truth = records["truth"]
@@ -321,7 +321,7 @@ def test_a_deflection_map_alone_activates_truth_and_the_render_pass_redraws_the_
     (dict(empty=True), "no image table"),
 ])
 def test_a_skipped_compute_draws_no_figure_and_never_a_stale_table(truth_setup, change, reason):
-    from kappaccino.io import store
+    from lumina.io import store
     s = truth_setup
     s.run()
     assert s.figure.exists()
@@ -349,7 +349,7 @@ def test_truth_is_inactive_without_either_map(truth_setup):
 
 
 def test_the_figure_survives_failed_truth_maps_in_the_full_pass_and_a_later_render(truth_setup):
-    from kappaccino.diagnostics import truth_recovery
+    from lumina.diagnostics import truth_recovery
     s = truth_setup
     s.kappa = "kappa.fits"
 
@@ -380,9 +380,9 @@ def test_the_figure_survives_failed_truth_maps_in_the_full_pass_and_a_later_rend
 def test_a_render_after_a_fail_fast_compute_reports_the_truth_figures_it_cannot_draw(truth_setup, monkeypatch):
     """A compute stopped by --fail-fast in its first step records only that step; a render pass reports the other
     figures as not drawn (their compute step did not run) instead of failing on the missing step."""
-    from kappaccino.outputs import run_modules
-    from kappaccino.outputs.truth import TruthModule
-    from kappaccino.plotting import relative_displacement as rd
+    from lumina.outputs import run_modules
+    from lumina.outputs.truth import TruthModule
+    from lumina.plotting import relative_displacement as rd
     s = truth_setup
     s.kappa = "kappa.fits"
     monkeypatch.setattr(rd, "relative_displacement_table", lambda *a, **k: (_ for _ in ()).throw(ValueError("broke")))

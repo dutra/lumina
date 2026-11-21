@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.core.parallel import map_draws
+from lumina.core.parallel import map_draws
 
 
 # ----------------------------------------------------------------------------- the draw map
@@ -70,10 +70,10 @@ def test_a_map_inside_a_worker_runs_serially_and_workers_must_be_positive():
 
 # ----------------------------------------------------------------------------- the setting, the hash and a resume
 def test_outputs_workers_is_left_out_of_the_hash_and_of_the_resume_comparison(synthetic_config, tmp_path):
-    from kappaccino import cli
-    from kappaccino.config import LensClusterSolverConfig
-    from kappaccino.pipeline import resume_payload
-    from kappaccino.reporting.draws import reporting_draws
+    from lumina import cli
+    from lumina.config import LensClusterSolverConfig
+    from lumina.pipeline import resume_payload
+    from lumina.reporting.draws import reporting_draws
     base = synthetic_config
     assert base.outputs.workers == 4
     eight = replace(base, outputs=replace(base.outputs, workers=8)).validate()
@@ -95,8 +95,8 @@ def knee_run(tmp_path_factory):
     """The toy cluster with the shared knee mass field and five posterior draws around its start."""
     from conftest import synthetic_cluster_config
     from test_gp_knee import knee_config
-    from kappaccino.core.state import build_state
-    from kappaccino.likelihood.evaluator import Evaluator
+    from lumina.core.state import build_state
+    from lumina.likelihood.evaluator import Evaluator
     config = knee_config(synthetic_cluster_config(tmp_path_factory.mktemp("knee")), "all")
     state = build_state(config)
     evaluator = Evaluator(state, config.likelihood.likelihood_mode)
@@ -106,7 +106,7 @@ def knee_run(tmp_path_factory):
 
 
 def test_grid_maps_are_identical_with_one_and_three_workers(knee_run):
-    from kappaccino.reporting.draws import ReportingDraws
+    from lumina.reporting.draws import ReportingDraws
     config, state, evaluator, posterior = knee_run
     x, y = np.meshgrid(np.linspace(-12, 12, 23), np.linspace(-10, 10, 19))
     x[0, 0] = np.nan
@@ -121,8 +121,8 @@ def test_grid_maps_are_identical_with_one_and_three_workers(knee_run):
 
 
 def test_image_recovery_is_identical_with_one_and_three_workers(knee_run):
-    from kappaccino.diagnostics.image_recovery import image_recovery_tables
-    from kappaccino.reporting.draws import ReportingDraws
+    from lumina.diagnostics.image_recovery import image_recovery_tables
+    from lumina.reporting.draws import ReportingDraws
     config, state, evaluator, posterior = knee_run
     tables, logs = {}, []
     for workers in (1, 3):
@@ -139,7 +139,7 @@ def test_image_recovery_is_identical_with_one_and_three_workers(knee_run):
 def test_an_interrupt_drops_the_draws_not_yet_started():
     """Ctrl-C in the calling thread stops after the running items: the queued ones are cancelled, not run."""
     import _thread, threading, time
-    from kappaccino.core.parallel import map_draws
+    from lumina.core.parallel import map_draws
     ran = []
     def slow(item):
         ran.append(item)

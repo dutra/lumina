@@ -6,9 +6,9 @@ from pathlib import Path
 
 import yaml
 
-from kappaccino.io.image_catalog import load_image_catalog, write_image_catalog
-from kappaccino.io.member_catalog import load_member_catalog, write_member_catalog
-from kappaccino.io.sky import offsets_to_radec
+from lumina.io.image_catalog import load_image_catalog, write_image_catalog
+from lumina.io.member_catalog import load_member_catalog, write_member_catalog
+from lumina.io.sky import offsets_to_radec
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "build_master_catalog.py"

@@ -4,8 +4,8 @@ from dataclasses import replace
 
 import pytest
 
-from kappaccino.io import artifacts
-from kappaccino.config import ImageSolverConfig, MemberConfig, OutputsConfig, SamplingConfig
+from lumina.io import artifacts
+from lumina.config import ImageSolverConfig, MemberConfig, OutputsConfig, SamplingConfig
 
 
 def test_config_validates_and_round_trips(tmp_path, synthetic_config):

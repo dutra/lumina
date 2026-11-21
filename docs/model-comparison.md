@@ -18,8 +18,8 @@ The init stage always computes BIC. To get WBIC as well, set `wbic=True` in the 
 
 ```python
 from dataclasses import replace
-from kappaccino.config import SamplingConfig
-from kappaccino.pipeline import run
+from lumina.config import SamplingConfig
+from lumina.pipeline import run
 
 config = replace(config, sampling=replace(config.sampling, wbic=True))
 result = run(config)
@@ -28,7 +28,7 @@ result = run(config)
 From the launcher, set `sampling.wbic`:
 
 ```bash
-kappaccino catalogs/m0416/canucs2025 --run-label nfw --set sampling.wbic=true
+lumina catalogs/m0416/canucs2025 --run-label nfw --set sampling.wbic=true
 ```
 
 WBIC can be added to a finished run. Run the same configuration again under the same run name with `wbic=True` (or
@@ -43,7 +43,7 @@ run's `warmup` and `samples`.
 Fit each model under its own run name, then compare the run directories:
 
 ```python
-from kappaccino.inference.model_comparison import compare
+from lumina.inference.model_comparison import compare
 
 table = compare(["results/m0416/nfw", "results/m0416/gnfw"])
 ```
@@ -51,7 +51,7 @@ table = compare(["results/m0416/nfw", "results/m0416/gnfw"])
 The same table from the command line:
 
 ```bash
-python -m kappaccino.inference.model_comparison results/m0416/nfw results/m0416/gnfw --csv comparison.csv
+python -m lumina.inference.model_comparison results/m0416/nfw results/m0416/gnfw --csv comparison.csv
 ```
 
 The table has one row per run, with `k`, `n`, `log_likelihood` (at the best fit), `bic`, `delta_bic`, `wbic`,
@@ -90,7 +90,7 @@ with the field fixed.
 ### The data log-likelihood
 
 Both numbers use the data log-likelihood $\ln L$
-({meth}`~kappaccino.likelihood.evaluator.Evaluator.data_log_likelihood`). It is the sum of the image-position terms,
+({meth}`~lumina.likelihood.evaluator.Evaluator.data_log_likelihood`). It is the sum of the image-position terms,
 the uncertain-image mixture and the member kinematics, with every normalization term (the covariance determinants and
 the sampled error scales). The source-transport correction, the far-field barrier and the ellipticity caps belong to
 the prior side and are left out.
@@ -126,7 +126,7 @@ $$
 
 the mean of $-2 \ln L$ over draws from the tempered posterior $p_\beta$ (Watanabe 2013). The WBIC run samples
 $p_\beta$ with NUTS, starting each chain from the last draw of the main chain
-({meth}`~kappaccino.likelihood.evaluator.Evaluator.tempered_log_likelihood`). The tempered posterior is broader than
+({meth}`~lumina.likelihood.evaluator.Evaluator.tempered_log_likelihood`). The tempered posterior is broader than
 the posterior, so the run explores a wider range of models.
 
 WBIC has three advantages over BIC here.

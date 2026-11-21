@@ -61,7 +61,7 @@ def main():
         values = values / maps['total']
     limit = float(np.max(np.abs(values)))
     limit = np.ceil(limit * 20) / 20
-    style = Path(__file__).resolve().parents[1]/'src/kappaccino/plotting/style.mplstyle'
+    style = Path(__file__).resolve().parents[1]/'src/lumina/plotting/style.mplstyle'
     plt.style.use(style)
     fig, ax = plt.subplots(figsize=(6.8, 5.7), layout='constrained')
     cmap = args.cmap

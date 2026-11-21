@@ -27,9 +27,9 @@ import numpy as np
 from astropy.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from kappaccino.io.image_catalog import write_image_catalog  # noqa: E402
-from kappaccino.io.member_catalog import write_member_catalog  # noqa: E402
-from kappaccino.io.sky import offsets_to_radec  # noqa: E402
+from lumina.io.image_catalog import write_image_catalog  # noqa: E402
+from lumina.io.member_catalog import write_member_catalog  # noqa: E402
+from lumina.io.sky import offsets_to_radec  # noqa: E402
 
 CANUCS = "hlsp_canucs_jwst-hst_multi_a370-lenstool-{}_multi_v1_model.txt"
 CANUCS_ID = re.compile(r"^(\d+)([a-z]?)\.(\d+)$")

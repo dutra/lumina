@@ -1,7 +1,7 @@
 """Regenerate covariance errors from a saved run; no inference."""
 import argparse
 import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
-from kappaccino.outputs.saved_run import load_run
+from lumina.outputs.saved_run import load_run
 
 
 def main():
@@ -12,7 +12,7 @@ def main():
     args = parser.parse_args()
     if args.draws < 0:
         parser.error('--draws must be nonnegative')
-    from kappaccino.plotting.covariance import plot_covariance_errors
+    from lumina.plotting.covariance import plot_covariance_errors
     print(plot_covariance_errors(*load_run(args.run_directory), draws=args.draws, plane=args.plane))
 
 
