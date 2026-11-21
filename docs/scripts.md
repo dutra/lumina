@@ -35,7 +35,7 @@ See {doc}`catalogs` for the converters (`convert_lenstool_catalog.py`, `convert_
 
 These scripts read a run directory and redraw one product without rerunning inference. They load the run with
 `kappaccino.outputs.saved_run.load_run`; `kappaccino outputs RUN --only MODULE` reruns whole output modules, and
-`kappaccino outputs RUN --render` draws the figures of the converted modules (`mass`, `truth`) again from the store
+`kappaccino outputs RUN --render` draws the figures of every module again from the store
 without evaluating the lens (see {doc}`outputs`). `compare_outputs.py RUN_A RUN_B` compares the outputs of two runs
 entry by entry and figure by figure (see {doc}`outputs`).
 

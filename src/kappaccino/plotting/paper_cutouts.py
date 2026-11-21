@@ -57,7 +57,7 @@ def write_paper_cutouts(config, state, draws, tables, figures, imaging, *, log=p
 
 def prepare_paper_cutouts(config, tables, draws, *, log=print):
     """Save what the configured paper cutouts need beyond the saved position and fold products: the median det A of
-    the image panels the small-lambda figure did not save (``<prefix>_rgb_inset_critical``, from the reporting
+    the image panels the small-lambda figure did not save (``<prefix>_rgb_inset_critical_<stem>``, from the reporting
     ``draws``).  Returns the stems of the figures to draw, or None when there is none."""
     stems = [stem for stem, _, _, _, _ in _paper_panels(config, tables, draws, log=log)]
     return stems or None
@@ -94,7 +94,7 @@ def _paper_panels(config, tables, draws, *, log=print):
         data = overview_cutout_data(tables, config.paths.figure_prefix,
             image_labels=tuple(dict.fromkeys(identity for kind, identity, _ in resolved if kind == 'image')),
             system_ids=tuple(dict.fromkeys(identity for kind, identity, _ in resolved if kind != 'image')),
-            draws=draws, neighbors=True, log=log)
+            draws=draws, neighbors=True, group=stem, log=log)
         if data is None:  # overview_cutout_data logged which panel has no saved posterior
             log(f'[outputs] paper cutouts skipped: {stem}')
             continue

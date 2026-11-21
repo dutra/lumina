@@ -192,6 +192,34 @@ def test_inset_critical_fields_without_draws_come_from_the_store(tmp_path, monke
         rc.overview_cutout_data(tmp_path, "toy", image_labels=("a",))
 
 
+def test_each_group_of_panels_keeps_its_own_inset_fields(tmp_path, monkeypatch):
+    # Both paper-cutout figures need inset fields: the second must not overwrite the first's.
+    from kappaccino.plotting import critical_fields, rgb_overview_cutouts as rc
+    store.write_table(tmp_path, "toy_small_lambda_a_image_posteriors_jwst", pd.DataFrame(dict(
+        image_label=["a", "b"], x_arcsec=[0., 1.], y_arcsec=[0., 0.], z_source=[2., 3.], family_id=["1", "2"], shown=[False, False])))
+    store.write_arrays(tmp_path, "posterior_overview_positions", image_labels=np.array(["a", "b"]),
+                       recovered=np.random.default_rng(1).normal(0, .02, (32, 2, 2)), draw_indices=np.arange(32))
+    store.write_record(tmp_path, "fold_pairs_source_caustics", {})
+    store.write_arrays(tmp_path, "fold_pairs_source_caustics", {})
+    monkeypatch.setattr(rc, "load_fold_data", lambda _: dict(systems=[]))
+
+    def compute(draws, centers, fovs, redshifts, path, **k):
+        median = np.full((len(centers), 4, 4), float(len(path.stem)))
+        store.write_arrays(path.parent, path.stem, median_determinant=median, lower=median - 1, upper=median + 1,
+                           centers=np.asarray(centers), fovs=np.asarray(fovs), redshifts=np.asarray(redshifts))
+        return None, median, median - 1, median + 1
+    monkeypatch.setattr(critical_fields, "median_cutout_determinants", compute)
+    first = rc.overview_cutout_data(tmp_path, "toy", image_labels=("a",), draws=object(), group="small_lambda_posteriors")
+    rc.overview_cutout_data(tmp_path, "toy", image_labels=("b", "a"), draws=object(), group="fold_cutouts")
+    assert store.has_arrays(tmp_path, "toy_rgb_inset_critical_small_lambda_posteriors")
+    assert store.has_arrays(tmp_path, "toy_rgb_inset_critical_fold_cutouts")
+    monkeypatch.setattr(critical_fields, "median_cutout_determinants", lambda *a, **k: pytest.fail("computed without draws"))
+    loaded = rc.overview_cutout_data(tmp_path, "toy", image_labels=("a",), group="small_lambda_posteriors")
+    np.testing.assert_array_equal(loaded["images"][0]["critical"]["median_determinant"],
+                                  first["images"][0]["critical"]["median_determinant"])
+    assert len(rc.overview_cutout_data(tmp_path, "toy", image_labels=("b", "a"), group="fold_cutouts")["images"]) == 2
+
+
 def test_covariance_cutouts_render_from_the_store(synthetic_config, tmp_path, monkeypatch):
     from astropy.wcs import WCS
     from kappaccino.core.state import build_state

@@ -117,7 +117,8 @@ def test_a_failing_module_is_isolated_and_recorded(tmp_path):
     records = run_modules(ctx, modules)
     assert calls == ["a", "c"]
     assert records["a"]["status"] == "failed" and records["a"]["error"] == "RuntimeError: broken map"
-    assert records["b"] == {"status": "skipped", "seconds": 0.0, "reason": "requires a, which failed without a product"}
+    assert records["b"] == {"status": "skipped", "mode": "full", "seconds": 0.0,
+                            "reason": "requires a, which failed without a product", "failed_requirement": "a"}
     assert records["c"]["status"] == "done" and ctx.summary["modules"] is records
     failure = next(line for line in lines if line.startswith("[outputs] a: RuntimeError"))
     assert "broken map" in failure and "Traceback" in failure
@@ -464,11 +465,14 @@ def test_remap_and_report_overrides(synthetic_config, tmp_path):
     assert moved.truth.kappa_true_fits == f"{tmp_path}/data/kappa.fits" and moved.image_catalog.image_dir == f"{tmp_path}/data/imaging"
     assert sorted(line.split()[2].rstrip(":") for line in lines) == ["image_catalog.image_dir", "truth.kappa_true_fits"]
     assert remap_paths(config, [("/far/aw", "/x")], log=lambda _: None).truth.kappa_true_fits == "/far/away/data/kappa.fits"
-    # Report settings may change; anything in the run hash may not.
+    # Report settings may change; nothing else may, also outside the run hash (paths, WBIC).
     changed = apply_overrides(config, ["truth.deflection_true_fits=defl.fits", "outputs.skip=[rgb]", "runtime.output_workers=2"])
     assert changed.truth.deflection_true_fits == "defl.fits" and changed.outputs.skip == ("rgb",)
-    for bad in ("sampling.warmup=3", "reporting.draws=4", "truth.kappa_true_fits=other.fits"):
-        with pytest.raises(ValueError, match="only report settings"):
+    assert changed.runtime.output_workers == 2
+    for bad in ("sampling.warmup=3", "reporting.draws=4", "truth.kappa_true_fits=other.fits", "paths.figure_prefix=../../X",
+                "paths.run_name=other", "paths.output_dir=/tmp", "sampling.wbic=true", "runtime.seed=3", "truth=5"):
+        with pytest.raises(ValueError, match=r"only report settings \(outputs\.\*, truth\.deflection_true_fits, "
+                                             r"runtime\.output_workers\); refused: "):
             apply_overrides(config, [bad])
     with pytest.raises(ValueError, match="unknown configuration sections"):
         apply_overrides(config, ["nosuch.field=1"])
@@ -505,8 +509,16 @@ def test_outputs_command_options(monkeypatch, tmp_path, capsys):
     assert json.loads(capsys.readouterr().out) == {"rms": 0.25}
     # --fail-fast: one line, exit code 1.
     monkeypatch.setattr(outputs, "write_outputs", lambda *a, **k: (_ for _ in ()).throw(ValueError("step broke")))
+    settings = SimpleNamespace(outputs=SimpleNamespace(fail_fast=True))
+    monkeypatch.setattr(command, "prepare_rerun", lambda run, **options: (settings,))
     assert command.main([str(tmp_path), "--fail-fast"]) == 1
-    assert capsys.readouterr().out.strip() == "kappaccino outputs: stopped at the first error (ValueError: step broke)"
+    assert capsys.readouterr().out.strip() == "kappaccino outputs: stopped at the first error (fail_fast: ValueError: step broke)"
+    # Without fail_fast an error can only come from outside the modules, which nothing logged: its traceback.
+    settings.outputs.fail_fast = False
+    assert command.main([str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert out.startswith("kappaccino outputs: the pass failed outside the modules (ValueError: step broke)")
+    assert "Traceback" in out
     monkeypatch.setattr(command, "prepare_rerun", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("x not found")))
     assert command.main([str(tmp_path)]) == 2
 
@@ -714,11 +726,17 @@ def test_render_and_compute_flags(monkeypatch, tmp_path, capsys):
         with pytest.raises(SystemExit):
             command.main(argv)
     seen = []
+    drew = {"modules": {"a": {"status": "done", "render_steps": {"figure": {"status": "done"}}}}}
     monkeypatch.setattr(command, "prepare_rerun", lambda run, **options: seen.append(options["mode"]) or ("config",))
-    monkeypatch.setattr(outputs, "write_outputs", lambda *a, **k: seen.append(k["mode"]) or {"modules": {}})
+    monkeypatch.setattr(outputs, "write_outputs", lambda *a, **k: seen.append(k["mode"]) or drew)
     for flag, mode in (("--render", "render"), ("--compute", "compute"), (None, "full")):
         assert command.main([str(tmp_path)] + ([flag] if flag else [])) == 0
         assert seen[-2:] == [mode, mode]
+    # A render pass that draws nothing says so and fails.
+    drew["modules"]["a"] = {"status": "failed", "error": "ModuleUnavailable: no record"}
+    capsys.readouterr()
+    assert command.main([str(tmp_path), "--render"]) == 1
+    assert "the render pass drew nothing" in capsys.readouterr().out
 
 
 def test_a_render_rerun_loads_no_evaluator(monkeypatch, synthetic_config, tmp_path):
@@ -730,3 +748,115 @@ def test_a_render_rerun_loads_no_evaluator(monkeypatch, synthetic_config, tmp_pa
     assert (state, evaluator, posterior) == ("state", None, "posterior") and final.root == tmp_path / "final"
     with pytest.raises(ValueError, match="--draws"):
         command.prepare_rerun(tmp_path, mode="render", draws=4)
+
+
+def test_remap_moves_only_path_fields(synthetic_config, tmp_path, monkeypatch):
+    from kappaccino.outputs.registry import MODULES as registry
+    from kappaccino.outputs.saved_run import catalog_fields, path_fields, remap_paths
+    config = replace(synthetic_config, paths=replace(synthetic_config.paths, figure_prefix="/far/away/prefix",
+                                                     run_name="/far/away/name"),
+                     truth=replace(synthetic_config.truth, kappa_true_fits="/far/away/kappa.fits"))
+    covered = set(path_fields(config))
+    # Every path a module checks and every catalog the model is built from is a path field.
+    declared = {field for module in registry for field in module.path_fields} | set(catalog_fields(config))
+    assert declared <= covered, declared - covered
+    assert not {"paths.figure_prefix", "paths.run_name"} & covered
+    moved = remap_paths(config, [("/far/away", "/near")], log=lambda _: None)
+    assert moved.truth.kappa_true_fits == "/near/kappa.fits"
+    assert (moved.paths.figure_prefix, moved.paths.run_name) == ("/far/away/prefix", "/far/away/name")
+    # A relative saved path is compared as the absolute path it names from the working directory.
+    monkeypatch.chdir(tmp_path)
+    relative = replace(config, image_catalog=replace(config.image_catalog, image_dir="data/imaging/hst"))
+    moved = remap_paths(relative, [(str(tmp_path / "data" / "imaging"), "/empty")], log=lambda _: None)
+    assert moved.image_catalog.image_dir == "/empty/hst"
+    for old, match in (("far/away", "must be an absolute path"), ("/", "is the root")):
+        with pytest.raises(ValueError, match=match):
+            remap_paths(config, [(old, "/x")], log=lambda _: None)
+
+
+def test_a_module_skipped_after_a_failure_loses_its_numbers(monkeypatch, tmp_path):
+    images = SummaryModule("images", "fit")
+    truth = SummaryModule("truth", "truth", requires=["images"])
+    full = summary_pass(monkeypatch, tmp_path, [images, truth], draws=8)
+    assert full["truth"] == {"value": "truth over 8 draws"} and full["modules"]["truth"]["status"] == "done"
+    # Pass 2, every module: images fails, so truth is skipped; its old numbers must not survive.
+    broken = SummaryModule("images", "fit", fail=True)
+    second = summary_pass(monkeypatch, tmp_path, [broken, truth], draws=8)
+    assert second["modules"]["images"]["status"] == "failed" and "fit" not in second
+    assert second["modules"]["truth"]["status"] == "skipped" and "truth" not in second
+    assert second["modules"]["truth"]["reason"] == "requires images, which failed without a product"
+    # A module the user skipped keeps its saved record and numbers.
+    summary_pass(monkeypatch, tmp_path, [images, truth], draws=8)
+    ctx = context(tmp_path)
+    ctx.config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="toy"))
+    from kappaccino.reporting.outputs import write_run_summary
+    run_modules(ctx, [images, truth], skip=["images"])
+    write_run_summary(ctx, partial=True, modules=[images, truth])
+    kept = store.read_record(tmp_path, "run_summary")
+    assert kept["truth"] == {"value": "truth over 8 draws"} and kept["modules"]["truth"]["status"] == "done"
+
+
+class Keyed(Phased):
+    """A Phased module whose compute uses reporting draws with the key ``draws:<count>``."""
+
+    def compute(self, ctx):
+        ctx.draws
+        super().compute(ctx)
+
+
+def test_modules_computed_over_other_draws_are_named(monkeypatch, tmp_path):
+    from kappaccino.reporting import draws as draws_module
+
+    def fake(count):
+        class FakeDraws(list):
+            seed, has_field, cache_stage, key = 7, False, None, f"draws{count:04d}"
+            image_indices = list(range(count))
+        return FakeDraws(range(count))
+
+    modules = [Keyed("a"), Keyed("b", requires=["a"])]
+    monkeypatch.setattr(draws_module, "reporting_draws", lambda *a: fake(8))
+    ctx = context(tmp_path)
+    run_modules(ctx, modules)
+    assert "warnings" not in ctx.summary
+    # a computed again over 4 draws: b is now stale, and a render pass says so too (without blocking it).
+    monkeypatch.setattr(draws_module, "reporting_draws", lambda *a: fake(4))
+    lines = []
+    ctx = context(tmp_path, log=lines.append)
+    run_modules(ctx, modules, only=["a"])
+    warning = ctx.summary["warnings"][-1]
+    assert warning.startswith("modules computed over different reporting draws: a (4 draws, seed 7, key draws000)")
+    assert "b (8 draws, seed 7, key draws000)" in warning and "Stale" in warning and "b (requires a)" in warning
+    assert any(line.startswith("[outputs] WARNING: modules computed over different reporting draws") for line in lines)
+    ctx = context(tmp_path, mode="render")
+    records = run_modules(ctx, modules)
+    assert records["a"]["status"] == records["b"]["status"] == "done" and ctx.summary["warnings"] == [warning]
+
+
+def test_render_step_names_are_checked(tmp_path):
+    class WrongName(Phased):
+        def render(self, ctx):
+            ctx.render_step("figur", lambda: None, needs="table")
+
+    class WrongNeed(Phased):
+        def render(self, ctx):
+            ctx.render_step("figure", lambda: None, needs="tabel")
+
+    run_modules(context(tmp_path), [Phased("a")])
+    for module, message in ((WrongName("a"), "render step 'figur' is not in its render_steps"),
+                            (WrongNeed("a"), "compute step 'tabel' is not in its compute_steps")):
+        records = run_modules(context(tmp_path, mode="render"), [module])
+        assert records["a"]["status"] == "failed" and message in records["a"]["error"]
+
+
+def test_a_skipped_compute_step_makes_the_compute_incomplete(tmp_path):
+    class Skips(Phased):
+        def compute(self, ctx):
+            super().compute(ctx)
+            ctx.skip_step("nothing", "table failed")
+
+    run_modules(context(tmp_path), [Skips("a")])
+    assert store.read_record(tmp_path, completion_name("a"))["complete"] is False
+    lines = []
+    records = run_modules(context(tmp_path, log=lines.append, mode="render"), [Phased("a")])
+    assert "the last compute of a is incomplete (steps not done: nothing)" in records["a"]["error"]
+    assert any("this render pass drew nothing" in line for line in lines)

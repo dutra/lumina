@@ -41,6 +41,7 @@ def test_writer_uses_saved_panels_and_preserves_selector_order(tmp_path, monkeyp
     def cached(*args, **kwargs):
         assert kwargs['image_labels'] == ('K34.b',)
         assert kwargs['system_ids'] == ('K6',)
+        assert kwargs['group'] == 'small_lambda_posteriors'      # each figure saves its own inset fields
         return dict(images=[dict(label='K34.b')],systems=[system()])
     monkeypatch.setattr(pc,'overview_cutout_data',cached)
     def render(fig,data,*args,**kwargs):
