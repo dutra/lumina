@@ -1,5 +1,14 @@
 # kappaccino
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Tests](https://github.com/dutra/lumina/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/dutra/lumina/actions/workflows/tests.yml)
+[![Documentation](https://readthedocs.org/projects/kappaccino/badge/?version=latest)](https://kappaccino.readthedocs.io/)
+[![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2Fdutra%2Flumina%2Fmain%2Fpyproject.toml)](pyproject.toml)
+[![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdutra%2Flumina%2Fmain%2Fpyproject.toml&query=%24.project.version&label=version)](pyproject.toml)
+[![Last commit](https://img.shields.io/github/last-commit/dutra/lumina/main)](https://github.com/dutra/lumina/commits/main)
+[![Built with JAX](https://img.shields.io/badge/built%20with-JAX-9c27b0.svg)](https://github.com/jax-ml/jax)
+[![Built with NumPyro](https://img.shields.io/badge/built%20with-NumPyro-ff6f00.svg)](https://github.com/pyro-ppl/numpyro)
+
 `kappaccino` builds Bayesian strong-lensing mass models of galaxy clusters with JAX and NumPyro. The lens is a sum of
 cluster-scale halos (dPIE or elliptical NFW), an optional external shear and mass sheet, and a population of
 cluster-member dPIE subhalos on luminosity scaling relations, each member free to deviate from the relation. The
@@ -118,3 +127,7 @@ python -m pytest tests -m "not slow"   # skip the validation tests that run infe
 Caminha et al. (2016), Rihtarsic et al. (2025, CANUCS), Diego et al. (2024, 2026) and Beauchesne et al. (2025), the
 member kinematics of Granata et al. (2026), and the FF-SIMS simulations (Meneghetti et al. 2017). Cite those works when
 you use the catalogs.
+
+## License
+
+`kappaccino` is released under the MIT License. See [LICENSE](LICENSE).
