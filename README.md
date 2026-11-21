@@ -116,9 +116,16 @@ paper figures. The scripts page of the documentation describes each.
 
 ## Tests
 
+The test packages (`pytest` and `pytest-xdist`) are the `test` extra:
+
 ```bash
-python -m pytest tests                 # the full suite
-python -m pytest tests -m "not slow"   # skip the validation tests that run inference
+python -m pip install -e ".[test]"
+```
+
+```bash
+python -m pytest tests                          # the full suite
+python -m pytest tests -m "not slow"            # skip the validation tests that run inference
+python -m pytest tests -m "not slow" -n auto    # the same, in parallel on every core
 ```
 
 ## Data and provenance

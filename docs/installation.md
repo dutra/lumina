@@ -27,9 +27,16 @@ reported as missing and skipped. See {doc}`scripts` for the options.
 
 ## Tests
 
+The test packages (`pytest` and `pytest-xdist`) are the `test` extra:
+
 ```bash
-python -m pytest tests                 # the full suite
-python -m pytest tests -m "not slow"   # skip the validation tests that run inference
+python -m pip install -e ".[test]"
+```
+
+```bash
+python -m pytest tests                          # the full suite
+python -m pytest tests -m "not slow"            # skip the validation tests that run inference
+python -m pytest tests -m "not slow" -n auto    # the same, in parallel on every core
 ```
 
 `tests/test_pipeline.py` runs both stages end to end on a small synthetic cluster.

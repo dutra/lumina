@@ -27,6 +27,12 @@ dependencies = [
     "threadpoolctl>=3.1",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+    "pytest-xdist>=3",
+]
+
 [project.scripts]
 lumina = "lumina.cli:main"
 lumina-mock = "lumina.mock_validation.cli:main"
