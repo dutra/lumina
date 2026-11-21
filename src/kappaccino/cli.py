@@ -207,17 +207,22 @@ def main(argv=None) -> int:
     args = parser().parse_args(argv)
     args.overrides = [*_option_overrides(args), *args.overrides]
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-kappaccino")
+    from .config import UnknownField
     from .cpu_runtime import configure_cpu_runtime, resolve_cpu_plan
     from .run_files import input_files, read_run
-    # The CPU devices are set before anything starts JAX (building a prior does).
-    runtime = read_run(args.cluster, args.profile, args.overrides).get("runtime") or {}
-    chains, method = int(runtime.get("chains", 1)), runtime.get("nuts_chain_method", "parallel")
-    cpu_plan = resolve_cpu_plan(chains, method)
-    if not args.dry_run:
-        configure_cpu_runtime(chains, method)
-    config = build_config(args.cluster, profiles=args.profile, overrides=args.overrides, results=args.results,
-                          member_profile=args.member_profile, member_slope=args.member_slope,
-                          run_label=args.run_label, images=args.images).validate()
+    try:
+        # The CPU devices are set before anything starts JAX (building a prior does).
+        runtime = read_run(args.cluster, args.profile, args.overrides).get("runtime") or {}
+        chains, method = int(runtime.get("chains", 1)), runtime.get("nuts_chain_method", "parallel")
+        cpu_plan = resolve_cpu_plan(chains, method)
+        if not args.dry_run:
+            configure_cpu_runtime(chains, method)
+        config = build_config(args.cluster, profiles=args.profile, overrides=args.overrides, results=args.results,
+                              member_profile=args.member_profile, member_slope=args.member_slope,
+                              run_label=args.run_label, images=args.images).validate()
+    except (ValueError, UnknownField) as error:     # a bad run file, profile or --set value: a usage error
+        print(f"kappaccino: {error}", file=sys.stderr, flush=True)
+        return 2
     if args.dry_run:
         from .pipeline import dry_run
         print(json.dumps({"dry_run": True, "cpu_plan": cpu_plan.to_dict(), **dry_run(config)}, indent=2, default=str))

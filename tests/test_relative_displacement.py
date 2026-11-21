@@ -263,7 +263,9 @@ class TruthSetup:
     def context(self, mode="full"):
         from kappaccino.outputs import OutputContext
         self.mode = mode
-        config = SimpleNamespace(outputs=SimpleNamespace(truth=SimpleNamespace(kappa_true_fits=self.kappa, deflection_true_fits=self.deflection)),
+        from kappaccino.config import OutputsConfig, TruthOutputConfig
+        config = SimpleNamespace(outputs=OutputsConfig(truth=TruthOutputConfig(kappa_true_fits=self.kappa,
+                                                                               deflection_true_fits=self.deflection)),
                                  paths=SimpleNamespace(figure_prefix="toy"))
         state = SimpleNamespace(cosmo_config={"H0": 70.0, "Om0": 0.3}, gp_reference_redshift=2.0)
         paths = SimpleNamespace(tables=self.tmp_path / "tables", figures=self.tmp_path / "figures",
@@ -373,3 +375,25 @@ def test_the_figure_survives_failed_truth_maps_in_the_full_pass_and_a_later_rend
     assert truth["status"] == "failed" and truth["mode"] == "render" and s.figure.exists()
     assert truth["render_steps"]["relative_displacement"]["status"] == "done" and len(s.rendered) == 2
     assert "gave no product" in truth["error"] and "the truth_maps step failed" in truth["error"]
+
+
+def test_a_render_after_a_fail_fast_compute_reports_the_truth_figures_it_cannot_draw(truth_setup, monkeypatch):
+    """A compute stopped by --fail-fast in its first step records only that step; a render pass reports the other
+    figures as not drawn (their compute step did not run) instead of failing on the missing step."""
+    from kappaccino.outputs import run_modules
+    from kappaccino.outputs.truth import TruthModule
+    from kappaccino.plotting import relative_displacement as rd
+    s = truth_setup
+    s.kappa = "kappa.fits"
+    monkeypatch.setattr(rd, "relative_displacement_table", lambda *a, **k: (_ for _ in ()).throw(ValueError("broke")))
+    with pytest.raises(ValueError, match="broke"):
+        run_modules(s.context(), [s.images, TruthModule()], fail_fast=True)
+    _, records = s.run("render")
+    truth = records["truth"]
+    assert truth["status"] == "failed" and list(truth["steps"]) == ["relative_displacement"]
+    reasons = {step: record.get("reason") for step, record in truth["render_steps"].items()}
+    assert reasons["relative_displacement"] == "compute step relative_displacement failed"
+    for step in ("magnification_recovery", "cumulative_source_area"):
+        assert reasons[step] == f"compute step {step} did not run"
+    for step in ("truth_residuals", "mass_profile", "kappa_mass_residuals"):
+        assert reasons[step] == "compute step truth_maps did not run"

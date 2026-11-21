@@ -74,9 +74,9 @@ def merged_summary(saved: dict[str, Any], summary: dict[str, Any], modules) -> d
     list or requiring one that is, or inactive) keeps its saved keys and its saved module record.  In a render pass
     (``mode`` "render") the modules get this pass's records but keep their saved keys, which come from their last
     compute.  ``warnings`` belong to the reporting draws and are replaced when this pass built them; the warning of
-    ``outputs.base.check_draws`` is that of this pass in any case.  ``reporting_draws`` is that of the last pass that
-    built draws.  The module records are in the order of ``modules`` (the registry), then any other saved ones."""
-    from ..outputs.base import DRAWS_WARNING
+    ``outputs.base.check_draws`` and those of ``outputs.base.check_settings`` are this pass's in any case.
+    ``reporting_draws`` is that of the last pass that built draws.  The module records are in the order of ``modules`` (the registry), then any other saved ones."""
+    from ..outputs.base import DRAWS_WARNING, SETTINGS_WARNING
     records = summary.get("modules", {})
     blocked = {name for name, record in records.items() if record["status"] == "skipped" and "failed_requirement" in record}
     ran = {name for name, record in records.items() if record["status"] in ("done", "failed")} | blocked
@@ -86,7 +86,8 @@ def merged_summary(saved: dict[str, Any], summary: dict[str, Any], modules) -> d
         if module.name in computed:
             for key in module.summary_keys:
                 base.pop(key, None)
-    kept = [] if "reporting_draws" in summary else [w for w in base.get("warnings", []) if not str(w).startswith(DRAWS_WARNING)]
+    kept = [] if "reporting_draws" in summary else [w for w in base.get("warnings", [])
+                                                    if not str(w).startswith((DRAWS_WARNING, SETTINGS_WARNING))]
     warnings = list(dict.fromkeys(kept + list(summary.get("warnings", []))))
     base.pop("warnings", None)
     if warnings:

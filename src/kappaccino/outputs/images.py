@@ -49,6 +49,7 @@ class ImagesModule(OutputModule):
     render_steps = ("residual_histogram", "recovery_figure")
     summary_keys = ("fit",)
     path_fields = ("truth.deflection_true_fits",)
+    shared_settings = ("draws", "image_draws", "image_solver")
 
     def compute(self, ctx: OutputContext) -> None:
         from ..diagnostics.image_recovery import fit_summary, image_recovery_tables, image_recovery_with_reuse

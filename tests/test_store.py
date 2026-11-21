@@ -1,4 +1,4 @@
-"""The run-stage store (kappaccino.io.store): exact round trips, the old-layout fallback, replacement and repacking,
+"""The run-stage store (kappaccino.io.store): exact round trips, replacement and repacking,
 recovery from an unreadable file, concurrent writers and the command line."""
 import json
 import threading

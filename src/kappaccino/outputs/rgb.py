@@ -82,6 +82,8 @@ class RGBModule(OutputModule):
                     "apj_fold_cutouts", "paper_cutouts")
     input_steps = ("imaging",)
     path_fields = ("rgb.image_dir", "rgb.candidate_catalog_path", "truth.kappa_true_fits")
+    shared_settings = ("draws", "image_draws", "caustic_source_redshift", "image_solver")
+    render_settings = ("rgb.display",)       # the colours of the composite: the compute reads only the WCS and shape
 
     def active(self, ctx: OutputContext) -> str | None:
         if not ctx.settings.image_dir:

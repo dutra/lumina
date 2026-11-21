@@ -20,11 +20,14 @@ At the start of its compute a module's completeness record ``output_module_<name
 incomplete, and at the end it holds the step statuses, whether every compute step ran (``complete``: none failed or
 was skipped; for information), whether the compute gave no product (``unavailable``: the error it raised, else None)
 and the reporting draws the compute used.  Completeness is per step: a render step is drawn when the compute step it
-needs finished and wrote in the module's last compute, whatever the other steps did.  A render pass refuses a module
+needs finished and wrote in the module's last compute, whatever the other steps did (a step that did not run in that
+compute, after an error stopped it, is reported as not drawn).  A render pass refuses a module
 (:class:`NotComputed`) only when it has no record of a compute with its steps (never computed here, or interrupted
 before the end); otherwise it draws what it can, and the module ends as failed when a compute step of its last compute
-failed or a render step could not be drawn.  At the end of every pass the saved records are checked for modules
-computed over different draws (:func:`check_draws`).
+failed or a render step could not be drawn.  The record also keeps the outputs settings of the compute
+(:func:`settings_snapshot`).  At the end of every pass the saved records are checked for modules computed over
+different draws (:func:`check_draws`) and for modules computed with other settings than the current ones
+(:func:`check_settings`); both only warn.
 
 The runner (:func:`run_modules`) orders the modules by what they need (``requires``, hard: the module reads
 ``ctx.products`` of those) and by what they should follow (``after``, ordering only), stably with respect to the
@@ -39,6 +42,7 @@ importing the registry (``config.validate`` does, to check module names) loads n
 """
 from __future__ import annotations
 
+import json
 import time
 import traceback
 from dataclasses import replace
@@ -213,13 +217,14 @@ class OutputContext:
             self._imaging.append(known)
         _, imaging, error = known
         if imaging is None and required:
-            if image_config.image_dir != self.config.outputs.rgb.image_dir:
+            if Path(image_config.image_dir) != Path(self.config.outputs.rgb.image_dir):
                 # The extra JWST variant: imaging.cutouts.imaging_variants builds its folder, no field names it.
                 raise FileNotFoundError(
-                    f"the last compute drew this imaging variant, but its imaging cannot be loaded from {image_config.image_dir} "
-                    f"({error}); that folder is not a configuration field: imaging.cutouts.imaging_variants builds it "
-                    f"relative to the working directory (here {Path(image_config.image_dir).resolve()}), so --remap "
-                    f"cannot move it: run the command from the repository root, where {image_config.image_dir} is found")
+                    f"the last compute drew this imaging variant, but its imaging cannot be loaded from "
+                    f"{Path(image_config.image_dir).absolute()} ({error}); that folder ({image_config.image_dir}) is "
+                    f"built by imaging.cutouts.imaging_variants relative to the working directory, not read from a "
+                    f"configuration field, so --remap cannot move it: run the command from the directory that "
+                    f"contains {image_config.image_dir}")
             from .saved_run import REMAP_HINT
             raise FileNotFoundError(f"the last compute drew this imaging variant, but its imaging cannot be loaded from "
                                     f"outputs.rgb.image_dir = {image_config.image_dir} ({error}); {REMAP_HINT}")
@@ -330,6 +335,14 @@ class OutputContext:
         record = self.completion["steps"].get(name)              # None: the step did not run
         return record is not None and record["status"] == "done" and record["wrote"]
 
+    def wrote_nothing(self, name: str) -> bool:
+        """Whether the compute step ``name`` of the current module ran without an error and wrote nothing (it did not
+        apply), according to :attr:`completion`; False for a step that failed, was skipped or did not run.  Render
+        reads the steps through this, :meth:`computed` and :meth:`render_step`, never ``completion["steps"][name]``:
+        a compute stopped by an error (``fail_fast``) records only the steps that ran."""
+        record = self.completion["steps"].get(name)
+        return record is not None and record["status"] == "done" and not record["wrote"]
+
     def render_step(self, name: str, fn: Callable, *args, needs: str | Sequence[str] | None = None, **kwargs):
         """:meth:`step` for a render step that draws what the compute steps ``needs`` (default: the compute step of the
         same name) saved in the module's last compute, whatever its other steps did.  When one of them failed, was
@@ -350,9 +363,11 @@ class OutputContext:
             self._check_declared(need, "compute")
         steps = self.completion["steps"]
         for need in needs:
-            status = steps[need]["status"] if need in steps else "not run"
-            if status != "done":
-                self.skip_step(name, f"compute step {need} {status}")
+            if need not in steps:
+                self.skip_step(name, f"compute step {need} did not run")
+                return None
+            if steps[need]["status"] != "done":
+                self.skip_step(name, f"compute step {need} {steps[need]['status']}")
                 return None
         if not all(self.computed(need) for need in needs):
             return None
@@ -375,7 +390,13 @@ class OutputModule:
     so a failed module leaves no old numbers behind, and a render pass keeps them.  ``path_fields`` are the fields of
     the files the compute reads, as dotted names under ``outputs`` (``rgb.image_dir``, ``truth.kappa_true_fits``),
     checked before a rerun (``outputs.command``).  The module's settings are the section ``config.outputs.<name>``
-    (:attr:`OutputContext.settings`), whose ``enabled`` switch the runner reads."""
+    (:attr:`OutputContext.settings`), whose ``enabled`` switch the runner reads; ``name`` must be the field name of
+    that section.  ``shared_settings`` are the fields of ``outputs`` outside any module's section that the compute
+    reads (``draws``, ``image_draws``, ``caustic_source_redshift``, ``image_solver``; for a module that reads the
+    ``images`` product, ``image_solver``, which made it).  The completeness record keeps the settings the compute used
+    (:func:`settings_snapshot`: these, the module's own section and its ``path_fields`` in other sections), and
+    :func:`check_settings` compares them with the current ones, except ``render_settings``: the fields under ``outputs``
+    (dotted, ``rgb.display``) that only render reads from the current configuration, which change no saved result."""
 
     name: str = ""
     requires: tuple[str, ...] = ()
@@ -387,6 +408,8 @@ class OutputModule:
     input_steps: tuple[str, ...] = ()
     summary_keys: tuple[str, ...] = ()
     path_fields: tuple[str, ...] = ()
+    shared_settings: tuple[str, ...] = ()
+    render_settings: tuple[str, ...] = ()
 
     def active(self, ctx: OutputContext) -> str | None:
         """None when the module applies to this run, else a short reason why not (logged, recorded as inactive).
@@ -559,11 +582,11 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
             if fail_fast:
                 log(f"[outputs] {name}: FAILED after {seconds:.1f}s ({error_text})")
                 records[name] = {"status": "failed", "mode": ctx.mode, "seconds": seconds, "error": error_text,
-                                 **_step_records(ctx), **_draws_record(ctx)}
+                                 **_step_records(ctx), **_draws_record(ctx), **_settings_record(ctx)}
                 ctx._module, ctx._phase, ctx._steps, ctx._render_steps = None, None, {}, {}
                 raise
         finally:
-            step_records, draws_record = _step_records(ctx), _draws_record(ctx)
+            step_records, draws_record = _step_records(ctx), {**_draws_record(ctx), **_settings_record(ctx)}
             ctx._module, ctx._phase, ctx._steps, ctx._render_steps, ctx._completion = None, None, {}, {}, None
         if reason is not None:
             records[name] = {"status": "inactive", "seconds": 0.0, "reason": str(reason)}
@@ -585,6 +608,7 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
             records[name]["not_computed"] = True
         log(f"[outputs] {name}: {'FAILED (' + error_text + ')' if error_text else 'done'} in {seconds:.1f}s")
     check_draws(ctx, modules)
+    check_settings(ctx, modules, records)
     if ctx.mode == "render" and not rendered_anything(records):
         log(f"[outputs] WARNING: this render pass drew nothing: {nothing_drawn_reason(records)}")
     failed = [name for name, record in records.items() if record["status"] == "failed"]
@@ -603,8 +627,9 @@ def rendered_anything(records: dict[str, dict]) -> bool:
 def nothing_drawn_reason(records: dict[str, dict]) -> str:
     """Why a render pass whose module ``records`` drew nothing (:func:`rendered_anything` false) drew nothing: no module
     ran; an input a figure needs is missing (a failed input step, such as the imaging of ``rgb``, named with its
-    error); nothing was computed for the modules that ran (``not_computed``); render steps were skipped or failed; or
-    the last compute saved nothing to draw."""
+    error); nothing was computed for the modules that ran (``not_computed``); render steps were skipped or failed;
+    modules failed outside their steps (a product that could not be loaded, a render that raised outside its steps),
+    named with their errors; or the last compute saved nothing to draw."""
     ran = {name: record for name, record in records.items() if record["status"] in ("done", "failed")}
     if not ran:
         return "no selected module ran (each was disabled, inactive or skipped)"
@@ -621,6 +646,11 @@ def nothing_drawn_reason(records: dict[str, dict]) -> str:
                  for step, record in render_steps if record["status"] != "done"]
     if not_drawn:
         return f"the compute is there, but no figure could be drawn: {'; '.join(not_drawn)}"
+    failed = [f"{name} ({record['error']})" for name, record in ran.items()
+              if record["status"] == "failed" and not record.get("not_computed")]
+    if failed:
+        return (f"modules failed before drawing: {'; '.join(failed)}"
+                + (f" (never computed: {', '.join(uncomputed)})" if uncomputed else ""))
     return ("the last compute of the selected modules saved nothing to draw"
             + (f" (never computed: {', '.join(uncomputed)})" if uncomputed else ""))
 
@@ -661,6 +691,49 @@ def check_draws(ctx: OutputContext, modules: Sequence[OutputModule]) -> str | No
     ctx.summary.setdefault("warnings", []).append(warning)
     ctx.log(f"[outputs] WARNING: {warning}")
     return warning
+
+
+SETTINGS_WARNING = "outputs settings changed since the last compute of"
+
+
+def _shown(value) -> str:
+    return "null" if value is None else str(value)
+
+
+def check_settings(ctx: OutputContext, modules: Sequence[OutputModule], records: dict[str, dict]) -> list[str]:
+    """Warn, once per module, when the saved results of one of ``modules`` were computed with other outputs settings
+    than those of this pass (``ctx.config.outputs``): the ``settings`` of its completeness record against
+    :func:`settings_snapshot` of the current configuration, over every field but the module's ``render_settings``
+    (which render reads from the current configuration).  Modules disabled or inactive in this pass (``records``) and
+    modules without a record of a finished compute are left out.  Each warning (``[outputs] WARNING``, and in
+    ``ctx.summary["warnings"]``) names the module and the fields as ``old -> current``; it never blocks the pass.
+    Returns the warnings."""
+    from ..io import store
+    warnings = []
+    for module in modules:
+        if records.get(module.name, {}).get("status") in ("disabled", "inactive"):
+            continue
+        try:
+            record = store.read_record(ctx.stage, completion_name(module.name))
+        except (store.MissingEntry, store.DamagedEntry, store.StoreError):
+            continue
+        if "steps" not in record:              # an interrupted compute: render refuses it (NotComputed)
+            continue
+        saved = record["settings"]
+        current = json.loads(json.dumps(settings_snapshot(ctx.config.outputs, module), default=str))
+        changed = [f"outputs.{key} {_shown(saved.get(key))} -> {_shown(current.get(key))}"
+                   for key in dict.fromkeys([*saved, *current])
+                   if not any(key == field or key.startswith(field + ".") for field in module.render_settings)
+                   and saved.get(key) != current.get(key)]
+        if not changed:
+            continue
+        warning = (f"{SETTINGS_WARNING} {module.name} (at {record['computed_at']}): {'; '.join(changed)}. Its saved "
+                   f"results, and the figures drawn from them, come from the old values; compute it again "
+                   f"(kappaccino outputs RUN --only {module.name}) for results of the current ones")
+        warnings.append(warning)
+        ctx.summary.setdefault("warnings", []).append(warning)
+        ctx.log(f"[outputs] WARNING: {warning}")
+    return warnings
 
 
 def _run_phases(ctx: OutputContext, module: OutputModule, *, product_only: bool) -> None:
@@ -709,6 +782,40 @@ def _compute_hint(name: str) -> str:
     return f"run its compute first: kappaccino outputs RUN --only {name} (or --compute --only {name})"
 
 
+def _flat_settings(value, prefix: str) -> dict[str, Any]:
+    """``{dotted name: value}`` of a configuration value under ``prefix``: the fields of a section one by one (nested
+    sections too), as JSON values (paths as the strings given, tuples as lists)."""
+    from dataclasses import fields, is_dataclass
+    if is_dataclass(value):
+        out = {}
+        for item in fields(value):
+            out.update(_flat_settings(getattr(value, item.name), f"{prefix}.{item.name}"))
+        return out
+    if isinstance(value, Path):
+        return {prefix: str(value)}
+    if isinstance(value, tuple):
+        return {prefix: [str(v) if isinstance(v, Path) else v for v in value]}
+    return {prefix: value}
+
+
+def settings_snapshot(outputs, module: OutputModule) -> dict[str, Any]:
+    """The outputs settings behind the compute of ``module`` under the section ``outputs`` (``config.OutputsConfig``),
+    as ``{dotted name under outputs: value}``: its ``shared_settings``, its own section without ``enabled`` (a switch
+    that selects the module, not a result) and its ``path_fields`` in other modules' sections.  ``workers`` and
+    ``fail_fast`` are never part of it: they change how a pass runs, not what it computes."""
+    snapshot: dict[str, Any] = {}
+    for name in module.shared_settings:
+        snapshot.update(_flat_settings(getattr(outputs, name), name))
+    own = getattr(outputs, module.name)
+    snapshot.update({key: value for key, value in _flat_settings(own, module.name).items()
+                     if key != f"{module.name}.enabled"})
+    for dotted in module.path_fields:
+        section, field = dotted.split(".", 1)
+        if section != module.name:
+            snapshot.update(_flat_settings(getattr(getattr(outputs, section), field), dotted))
+    return snapshot
+
+
 def load_completion(stage, name: str) -> dict[str, Any]:
     """The completeness record of module ``name`` in ``stage``.
 
@@ -743,12 +850,14 @@ def _write_completion(ctx: OutputContext, name: str, *, unavailable: Exception |
     """Write and return the module's completeness record after its compute: ``complete`` (every compute step done and
     the compute gave its product), ``unavailable`` (the error with which the compute ended without a product, as
     text, else None), when, the compute steps and the reporting draws the compute used (``reporting_draws``,
-    ``image_draws``, ``draws_seed``, ``draws_key``)."""
+    ``image_draws``, ``draws_seed``, ``draws_key``) and the outputs settings it used (``settings``,
+    :func:`settings_snapshot`)."""
     from ..io import store
     done = all(record["status"] == "done" for record in ctx._steps.values())
     record = {"module": name, "complete": done and unavailable is None,
               "unavailable": None if unavailable is None else f"{type(unavailable).__name__}: {unavailable}",
-              "computed_at": datetime.now(timezone.utc).isoformat(), "steps": ctx._steps, **_draws_record(ctx)}
+              "computed_at": datetime.now(timezone.utc).isoformat(), "steps": ctx._steps, **_draws_record(ctx),
+              **_settings_record(ctx)}
     if ctx._used_draws and ctx._draws is not None:
         record["draws_seed"] = int(ctx._draws.seed)
         key = getattr(ctx._draws, "key", None)
@@ -779,6 +888,14 @@ def _draws_record(ctx: OutputContext) -> dict[str, int]:
     if not ctx._used_draws or ctx._draws is None:
         return {}
     return {"reporting_draws": len(ctx._draws), "image_draws": len(ctx._draws.image_indices)}
+
+
+def _settings_record(ctx: OutputContext) -> dict[str, dict]:
+    """``{"settings": ...}``: the outputs settings of the current module's compute (:func:`settings_snapshot`), in a
+    render pass those of its saved completeness record; {} when no compute of it is described."""
+    if ctx.mode == "render":
+        return {} if ctx._completion is None else {"settings": ctx._completion["settings"]}
+    return {"settings": settings_snapshot(ctx.config.outputs, ctx._module)} if ctx._phase is not None else {}
 
 
 def _checkpoint(checkpoint: Callable[[], None], ctx: OutputContext, fail_fast: bool) -> None:

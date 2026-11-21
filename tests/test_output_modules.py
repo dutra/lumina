@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -35,9 +36,34 @@ class Fake(OutputModule):
         return f"product of {self.name}"
 
 
-def context(tmp_path, log=None, mode="full"):
+@dataclass(frozen=True)
+class ToySection:
+    """The configuration section of a toy module: its switch and one setting."""
+    enabled: bool = True
+    value: int = 1
+
+
+class ToyOutputs(SimpleNamespace):
+    """``config.outputs`` of the toy modules: a :class:`ToySection` for any module name, ``draws`` 8 and whatever the
+    test sets."""
+
+    def __init__(self, **fields):
+        super().__init__(**{"draws": 8, **fields})
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return ToySection()
+
+
+def toy_config(**outputs):
+    return SimpleNamespace(paths=SimpleNamespace(figure_prefix="toy"), outputs=ToyOutputs(**outputs))
+
+
+def context(tmp_path, log=None, mode="full", config=None):
     paths = SimpleNamespace(tables=tmp_path / "tables", figures=tmp_path / "figures", root=tmp_path)
-    return OutputContext(None, None, None, None, {}, paths, log=log if log is not None else (lambda _: None), mode=mode)
+    return OutputContext(toy_config() if config is None else config, None, None, None, {}, paths,
+                         log=log if log is not None else (lambda _: None), mode=mode)
 
 
 def names(modules):
@@ -465,7 +491,7 @@ def summary_pass(monkeypatch, tmp_path, modules, *, draws, only=None, disabled=(
     monkeypatch.setattr(draws_module, "reporting_draws", lambda *a: FakeDraws(range(draws)))
     monkeypatch.setattr(results_tex, "write_run_results", lambda *a, **k: None)
     ctx = context(tmp_path)
-    ctx.config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="toy"))
+    ctx.config = toy_config()
     run_modules(ctx, modules, only=only, disabled=disabled)
     write_run_summary(ctx, partial=only is not None or bool(disabled), modules=modules)
     return store.read_record(tmp_path, "run_summary")
@@ -642,15 +668,12 @@ def test_outputs_command_options(monkeypatch, tmp_path, capsys):
         return ("config",)
 
     monkeypatch.setattr(command, "prepare_rerun", prepare)
-    saves = []
-    monkeypatch.setattr(command, "save_outputs_settings", lambda run, **k: saves.append(k))
     from kappaccino.reporting import outputs
     store.write_record(tmp_path / "final", "run_summary", {"fit": {"rms": 0.25}})
     monkeypatch.setattr(outputs, "write_outputs", lambda *a, **k: {"modules": {"fit": {"status": "done"}}})
     assert command.main([str(tmp_path), "--only", "fit", "--draws", "4", "--remap", "/a=/b", "--set", "outputs.fail_fast=true"]) == 0
     assert seen["only"] == ("fit",) and seen["draws"] == 4 and seen["remap"] == [("/a", "/b")]
     assert seen["overrides"] == ["outputs.fail_fast=true"]
-    assert saves == [{"overrides": ["outputs.fail_fast=true"], "draws": 4, "log": saves[0]["log"]}]
     # The fit numbers printed are the saved record's, which a pass of fit alone does not touch.
     assert json.loads(capsys.readouterr().out) == {"rms": 0.25}
     # --fail-fast: one line, exit code 1.
@@ -858,11 +881,11 @@ def test_a_render_pass_keeps_the_numbers_of_the_last_compute(monkeypatch, tmp_pa
 
     modules = [Numbers("a")]
     ctx = context(tmp_path)
-    ctx.config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="toy"))
+    ctx.config = toy_config()
     run_modules(ctx, modules)
     write_run_summary(ctx, partial=False, modules=modules)
     ctx = context(tmp_path, mode="render")
-    ctx.config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="toy"))
+    ctx.config = toy_config()
     run_modules(ctx, modules)
     write_run_summary(ctx, partial=True, modules=modules)
     saved = store.read_record(tmp_path, "run_summary")
@@ -878,14 +901,10 @@ def test_render_and_compute_flags(monkeypatch, tmp_path, capsys):
     seen = []
     drew = {"modules": {"a": {"status": "done", "render_steps": {"figure": {"status": "done"}}}}}
     monkeypatch.setattr(command, "prepare_rerun", lambda run, **options: seen.append(options["mode"]) or ("config",))
-    saves = []
-    monkeypatch.setattr(command, "save_outputs_settings", lambda run, **k: saves.append(seen[-1]))
     monkeypatch.setattr(outputs, "write_outputs", lambda *a, **k: seen.append(k["mode"]) or drew)
     for flag, mode in (("--render", "render"), ("--compute", "compute"), (None, "full")):
         assert command.main([str(tmp_path)] + ([flag] if flag else [])) == 0
         assert seen[-2:] == [mode, mode]
-    # The saved settings follow a pass that computed, never a render pass.
-    assert saves == ["compute", "full"]
     # A render pass that draws nothing says so and fails.
     drew["modules"]["a"] = {"status": "failed", "error": "ModuleUnavailable: no record"}
     capsys.readouterr()
@@ -943,7 +962,7 @@ def test_a_module_skipped_after_a_failure_loses_its_numbers(monkeypatch, tmp_pat
     # A module the user skipped keeps its saved record and numbers.
     summary_pass(monkeypatch, tmp_path, [images, truth], draws=8)
     ctx = context(tmp_path)
-    ctx.config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="toy"))
+    ctx.config = toy_config()
     from kappaccino.reporting.outputs import write_run_summary
     run_modules(ctx, [images, truth], skip=["images"])
     write_run_summary(ctx, partial=True, modules=[images, truth])
@@ -1105,22 +1124,6 @@ def test_a_step_note_is_logged_and_recorded(tmp_path):
         context(tmp_path).note("outside")
 
 
-def test_a_pass_that_computed_saves_its_outputs_settings(synthetic_config, tmp_path):
-    from kappaccino.io import artifacts
-    from kappaccino.outputs.command import save_outputs_settings
-    directory = tmp_path / "final" / "artifacts"
-    artifacts.save_config(directory, synthetic_config)
-    lines = []
-    assert save_outputs_settings(tmp_path, log=lines.append) is False and lines == []      # nothing changed
-    assert save_outputs_settings(tmp_path, overrides=["outputs.truth.enabled=false", "outputs.workers=2"], draws=5,
-                                 log=lines.append) is True
-    saved = artifacts.load_config(directory)
-    assert (saved.outputs.draws, saved.outputs.image_draws, saved.outputs.workers) == (5, 5, 2)
-    assert not saved.outputs.truth.enabled and len(lines) == 1
-    # Nothing outside the outputs section changes.
-    assert saved.to_json_dict() | {"outputs": None} == synthetic_config.to_json_dict() | {"outputs": None}
-
-
 def test_list_applies_set_and_remap(synthetic_config, tmp_path, capsys):
     from kappaccino.io import artifacts
     from kappaccino.outputs import command
@@ -1170,3 +1173,218 @@ def test_the_outputs_section_is_validated_field_by_field(synthetic_config):
         with pytest.raises(ValueError, match="^--set: " + re.escape(message)):
             apply_overrides(synthetic_config, [bad])
     assert apply_overrides(synthetic_config, ["outputs.rgb.bands=[F1, F2]"]).outputs.rgb.bands == ("F1", "F2")
+
+
+# ----------------------------------------------------------------------------- settings of a pass, never persisted
+def _digest(path):
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("mode", ["full", "compute", "render"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_the_outputs_command_never_writes_the_saved_config(monkeypatch, synthetic_config, tmp_path, mode, fails):
+    """--set and --draws hold for one pass: config.json keeps its bytes after any pass mode, successful or failed,
+    through the command line and through rerun_outputs."""
+    from kappaccino.outputs import command, saved_run
+    from kappaccino.reporting import outputs
+    directory = tmp_path / "final" / "artifacts"
+    artifacts.save_config(directory, synthetic_config)
+    before = _digest(directory / artifacts.CONFIG_FILE)
+    seen = []
+
+    def load(run, *, remap=(), overrides=(), transform=None, log=print):
+        return saved_run.apply_overrides(artifacts.load_config(Path(run) / "final" / "artifacts"), overrides), "state", "posterior"
+
+    monkeypatch.setattr(saved_run, "load_saved_run", load)
+    monkeypatch.setattr(saved_run, "load_run", lambda run, **k: (*load(run, **k)[:2], "evaluator", "posterior", None))
+    monkeypatch.setattr(command, "check_module_paths", lambda config, **k: None)
+
+    def write(config, *args, mode, **kwargs):
+        seen.append((config.outputs.rgb.enabled, config.outputs.draws))
+        if fails:
+            raise ValueError("the pass broke")
+        return {"modules": {"fit": {"status": "done", "render_steps": {"figure": {"status": "done"}}}}}
+
+    monkeypatch.setattr(outputs, "write_outputs", write)
+    argv = [str(tmp_path), "--set", "outputs.rgb.enabled=false"] + ({"compute": ["--compute", "--draws", "4"],
+                                                                     "full": ["--draws", "4"], "render": ["--render"]}[mode])
+    assert command.main(argv) == (1 if fails else 0)
+    options = dict(overrides=["outputs.rgb.enabled=false"], **({} if mode == "render" else {"draws": 4}))
+    if fails:
+        with pytest.raises(ValueError, match="the pass broke"):
+            command.rerun_outputs(tmp_path, mode=mode, log=lambda _: None, **options)
+    else:
+        command.rerun_outputs(tmp_path, mode=mode, log=lambda _: None, **options)
+    # The pass saw the overrides; the saved configuration did not take them.
+    assert seen == [(False, 64 if mode == "render" else 4)] * 2
+    assert _digest(directory / artifacts.CONFIG_FILE) == before
+    assert not hasattr(command, "save_outputs_settings")
+
+
+class Setting(Phased):
+    """A Phased module that records ``draws`` and its own section, and whose ``value`` only render reads when
+    ``shown``."""
+
+    shared_settings = ("draws",)
+
+    def __init__(self, name, requires=(), shown=False):
+        super().__init__(name, requires)
+        self.render_settings = (f"{name}.value",) if shown else ()
+
+
+def test_the_record_keeps_the_settings_of_its_compute_and_a_clean_pass_never_warns(tmp_path):
+    modules = [Setting("a"), Setting("b", requires=["a"])]
+    lines = []
+    ctx = context(tmp_path, log=lines.append)
+    records = run_modules(ctx, modules)
+    for name in ("a", "b"):
+        # Its shared fields and its own section, without the enabled switch; never workers or fail_fast.
+        assert store.read_record(tmp_path, completion_name(name))["settings"] == {"draws": 8, f"{name}.value": 1}
+        assert records[name]["settings"] == {"draws": 8, f"{name}.value": 1}
+    assert "warnings" not in ctx.summary and not any("WARNING" in line for line in lines)
+    # A render pass with the same settings: none either, and its records are those of the compute.
+    ctx = context(tmp_path, log=lines.append, mode="render")
+    records = run_modules(ctx, modules)
+    assert "warnings" not in ctx.summary and records["a"]["settings"] == {"draws": 8, "a.value": 1}
+
+
+def test_a_module_computed_with_other_settings_is_named_with_its_fields(tmp_path):
+    modules = [Setting("a"), Setting("b", requires=["a"])]
+    run_modules(context(tmp_path), modules)
+    # --only a --draws 4 --set outputs.a.value=2 (a pass that runs only some modules): b keeps draws 8, value 1.
+    lines = []
+    ctx = context(tmp_path, log=lines.append, config=toy_config(draws=4, a=ToySection(value=2)))
+    run_modules(ctx, modules, only=["a"])
+    warnings = [w for w in ctx.summary["warnings"] if w.startswith("outputs settings changed")]
+    assert len(warnings) == 1 and warnings[0].startswith("outputs settings changed since the last compute of b (at ")
+    assert "outputs.draws 8 -> 4" in warnings[0] and "--only b" in warnings[0] and "a.value" not in warnings[0]
+    assert f"[outputs] WARNING: {warnings[0]}" in lines
+    # A later plain render pass (the saved settings again): a is now the one computed with other settings.
+    lines.clear()
+    ctx = context(tmp_path, log=lines.append, mode="render")
+    records = run_modules(ctx, modules)
+    assert records["a"]["status"] == records["b"]["status"] == "done"             # the note blocks nothing
+    warnings = [w for w in ctx.summary["warnings"] if w.startswith("outputs settings changed")]
+    assert len(warnings) == 1 and "of a (at " in warnings[0]
+    assert "outputs.draws 4 -> 8" in warnings[0] and "outputs.a.value 2 -> 1" in warnings[0]
+    # A module disabled in this pass is not compared.
+    ctx = context(tmp_path, mode="render")
+    run_modules(ctx, modules, disabled=["a", "b"])
+    assert "warnings" not in ctx.summary
+
+
+def test_a_field_only_render_reads_never_warns(tmp_path):
+    modules = [Setting("a", shown=True)]
+    run_modules(context(tmp_path), modules)
+    ctx = context(tmp_path, mode="render", config=toy_config(a=ToySection(value=5)))
+    run_modules(ctx, modules)
+    assert "warnings" not in ctx.summary
+    ctx = context(tmp_path, mode="render", config=toy_config(draws=2, a=ToySection(value=5)))
+    run_modules(ctx, modules)
+    assert ctx.summary["warnings"] == [w for w in ctx.summary["warnings"] if "outputs.draws 8 -> 2" in w and "a.value" not in w]
+
+
+def test_settings_warnings_of_an_earlier_pass_are_replaced(tmp_path):
+    """The settings note in run_summary is that of the last pass, as the draws warning."""
+    from kappaccino.reporting.outputs import merged_summary
+    modules = [Setting("a"), Setting("b", requires=["a"])]
+    run_modules(context(tmp_path), modules)
+    ctx = context(tmp_path, config=toy_config(draws=4))
+    run_modules(ctx, modules, only=["a"])
+    saved = merged_summary({}, ctx.summary, modules)
+    assert any("of b" in w for w in saved["warnings"])
+    ctx = context(tmp_path, config=toy_config(draws=4))
+    run_modules(ctx, modules)                                   # both computed again with draws 4: nothing stale
+    assert "warnings" not in merged_summary(saved, ctx.summary, modules)
+
+
+def test_the_snapshot_of_each_real_module():
+    from kappaccino.outputs.base import settings_snapshot
+    outputs = OutputsConfig()
+    snapshots = {module.name: settings_snapshot(outputs, module) for module in MODULES}
+    for name, snapshot in snapshots.items():
+        assert not any(key in ("workers", "fail_fast") or key.endswith(".enabled") for key in snapshot)
+        assert {"draws", "image_draws"} <= set(snapshot)
+    assert "image_solver.match_tolerance_arcsec" not in snapshots["fit"] and "caustic_source_redshift" in snapshots["fit"]
+    assert {"image_solver.exact_image_finder", "images.extra_images", "truth.deflection_true_fits"} <= set(snapshots["images"])
+    assert "caustic_source_redshift" not in snapshots["images"] and "truth.kappa_true_fits" not in snapshots["images"]
+    assert {"truth.kappa_true_fits", "image_solver.exact_image_finder"} <= set(snapshots["mass"])
+    assert {"rgb.display.q", "rgb.image_dir", "rgb.paper_fold_cutouts", "truth.kappa_true_fits"} <= set(snapshots["rgb"])
+    assert module_named("rgb").render_settings == ("rgb.display",)
+    # JSON values: tuples as lists, paths as given.
+    path = replace(outputs, rgb=replace(outputs.rgb, image_dir=Path("data/x"), paper_fold_cutouts=("system:1",)))
+    snapshot = settings_snapshot(path, module_named("rgb"))
+    assert snapshot["rgb.image_dir"] == "data/x" and snapshot["rgb.paper_fold_cutouts"] == ["system:1"]
+
+
+# ----------------------------------------------------------------------------- render after a compute stopped early
+class TwoSteps(Phased):
+    """Compute steps ``table`` then ``nothing``; render draws ``figure`` from ``table`` and ``unused`` from
+    ``nothing``.  ``stop`` makes ``table`` raise."""
+
+    def __init__(self, name, stop=False):
+        super().__init__(name)
+        self.stop = stop
+
+    def compute(self, ctx):
+        ctx.step("table", lambda: (_ for _ in ()).throw(ValueError("stopped here")) if self.stop else
+                 store.write_table(ctx.stage, f"{self.name}_table", pd.DataFrame({"x": [1.0]})) or "written")
+        ctx.step("nothing", lambda: "wrote")
+
+    def render(self, ctx):
+        ctx.render_step("figure", lambda: "drawn", needs="table")
+        ctx.render_step("unused", lambda: "drawn", needs="nothing")
+
+
+def test_a_render_after_a_fail_fast_compute_reports_the_steps_that_did_not_run(tmp_path):
+    with pytest.raises(ValueError, match="stopped here"):
+        run_modules(context(tmp_path), [TwoSteps("a", stop=True)], fail_fast=True)
+    saved = store.read_record(tmp_path, completion_name("a"))
+    assert list(saved["steps"]) == ["table"] and saved["unavailable"] == "ValueError: stopped here"
+    lines = []
+    records = run_modules(context(tmp_path, log=lines.append, mode="render"), [TwoSteps("a")])
+    steps = records["a"]["render_steps"]
+    assert steps["figure"] == {"status": "skipped", "seconds": 0.0, "reason": "compute step table failed"}
+    assert steps["unused"] == {"status": "skipped", "seconds": 0.0, "reason": "compute step nothing did not run"}
+    assert records["a"]["status"] == "failed" and "gave no product" in records["a"]["error"]
+
+
+def test_why_a_render_pass_drew_nothing_names_modules_failed_outside_their_steps():
+    from kappaccino.outputs.base import nothing_drawn_reason
+    records = {"a": {"status": "failed", "error": "ModuleUnavailable: no entry a_table; run its compute first"},
+               "b": {"status": "failed", "not_computed": True, "error": "NotComputed: no record"}}
+    assert nothing_drawn_reason(records) == ("modules failed before drawing: a (ModuleUnavailable: no entry a_table; "
+                                             "run its compute first) (never computed: b)")
+
+
+def test_the_missing_imaging_of_each_variant_says_what_is_true(monkeypatch, tmp_path):
+    from kappaccino.config import RGBOutputConfig
+    from kappaccino.imaging import cutouts
+    monkeypatch.setattr(cutouts, "load_cluster_imaging", lambda image_config, model, run: (_ for _ in ()).throw(
+        FileNotFoundError(f"no folder {image_config.image_dir}")))
+    configured = RGBOutputConfig(image_dir=Path("data/imaging/m0416/buffalo"))
+    config = SimpleNamespace(outputs=SimpleNamespace(rgb=configured), model=None, paths=SimpleNamespace(run_name="m0416"))
+    ctx = OutputContext(config, None, None, None, {}, None, log=lambda _: None, mode="render")
+    # The configured folder, given as a string equal to the saved Path: the remappable field.
+    with pytest.raises(FileNotFoundError, match=r"outputs.rgb.image_dir = data/imaging/m0416/buffalo .*--remap OLD=NEW"):
+        ctx.imaging(replace(configured, image_dir="data/imaging/m0416/buffalo"), required=True)
+    # The extra JWST variant: the absolute folder looked for, built relative to the working directory.
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(FileNotFoundError) as raised:
+        ctx.imaging(replace(configured, image_dir="data/imaging/m0416/canucs_dr1", figure_suffix="_jwst"), required=True)
+    message = str(raised.value)
+    assert f"loaded from {Path('data/imaging/m0416/canucs_dr1').absolute()} (" in message
+    assert "relative to the working directory" in message and "--remap cannot move it" in message
+    assert "run the command from the directory that contains data/imaging/m0416/canucs_dr1" in message
+    assert "repository root" not in message
+
+
+def test_a_bad_set_on_the_run_command_is_a_usage_error(monkeypatch, capsys):
+    from kappaccino import cli
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    assert cli.main(["catalogs/hera", "--dry-run", "--set", "outputs.rgb.bogus=1"]) == 2
+    error = capsys.readouterr().err
+    assert error.startswith("kappaccino: outputs.rgb.bogus: no such field") and "Traceback" not in error
+    assert cli.main(["catalogs/hera", "--dry-run", "--set", "outputs.workers=0"]) == 2
+    assert "outputs.workers must be a positive integer" in capsys.readouterr().err

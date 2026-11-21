@@ -64,6 +64,7 @@ class FitModule(OutputModule):
     description = ("posterior tables, chain traces, audit, scaling relation, potfile plots, corners, covariance, GP/GRF "
                    "plots, member diagnostics")
     compute_steps = ("tables", "chain_traces", "audit", "scaling_table", "covariance", "fields", "members")
+    shared_settings = ("draws", "image_draws", "caustic_source_redshift")
     render_steps = ("chain_traces", "potfiles", "block_corner", "cosmology_corner", "covariance", "fields", "members",
                     "scaling_plot", "globals_corner")
 

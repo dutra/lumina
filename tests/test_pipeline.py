@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -211,3 +212,31 @@ def test_gp_image_plane_model(synthetic_config):
     expected = np.asarray(stats["whitening"]["centroid"]) + np.einsum("fij,fj->fi", np.asarray(stats["whitening"]["cholesky"]), offsets)
     np.testing.assert_allclose(np.asarray(stats["source_by_family"]), expected, rtol=1e-12, atol=1e-12)
     assert np.isfinite(float(evaluator.loglike(jnp.asarray(theta))))
+
+
+def test_a_saved_configuration_is_written_atomically(monkeypatch, synthetic_config, tmp_path):
+    """config.json goes through a temporary file in its own folder and a rename; a failure before the rename leaves
+    the old file whole and no temporary file behind."""
+    import os
+    config = synthetic_config
+    tmp_path = tmp_path / "artifacts"
+    artifacts.save_config(tmp_path, config)
+    before = (tmp_path / artifacts.CONFIG_FILE).read_bytes()
+    renames = []
+    real = os.replace
+    monkeypatch.setattr(os, "replace", lambda src, dst: renames.append((Path(src), Path(dst))) or real(src, dst))
+    changed = replace(config, outputs=replace(config.outputs, draws=3, image_draws=3))
+    artifacts.save_config(tmp_path, changed)
+    (source, target), = renames
+    assert source.parent == target.parent == tmp_path and target.name == artifacts.CONFIG_FILE and source != target
+    assert artifacts.load_config(tmp_path).outputs.draws == 3
+    written = (tmp_path / artifacts.CONFIG_FILE).read_bytes()
+
+    def crash(src, dst):
+        raise OSError("crashed before the rename")
+
+    monkeypatch.setattr(os, "replace", crash)
+    with pytest.raises(OSError, match="before the rename"):
+        artifacts.save_config(tmp_path, config)
+    assert (tmp_path / artifacts.CONFIG_FILE).read_bytes() == written != before
+    assert sorted(p.name for p in tmp_path.iterdir()) == [artifacts.CONFIG_FILE]
