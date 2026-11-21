@@ -9,9 +9,9 @@ import pytest
 
 import numpyro.distributions as dist
 
-from kappaccino import priors
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.core.state import build_state
+from lumina import priors
+from lumina.likelihood.evaluator import Evaluator
+from lumina.core.state import build_state
 
 
 def test_sigma_meas_is_the_sampled_measurement_error(synthetic_config):

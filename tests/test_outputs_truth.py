@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from kappaccino.outputs import OutputContext, run_modules
+from lumina.outputs import OutputContext, run_modules
 
 
 def _truth_maps(folder, reference, *, size=121, scale=.5, einstein=12.):
@@ -37,11 +37,11 @@ def _truth_maps(folder, reference, *, size=121, scale=.5, einstein=12.):
 def test_the_real_truth_module_renders_its_figures_again_from_the_store(synthetic_config, tmp_path, monkeypatch):
     import jax
     import jax.numpy as jnp
-    from kappaccino.core.state import build_state
-    from kappaccino.likelihood.evaluator import Evaluator
-    from kappaccino.outputs import saved_run
-    from kappaccino.pipeline import StagePaths
-    from kappaccino.reporting import draws as draws_module
+    from lumina.core.state import build_state
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.outputs import saved_run
+    from lumina.pipeline import StagePaths
+    from lumina.reporting import draws as draws_module
     state = build_state(synthetic_config)
     maps = _truth_maps(tmp_path / "truth", state.reference)
     outputs = synthetic_config.outputs

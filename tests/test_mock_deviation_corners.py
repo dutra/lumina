@@ -1,7 +1,7 @@
 import numpy as np
 from types import SimpleNamespace
-from kappaccino.mock_validation import deviation_corners as plots
-from kappaccino.io.hdf5 import load_arrays
+from lumina.mock_validation import deviation_corners as plots
+from lumina.io.hdf5 import load_arrays
 
 
 def test_standardized_draws_keep_bias_and_joint_correlation():

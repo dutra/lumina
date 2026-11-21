@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from kappaccino.plotting.scatter_summary import MU_REF, conditional_scatter, render_scatter_summary, run_scatter_table
+from lumina.plotting.scatter_summary import MU_REF, conditional_scatter, render_scatter_summary, run_scatter_table
 
 
 class Draws:

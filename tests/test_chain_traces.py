@@ -1,14 +1,14 @@
 from types import SimpleNamespace
 import json
-from kappaccino.config import OutputsConfig
-from kappaccino.io import store
+from lumina.config import OutputsConfig
+from lumina.io import store
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from numpyro.diagnostics import effective_sample_size, split_gelman_rubin
 
-from kappaccino.plotting.chain_traces import render_chain_traces, save_chain_traces, trace_data
+from lumina.plotting.chain_traces import render_chain_traces, save_chain_traces, trace_data
 
 
 def fixture(chains=2, draws=30):
@@ -68,9 +68,9 @@ def test_pdf_provenance_and_style_isolation(tmp_path):
 
 
 def test_normal_output_hook(tmp_path, monkeypatch):
-    from kappaccino.outputs import fit as module
-    from kappaccino.plotting import plots
-    from kappaccino.reporting import outputs
+    from lumina.outputs import fit as module
+    from lumina.plotting import plots
+    from lumina.reporting import outputs
     p, specs = fixture()
     state = SimpleNamespace(parameter_specs=specs)
     config = SimpleNamespace(paths=SimpleNamespace(figure_prefix='test'), outputs=OutputsConfig(draws=2, image_draws=2, workers=1), runtime=SimpleNamespace(seed=0))
@@ -78,7 +78,7 @@ def test_normal_output_hook(tmp_path, monkeypatch):
     monkeypatch.setattr(module, 'posterior_summary_table', lambda *a: __import__('pandas').DataFrame())
     monkeypatch.setattr(module, 'classification_table', lambda *a: __import__('pandas').DataFrame())
     monkeypatch.setattr(plots, 'member_scaling_table', lambda *a: __import__('pandas').DataFrame())
-    from kappaccino.reporting import results_tex
+    from lumina.reporting import results_tex
     monkeypatch.setattr(results_tex, 'write_run_results', lambda *a, **k: None)
     summary = outputs.write_outputs(config, state, SimpleNamespace(physical=lambda x: x), p, {}, paths, log=lambda _: None,
                                     only=('fit',), skip=(), fail_fast=False)

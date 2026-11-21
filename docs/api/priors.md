@@ -1,38 +1,38 @@
 # Priors
 
 ```{eval-rst}
-.. automodule:: kappaccino.priors
+.. automodule:: lumina.priors
    :no-members:
 
 Building priors
 ---------------
 
-.. autofunction:: kappaccino.priors.truncated_lognormal
-.. autofunction:: kappaccino.priors.lognormal_from_moments
-.. autofunction:: kappaccino.priors.cut_excess_from_moments
-.. autofunction:: kappaccino.priors.ellipticity_box
-.. autofunction:: kappaccino.priors.shear_box
-.. autofunction:: kappaccino.priors.scaled
+.. autofunction:: lumina.priors.truncated_lognormal
+.. autofunction:: lumina.priors.lognormal_from_moments
+.. autofunction:: lumina.priors.cut_excess_from_moments
+.. autofunction:: lumina.priors.ellipticity_box
+.. autofunction:: lumina.priors.shear_box
+.. autofunction:: lumina.priors.scaled
 
 Inspecting priors
 -----------------
 
-.. autofunction:: kappaccino.priors.describe
-.. autofunction:: kappaccino.priors.split
-.. autofunction:: kappaccino.priors.family
-.. autofunction:: kappaccino.priors.parameters
-.. autofunction:: kappaccino.priors.bounds
-.. autofunction:: kappaccino.priors.center
-.. autofunction:: kappaccino.priors.physical_bounds
-.. autofunction:: kappaccino.priors.physical_center
-.. autofunction:: kappaccino.priors.is_distribution
-.. autofunction:: kappaccino.priors.to_scipy
+.. autofunction:: lumina.priors.describe
+.. autofunction:: lumina.priors.split
+.. autofunction:: lumina.priors.family
+.. autofunction:: lumina.priors.parameters
+.. autofunction:: lumina.priors.bounds
+.. autofunction:: lumina.priors.center
+.. autofunction:: lumina.priors.physical_bounds
+.. autofunction:: lumina.priors.physical_center
+.. autofunction:: lumina.priors.is_distribution
+.. autofunction:: lumina.priors.to_scipy
 
 Serialization
 -------------
 
-.. autofunction:: kappaccino.priors.to_dict
-.. autofunction:: kappaccino.priors.from_dict
-.. autofunction:: kappaccino.priors.make
-.. autofunction:: kappaccino.priors.rebuild
+.. autofunction:: lumina.priors.to_dict
+.. autofunction:: lumina.priors.from_dict
+.. autofunction:: lumina.priors.make
+.. autofunction:: lumina.priors.rebuild
 ```

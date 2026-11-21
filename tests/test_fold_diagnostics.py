@@ -1,14 +1,14 @@
 from types import SimpleNamespace
 from dataclasses import replace
 import json
-from kappaccino.io import store
+from lumina.io import store
 
 import numpy as np
 import matplotlib.pyplot as plt
 import pytest
 from astropy.wcs import WCS
 
-from kappaccino.plotting import fold_pairs as fd
+from lumina.plotting import fold_pairs as fd
 
 
 class FakeDraws:
@@ -73,7 +73,7 @@ def test_empty_artifact(tmp_path):
 
 
 def test_fold_render_style_and_all_draw_accounting(synthetic_config,tmp_path,monkeypatch):
-    from kappaccino.imaging import cutouts
+    from lumina.imaging import cutouts
     rng=np.random.default_rng(11);n=40
     rel=rng.normal(size=(n,2))*[.04,.01];rel[:,1]+=.005
     curve=np.stack([np.linspace(-2,2,97),np.zeros(97)],axis=1)
@@ -119,7 +119,7 @@ def test_compute_all_draws_including_no_pair(synthetic_config, monkeypatch):
                           family_data=[SimpleNamespace(family_id='f',z_source=2.)])
     samples=np.array([[-.02],[.03]])
     positions=np.array([[[np.nan,np.nan],[np.nan,np.nan]],[[0.,-np.sqrt(.06)],[0.,np.sqrt(.06)]]])
-    from kappaccino.diagnostics import position_contours
+    from lumina.diagnostics import position_contours
     monkeypatch.setattr(position_contours,'position_draws',lambda draws,tables:dict(recovered=positions,image_labels=np.array(['a','b'])))
     # det A = y for every draw: the median critical curve is y = 0, between the two images.
     draws=FakeDraws(FoldEvaluator(),samples,maps=lambda s,x,y,z:{'detA_parametric':np.stack([y]*len(s))})
@@ -460,7 +460,7 @@ def test_prepare_fold_plot_records_gravitational_display(monkeypatch):
 
 
 def test_standard_system_render_retains_latest_style_and_ignores_cached_gp(synthetic_config,tmp_path,monkeypatch):
-    from kappaccino.imaging import cutouts
+    from lumina.imaging import cutouts
     from matplotlib.backends.backend_pdf import PdfPages
     from matplotlib.contour import QuadContourSet
     rng=np.random.default_rng(38);n=40

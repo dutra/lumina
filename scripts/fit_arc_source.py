@@ -34,12 +34,12 @@ from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from scipy.optimize import minimize
 
-from kappaccino.io import artifacts
-from kappaccino.io.hdf5 import load_arrays, save_arrays
-from kappaccino.imaging import cutouts
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.io.sky import radec_to_offsets_arcsec
-from kappaccino.core.state import build_state, with_member_classes
+from lumina.io import artifacts
+from lumina.io.hdf5 import load_arrays, save_arrays
+from lumina.imaging import cutouts
+from lumina.likelihood.evaluator import Evaluator
+from lumina.io.sky import radec_to_offsets_arcsec
+from lumina.core.state import build_state, with_member_classes
 
 NIRCAM_FWHM_ARCSEC = {"F115W": 0.040, "F150W": 0.050, "F200W": 0.066, "F277W": 0.092, "F356W": 0.116, "F444W": 0.145}
 GAIN_E_PER_DN = 2.0        # NIRCam, approximate; only the Poisson part of the noise map depends on it
@@ -678,8 +678,8 @@ def figure(out, args, cut, model, params, betas, det, tags, source_extent):
     import matplotlib
     matplotlib.use("pdf")
     import matplotlib.pyplot as plt
-    from kappaccino.plotting.style import PAPER_STYLE
-    plt.style.use(str(ROOT / "src/kappaccino/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
+    from lumina.plotting.style import PAPER_STYLE
+    plt.style.use(str(ROOT / "src/lumina/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
     rows = min(len(params), 4)
     fig, axes = plt.subplots(rows, 4, figsize=(7.2, 1.85 * rows), constrained_layout=True, squeeze=False)
     xc, yc = cut["xc"], cut["yc"]
@@ -722,8 +722,8 @@ def figure_pixels(out, cut, model, sources, members_pm, betas, origins, det, tag
     import matplotlib
     matplotlib.use("pdf")
     import matplotlib.pyplot as plt
-    from kappaccino.plotting.style import PAPER_STYLE
-    plt.style.use(str(ROOT / "src/kappaccino/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
+    from lumina.plotting.style import PAPER_STYLE
+    plt.style.use(str(ROOT / "src/lumina/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
     rows = min(len(sources), 4)
     fig, axes = plt.subplots(rows, 4, figsize=(7.2, 1.85 * rows), constrained_layout=True, squeeze=False)
     xc, yc = cut["xc"], cut["yc"]; ext = [xc[0, 0], xc[0, -1], yc[0, 0], yc[-1, 0]]
@@ -767,8 +767,8 @@ def figure_zoom(out, cut, model_image, knots_xy, knot_labels, width):
     matplotlib.use("pdf")
     import matplotlib.pyplot as plt
     from scipy.ndimage import map_coordinates
-    from kappaccino.plotting.style import PAPER_STYLE
-    plt.style.use(str(ROOT / "src/kappaccino/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
+    from lumina.plotting.style import PAPER_STYLE
+    plt.style.use(str(ROOT / "src/lumina/plotting/style.mplstyle")); plt.rcParams.update(PAPER_STYLE)
     data, noise, mask = (np.asarray(cut[k]) for k in ("data", "noise", "mask"))
     xc, yc, scale = cut["xc"], cut["yc"], cut["scale"]
     bright = mask & (data > 5 * noise)

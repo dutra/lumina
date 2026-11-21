@@ -15,12 +15,12 @@ def main():
     matplotlib.use('Agg')
     import numpy as np
     import pandas as pd
-    from kappaccino.plotting.fields import render_grf_correction
-    from kappaccino.io.hdf5 import load_arrays
-    from kappaccino.io.member_catalog import load_member_catalog
-    from kappaccino.io.sky import radec_to_offsets_arcsec
-    from kappaccino.plotting.jwst_rgb import marker_photometry
-    from kappaccino.core.utils import log10_dpie_mass_msun
+    from lumina.plotting.fields import render_grf_correction
+    from lumina.io.hdf5 import load_arrays
+    from lumina.io.member_catalog import load_member_catalog
+    from lumina.io.sky import radec_to_offsets_arcsec
+    from lumina.plotting.jwst_rgb import marker_photometry
+    from lumina.core.utils import log10_dpie_mass_msun
     final = args.run_directory.resolve() / 'final'
     source = final / 'tables/conditional_field_maps.h5'
     config = json.loads((final / 'artifacts/config.json').read_text())
@@ -52,7 +52,7 @@ def main():
     images = pd.read_csv(final / 'tables/image_fit_quality.csv')
     np.testing.assert_allclose(images[['x_obs_arcsec','y_obs_arcsec']].to_numpy(),data['xy'],atol=1e-9)
     photometry = marker_photometry(images,reference,
-        Path(__file__).resolve().parents[1]/'src/kappaccino/data/m0416_image_f200w_photometry.csv')
+        Path(__file__).resolve().parents[1]/'src/lumina/data/m0416_image_f200w_photometry.csv')
     data['image_sizes'] = photometry.marker_area_pt2.to_numpy()
     archive = load_arrays(final / 'tables/member_diagnostic_draws.h5')
     deviations = archive['deviations'][indices]

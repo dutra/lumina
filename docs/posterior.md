@@ -1,6 +1,6 @@
 # Posterior output reference
 
-This page defines every posterior parameter and derived quantity of a kappaccino fit: its name, unit or coordinate,
+This page defines every posterior parameter and derived quantity of a lumina fit: its name, unit or coordinate,
 and meaning. Which parameters exist depends on the configuration. A field without a prior is fixed and has no column,
 and the error-model parameters depend on the likelihood. A parameter that is present but unconstrained by the data
 returns its prior; it is not a measurement.
@@ -20,7 +20,7 @@ From the files of a finished run, without rebuilding the model:
 
 ```python
 import json
-from kappaccino.io.hdf5 import load_arrays
+from lumina.io.hdf5 import load_arrays
 
 root = "results/demo/hera"
 saved = load_arrays(f"{root}/final/artifacts/posterior.h5")
@@ -29,7 +29,7 @@ physical = saved["physical"]                                          # (draw, p
 ```
 
 The table `posterior_summary` of `final/results.h5` holds the same quantities as one row per parameter (tables are
-read with `kappaccino.io.store.read_table`; {doc}`outputs`).
+read with `lumina.io.store.read_table`; {doc}`outputs`).
 
 Every array is in parameter order, the order of `state.parameter_specs` and of `names` above. Draws are concatenated
 chain by chain; `grouped_samples` keeps the chain axis.

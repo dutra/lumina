@@ -3,13 +3,13 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from kappaccino.reporting import draws as reporting
+from lumina.reporting import draws as reporting
 
 
 def _run(monkeypatch, *, field=True):
     """A lens whose parametric Jacobian at draw theta is theta[0] I and whose GRF Jacobian at the reference redshift
     is theta[1] I (family zero weight 1), with a lens efficiency equal to the source redshift."""
-    from kappaccino.lens import cosmology
+    from lumina.lens import cosmology
     monkeypatch.setattr(cosmology, 'dpie_sigma0_factor_from_config', lambda zl, z, c: z)
     calls = []
     def total_fields_at(xy, packed, chunk=4096):
@@ -71,7 +71,7 @@ def test_product_draws_are_nested_in_the_image_draws(monkeypatch):
 
 
 def test_an_image_draw_gets_the_product_draws_field_or_its_own_seeded_one(monkeypatch):
-    from kappaccino.plotting import grf
+    from lumina.plotting import grf
     evaluator, posterior, _ = _run(monkeypatch)
     evaluator._padded_evaluator = lambda: evaluator
     posterior = SimpleNamespace(samples=np.arange(100.)[:, None], physical=np.arange(100.)[:, None])

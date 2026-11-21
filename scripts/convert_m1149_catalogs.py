@@ -34,8 +34,8 @@ from astropy.coordinates import SkyCoord
 from astropy.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from kappaccino.io.image_catalog import write_image_catalog  # noqa: E402
-from kappaccino.io.member_catalog import write_member_catalog  # noqa: E402
+from lumina.io.image_catalog import write_image_catalog  # noqa: E402
+from lumina.io.member_catalog import write_member_catalog  # noqa: E402
 
 BCG = SkyCoord("11:49:35.699 +22:23:54.71", unit=(u.hourangle, u.deg))
 REFSDAL_Z = 1.489

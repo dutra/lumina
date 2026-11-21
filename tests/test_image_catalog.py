@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 import yaml
 
-from kappaccino.io.image_catalog import CatalogError, load_image_catalog, write_image_catalog
-from kappaccino.core.state import build_state
+from lumina.io.image_catalog import CatalogError, load_image_catalog, write_image_catalog
+from lumina.core.state import build_state
 
 ROOT = Path(__file__).resolve().parents[1]
 BERGAMINI = ROOT / "catalogs/m0416/bergamini2023/source/obs_arcs.cat"

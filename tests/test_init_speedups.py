@@ -11,13 +11,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from kappaccino.io import artifacts
-from kappaccino.likelihood import gp_knee
-from kappaccino.config import SearchConfig
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.inference.search import Objective, multistart_map, prior_starts
-from kappaccino.inference.search_split import search_blocks, warm_start_theta
-from kappaccino.core.state import build_state
+from lumina.io import artifacts
+from lumina.likelihood import gp_knee
+from lumina.config import SearchConfig
+from lumina.likelihood.evaluator import Evaluator
+from lumina.inference.search import Objective, multistart_map, prior_starts
+from lumina.inference.search_split import search_blocks, warm_start_theta
+from lumina.core.state import build_state
 from test_gp_knee import knee_config, two_knot_config
 
 
@@ -97,7 +97,7 @@ def test_warm_start_maps_a_saved_start_by_name_and_uncenters_deviations(tmp_path
 
 
 def test_converged_chain_starts_raise_the_nuts_target(synthetic_config):
-    from kappaccino.pipeline import converge_chain_starts
+    from lumina.pipeline import converge_chain_starts
     config = replace(synthetic_config, search=replace(synthetic_config.search, nuts_start_max_iter=200))
     state = build_state(config)
     evaluator = Evaluator(state)
@@ -111,9 +111,9 @@ def test_converged_chain_starts_raise_the_nuts_target(synthetic_config):
 
 
 def test_chain_starts_trailing_the_best_by_more_than_the_margin_are_dropped(synthetic_config, monkeypatch):
-    from kappaccino import pipeline
-    from kappaccino.inference import search as search_module
-    from kappaccino.inference.search import chain_starts
+    from lumina import pipeline
+    from lumina.inference import search as search_module
+    from lumina.inference.search import chain_starts
     config = replace(synthetic_config, search=replace(synthetic_config.search, nuts_start_max_iter=5, mode_margin=10.0, max_chain_modes=3))
     state = build_state(config)
     evaluator = Evaluator(state)
@@ -140,7 +140,7 @@ def test_chain_starts_trailing_the_best_by_more_than_the_margin_are_dropped(synt
 
 
 def test_optax_lbfgs_stops_once_every_start_has_converged(synthetic_config):
-    from kappaccino.inference.search import run_optax_lbfgs
+    from lumina.inference.search import run_optax_lbfgs
     state = build_state(synthetic_config)
     evaluator = Evaluator(state)
     objective = Objective(state, evaluator, state.initial_theta, include_latent=True, log_likelihood=evaluator.log_likelihood)
@@ -158,7 +158,7 @@ def test_optax_lbfgs_stops_once_every_start_has_converged(synthetic_config):
 
 
 def test_scipy_lbfgs_stops_on_the_tolerance_and_matches_the_cap(synthetic_config):
-    from kappaccino.inference.search import run_scipy_lbfgs
+    from lumina.inference.search import run_scipy_lbfgs
     state = build_state(synthetic_config)
     evaluator = Evaluator(state)
     objective = Objective(state, evaluator, state.initial_theta, include_latent=True, log_likelihood=evaluator.log_likelihood)
@@ -175,7 +175,7 @@ def test_scipy_lbfgs_stops_on_the_tolerance_and_matches_the_cap(synthetic_config
 
 
 def test_chain_start_conditioning_flags_a_start_away_from_the_mode(synthetic_config):
-    from kappaccino.pipeline import START_DECREMENT_WARNING, chain_start_conditioning, converge_chain_starts
+    from lumina.pipeline import START_DECREMENT_WARNING, chain_start_conditioning, converge_chain_starts
     config = replace(synthetic_config, search=replace(synthetic_config.search, nuts_start_max_iter=300))
     state = build_state(config)
     evaluator = Evaluator(state)
@@ -212,7 +212,7 @@ def test_grouped_blocks_give_the_padded_mean_deflection_and_sources(tmp_path):
 def test_chain_start_keeps_the_member_scatters_pinned(synthetic_config):
     """The chain-start step holds the member scatters at the search's value (free, an optimizer drives them to zero);
     every member is a unit offset by default."""
-    from kappaccino.pipeline import converge_chain_starts
+    from lumina.pipeline import converge_chain_starts
     config = replace(synthetic_config, search=replace(synthetic_config.search, nuts_start_max_iter=50))
     assert config.members.centering == "none"
     state = build_state(config)

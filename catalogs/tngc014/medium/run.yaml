@@ -1,5 +1,5 @@
 # How the medium tngc014 catalog is fitted: the settings of ../large/run.yaml.
-# kappaccino catalogs/tngc014/medium [--profile fast] [--profile cosmography]
+# lumina catalogs/tngc014/medium [--profile fast] [--profile cosmography]
 extends: ../large/run.yaml
 name: tngc014_medium
 priors: priors.yaml

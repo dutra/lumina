@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from kappaccino import cpu_runtime as cpu
+from lumina import cpu_runtime as cpu
 
 
 @pytest.mark.parametrize("chains", [1, 2, 4, 8])
@@ -24,7 +24,7 @@ def test_parallel_backend_limits_loaded_and_future_blas():
 import os
 import numpy as np
 from threadpoolctl import threadpool_info
-from kappaccino import cpu_runtime as cpu
+from lumina import cpu_runtime as cpu
 plan = cpu.configure_cpu_runtime(4, 'parallel')
 assert plan.blas_threads == 1
 assert all(os.environ[name] == '1' for name in cpu._BLAS_VARIABLES)
@@ -58,7 +58,7 @@ def test_fresh_backend_and_spawned_worker_follow_resolved_chains(tmp_path, chain
     script = tmp_path / "cpu_spawn_check.py"
     script.write_text('''
 import json, multiprocessing, os
-from kappaccino.cpu_runtime import configure_cpu_runtime
+from lumina.cpu_runtime import configure_cpu_runtime
 def cpus():
     return sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
 def inspect_backend():
@@ -108,7 +108,7 @@ def test_late_backend_setup_fails_actionably():
     code = """
 import jax
 jax.devices('cpu')
-from kappaccino.cpu_runtime import configure_cpu_runtime
+from lumina.cpu_runtime import configure_cpu_runtime
 try:
     configure_cpu_runtime(1, 'parallel')
 except RuntimeError as error:
@@ -124,7 +124,7 @@ else:
 def test_launcher_uses_resolved_runtime_before_cosmology(cluster):
     code = """
 import os, shutil, sys
-from kappaccino import cli
+from lumina import cli
 from jax._src import xla_bridge
 assert not xla_bridge.backends_are_initialized(), 'importing the launcher initialized JAX before CPU setup'
 before = sorted(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else None
@@ -133,7 +133,7 @@ def check_run(config, stage="both"):
     assert config.runtime.chains == 2
     assert len(jax.devices('cpu')) == 2
     assert (sorted(os.sched_getaffinity(0)) if before is not None else None) == before      # not pinned
-import kappaccino.pipeline as pipeline
+import lumina.pipeline as pipeline
 pipeline.run = check_run
 try:
     assert cli.main([sys.argv[1], '--results', 'results/pytest_cpu_launcher', '--set', 'runtime.chains=2']) == 0

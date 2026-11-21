@@ -41,12 +41,12 @@ from sklearn.metrics import adjusted_rand_score
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from kappaccino.io.hdf5 import load_arrays  # noqa: E402
-from kappaccino.io.image_catalog import load_image_catalog  # noqa: E402
-from kappaccino.io.sky import radec_to_offsets_arcsec  # noqa: E402
+from lumina.io.hdf5 import load_arrays  # noqa: E402
+from lumina.io.image_catalog import load_image_catalog  # noqa: E402
+from lumina.io.sky import radec_to_offsets_arcsec  # noqa: E402
 
 FITS = ("full", "ignore", "groups")
-PARTITION_FILE = "uncertain_images.h5"     # kappaccino.partition.groups.OUTPUT_FILE
+PARTITION_FILE = "uncertain_images.h5"     # lumina.partition.groups.OUTPUT_FILE
 
 
 def run_dir(root: Path, case: str, fit: str) -> Path:

@@ -5,8 +5,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.core.state import build_state, with_member_classes
+from lumina.likelihood.evaluator import Evaluator
+from lumina.core.state import build_state, with_member_classes
 
 SCATTER = 0.1
 

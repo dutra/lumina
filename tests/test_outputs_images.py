@@ -9,9 +9,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.io import store
-from kappaccino.outputs import OutputContext, OutputModule, run_modules
-from kappaccino.outputs.images import ImagesModule
+from lumina.io import store
+from lumina.outputs import OutputContext, OutputModule, run_modules
+from lumina.outputs.images import ImagesModule
 
 
 def recovery_tables(empty=False):
@@ -60,10 +60,10 @@ class Setup:
     """A stage, the fakes of the draws, the solver, the fit numbers, the true-lens RMS and the two figures, and passes."""
 
     def __init__(self, monkeypatch, tmp_path):
-        from kappaccino.diagnostics import image_recovery
-        from kappaccino.outputs import images as images_module
-        from kappaccino.plotting import plots
-        from kappaccino.reporting import draws as draws_module
+        from lumina.diagnostics import image_recovery
+        from lumina.outputs import images as images_module
+        from lumina.plotting import plots
+        from lumina.reporting import draws as draws_module
         self.monkeypatch, self.tmp_path = monkeypatch, tmp_path
         self.solved, self.drawn, self.true_lens_calls, self.lines = [], [], [], []
         self.tables, self.fail, self.true_lens_writes = recovery_tables(), False, True
@@ -111,7 +111,7 @@ class Setup:
 
     def context(self, mode="full"):
         self.mode = mode
-        from kappaccino.config import OutputsConfig, TruthOutputConfig
+        from lumina.config import OutputsConfig, TruthOutputConfig
         config = SimpleNamespace(outputs=OutputsConfig(truth=TruthOutputConfig(deflection_true_fits=self.deflection)),
                                  paths=SimpleNamespace(figure_prefix="toy"))
         state = SimpleNamespace(family_data=[], parameter_specs=[], cosmo_config={"H0": 70.0, "Om0": 0.3})
@@ -148,7 +148,7 @@ def test_the_product_is_the_saved_tables(setup):
 
 
 def test_an_empty_image_table_round_trips_and_draws_no_figure(setup):
-    from kappaccino.outputs import module_named
+    from lumina.outputs import module_named
     setup.tables = recovery_tables(empty=True)
     ctx, records = setup.run()
     image_df = ctx.products["images"]["image_df"]
@@ -183,14 +183,14 @@ def test_a_render_pass_draws_both_figures_from_the_store(setup):
         else:
             pd.testing.assert_frame_equal(args[1], computed["image_recovery_extra_images"], check_exact=True)
     # The guard: in a render pass the draws and the evaluator are compute-only.
-    from kappaccino.outputs.base import ComputeOnly
+    from lumina.outputs.base import ComputeOnly
     for what in ("draws", "evaluator"):
         with pytest.raises(ComputeOnly):
             getattr(ctx, what)
 
 
 def test_a_render_step_that_asks_for_the_draws_fails(setup):
-    from kappaccino.plotting import plots
+    from lumina.plotting import plots
     setup.run()
     ctx = setup.context("render")
     setup.monkeypatch.setattr(plots, "plot_image_recovery", lambda *a, **k: ctx.draws)
@@ -263,8 +263,8 @@ def test_a_second_compute_reuses_the_saved_recovery(setup):
 
 
 def test_the_fit_numbers_survive_a_render_pass(setup):
-    from kappaccino.reporting import results_tex
-    from kappaccino.reporting.outputs import write_run_summary
+    from lumina.reporting import results_tex
+    from lumina.reporting.outputs import write_run_summary
     setup.monkeypatch.setattr(results_tex, "write_run_results", lambda *a, **k: None)
     modules = [ImagesModule()]
     ctx, _ = setup.run(modules=modules)

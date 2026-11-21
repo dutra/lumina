@@ -4,8 +4,8 @@ For updated field calculations, use plot_mock_posterior_fields.py.
 """
 from pathlib import Path
 import argparse
-from kappaccino.mock_validation.aggregate_plots import load_campaign
-from kappaccino.mock_validation.field_recovery_plots import plot_field_recovery
+from lumina.mock_validation.aggregate_plots import load_campaign
+from lumina.mock_validation.field_recovery_plots import plot_field_recovery
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)

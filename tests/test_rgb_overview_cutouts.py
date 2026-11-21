@@ -2,9 +2,9 @@
 from types import SimpleNamespace as NS
 import matplotlib.pyplot as plt
 import numpy as np
-from kappaccino.io import store
-from kappaccino.plotting import rgb_overview_cutouts as rc
-from kappaccino.io.hdf5 import save_arrays
+from lumina.io import store
+from lumina.plotting import rgb_overview_cutouts as rc
+from lumina.io.hdf5 import save_arrays
 IMAGE_LABELS=('K34.b','K34.a','K33.e','K77.b')
 M0416_SMALL_LAMBDA=('K33B.b','K34.a','K34.b','K14B.a','K14A.c')
 SYSTEM_IDS=('K1','K6','K8','K12')
@@ -78,7 +78,7 @@ def test_partial_system_draws_median_critical_field_without_anchor(monkeypatch):
 
 def test_configured_panel_order_roundtrip_and_limit(tmp_path):
     from dataclasses import asdict
-    from kappaccino.config import RGBOutputConfig
+    from lumina.config import RGBOutputConfig
     import json
     config=RGBOutputConfig(paper_small_lambda_cutouts=IMAGE_LABELS,
                                    paper_fold_cutouts=SYSTEM_IDS)
@@ -103,7 +103,7 @@ def test_launcher_declares_ordered_panels():
 def test_explicit_panels_compute_missing_critical_fields(tmp_path,monkeypatch):
     import json
     import pandas as pd
-    from kappaccino.plotting import critical_fields
+    from lumina.plotting import critical_fields
     store.write_table(tmp_path,'toy_small_lambda_a_image_posteriors_jwst',pd.DataFrame(dict(image_label=['a','b'],x_arcsec=[0.,1.],y_arcsec=[0.,0.],z_source=[2.,3.],
                       shown=[False,False])))
     store.write_arrays(tmp_path,'posterior_overview_positions',image_labels=np.array(['a','b']),

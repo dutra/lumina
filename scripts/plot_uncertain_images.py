@@ -2,7 +2,7 @@
 
 Top row, for one case (``--case``, default 3 trusted families, seed 1): maps of the fractional convergence error of the
 fit with every family trusted, the fit that ignores the uncertain (photo-z) images, and the fit that sums the uncertain
-images over their partitions (``kappaccino.partition.groups``).  Bottom row, against the number of trusted ("gold")
+images over their partitions (``lumina.partition.groups``).  Bottom row, against the number of trusted ("gold")
 families (mean and standard deviation over the seeds, the seeds faint): the convergence bias and scatter near the
 images, and the pair recall (filled) and precision (open) of the recovered partition.
 
@@ -29,11 +29,11 @@ from astropy.io import fits  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "src")]
-from kappaccino.io.image_catalog import load_image_catalog  # noqa: E402
-from kappaccino.io.sky import radec_to_offsets_arcsec  # noqa: E402
+from lumina.io.image_catalog import load_image_catalog  # noqa: E402
+from lumina.io.sky import radec_to_offsets_arcsec  # noqa: E402
 from score_uncertain_images import offsets, run_dir  # noqa: E402
 
-plt.style.use(ROOT / "src" / "kappaccino" / "plotting" / "style.mplstyle")
+plt.style.use(ROOT / "src" / "lumina" / "plotting" / "style.mplstyle")
 PANEL = dict(fontsize=15, fontweight="bold", va="top")
 FULL = ("all families gold", "0.55")
 ARMS = {"ignore": ("photo-z images ignored", "#c0392b", "s"), "groups": ("photo-z images as groups", "#2e8b57", "D")}

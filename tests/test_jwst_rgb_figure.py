@@ -5,8 +5,8 @@ import pytest
 import h5py
 import numpy as np
 import pandas as pd
-from kappaccino.plotting.jwst_rgb import marker_photometry
-from kappaccino.io import store
+from lumina.plotting.jwst_rgb import marker_photometry
+from lumina.io import store
 
 
 def test_marker_matches_survive_reordering_but_reject_moved_images(tmp_path):
@@ -34,7 +34,7 @@ def test_no_photometry_keeps_all_image_markers():
 
 
 def test_critical_band_for_translating_line_and_identical_draws():
-    from kappaccino.plotting.jwst_rgb import critical_quantile_band
+    from lumina.plotting.jwst_rgb import critical_quantile_band
     x=np.linspace(-2,2,401)
     shifts=np.linspace(-1,1,101)
     lo,hi,band=critical_quantile_band(x[None,:]-shifts[:,None])
@@ -45,7 +45,7 @@ def test_critical_band_for_translating_line_and_identical_draws():
 
 
 def test_median_determinant_contour_and_band_are_matched():
-    from kappaccino.plotting.jwst_rgb import critical_quantile_summary
+    from lumina.plotting.jwst_rgb import critical_quantile_summary
     import contourpy
     x=np.linspace(-2,2,501);y=np.linspace(-1,1,11)
     xx,yy=np.meshgrid(x,y)
@@ -62,7 +62,7 @@ def test_median_determinant_contour_and_band_are_matched():
 
 def test_critical_band_shading_preserves_subpixel_interval():
     import matplotlib.pyplot as plt
-    from kappaccino.plotting.jwst_rgb import draw_critical_interval
+    from lumina.plotting.jwst_rgb import draw_critical_interval
     # Old min(-lower,upper) is negative at every node, losing the entire band.
     x=np.array([[-1.,1.],[-1.,1.]])
     low,high=x-.02,x+.02
@@ -85,8 +85,8 @@ def _fake_overview(monkeypatch):
     cutout of the RGB critical overview; returns the reporting-draw stand-in class."""
     from types import SimpleNamespace as NS
     from astropy.wcs import WCS
-    from kappaccino.plotting import mass_figure
-    from kappaccino.imaging import cutouts
+    from lumina.plotting import mass_figure
+    from lumina.imaging import cutouts
     wcs=WCS(naxis=2)
     wcs.wcs.ctype=['RA---TAN','DEC--TAN'];wcs.wcs.crval=[64.,-24.]
     wcs.wcs.crpix=[16.,16.];wcs.wcs.cdelt=[-.1/3600,.1/3600]
@@ -115,8 +115,8 @@ def _overview_catalog():
 @pytest.mark.parametrize('cluster',['hera','ares','as1063','newcluster','m0416'])
 def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, cluster):
     from types import SimpleNamespace as NS
-    from kappaccino.plotting import jwst_rgb as rgb, mass_figure
-    from kappaccino.diagnostics import position_contours as image_position_contours
+    from lumina.plotting import jwst_rgb as rgb, mass_figure
+    from lumina.diagnostics import position_contours as image_position_contours
     Draws=_fake_overview(monkeypatch)
     position_calls=[]
     def positions(*args, **kwargs):
@@ -188,7 +188,7 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
 
 
 def test_recovered_contours_are_enlarged_about_their_own_mean_position():
-    from kappaccino.plotting.jwst_rgb import (enlarged_contour_segments, recovered_contour_segments,
+    from lumina.plotting.jwst_rgb import (enlarged_contour_segments, recovered_contour_segments,
                                               RECOVERED_CONTOUR_PROBABILITY, RECOVERED_CONTOUR_SCALE)
     assert RECOVERED_CONTOUR_PROBABILITY == .682689492 and RECOVERED_CONTOUR_SCALE == 4.
     positions=np.array([[1.,2.],[3.,2.],[np.nan,np.nan],[2.,5.]])         # finite mean (2, 3)
@@ -212,7 +212,7 @@ def test_recovered_contours_are_enlarged_about_their_own_mean_position():
 
 def test_saved_tables_keep_string_ids(tmp_path):
     tables=tmp_path/'final'/'tables'
-    from kappaccino.plotting.jwst_rgb import read_saved_extra_images
+    from lumina.plotting.jwst_rgb import read_saved_extra_images
     frame=pd.DataFrame(dict(family_id=['1','NA'],image_label=['1.a','NA.b'],x_obs_arcsec=[1.,np.nan],
                             image_recovery_status=['recovered','not_recovered']))
     store.write_table(tables,'image_fit_quality',frame)
@@ -290,8 +290,8 @@ FAKE_IMAGING=({'F814W':object()},('F814W',),None,'hera')
 
 def _patch_redraw(monkeypatch, run, config=None):
     from types import SimpleNamespace as NS
-    from kappaccino.plotting import jwst_rgb as rgb
-    from kappaccino.imaging import cutouts
+    from lumina.plotting import jwst_rgb as rgb
+    from lumina.imaging import cutouts
     _fake_overview(monkeypatch)
     config=_redraw_config(run) if config is None else config
     monkeypatch.setattr(rgb,'rebuild_run_config',lambda run_dir:config)
@@ -307,7 +307,7 @@ def _snapshot(run):
 
 
 def test_redraw_from_saved_tables(tmp_path, monkeypatch):
-    from kappaccino.plotting import jwst_rgb as rgb
+    from lumina.plotting import jwst_rgb as rgb
     run=_saved_run(tmp_path)
     _patch_redraw(monkeypatch, run)
     tables=run/'final'/'tables'
@@ -345,8 +345,8 @@ def test_redraw_from_saved_tables(tmp_path, monkeypatch):
 
 def test_redraw_model_description_comes_from_the_saved_config(tmp_path, monkeypatch):
     import json
-    from kappaccino.plotting import jwst_rgb as rgb
-    from kappaccino.likelihood.grf_fields import shared_grf_label
+    from lumina.plotting import jwst_rgb as rgb
+    from lumina.likelihood.grf_fields import shared_grf_label
     from types import SimpleNamespace as NS
     run=_saved_run(tmp_path, likelihood=NO_FIELD_LIKELIHOOD)
     config=_patch_redraw(monkeypatch, run)
@@ -393,7 +393,7 @@ def _compare(a, b, path='inputs'):
 def test_pipeline_and_redraw_draw_the_same_picture(tmp_path, monkeypatch, field):
     import json
     from types import SimpleNamespace as NS
-    from kappaccino.plotting import jwst_rgb as rgb, mass_figure
+    from lumina.plotting import jwst_rgb as rgb, mass_figure
     run=_saved_run(tmp_path, likelihood=KNEE_LIKELIHOOD if field else NO_FIELD_LIKELIHOOD)
     tables,figures=run/'final'/'tables',run/'final'/'figures'
     with h5py.File(tables.parent/store.RESULTS_FILE,'a') as file:     # the band is written by the pipeline below
@@ -441,7 +441,7 @@ def test_pipeline_and_redraw_draw_the_same_picture(tmp_path, monkeypatch, field)
 
 
 def test_redraw_refuses_draws_missing_from_the_image_recovery(tmp_path, monkeypatch):
-    from kappaccino.plotting import jwst_rgb as rgb
+    from lumina.plotting import jwst_rgb as rgb
     run=_saved_run(tmp_path)
     _patch_redraw(monkeypatch, run)
     rgb.redraw_rgb_critical(run,log=lambda _:None)                    # a first redraw writes every output
@@ -455,8 +455,8 @@ def test_redraw_refuses_draws_missing_from_the_image_recovery(tmp_path, monkeypa
 
 
 def test_redraw_logs_a_figure_without_contours(tmp_path, monkeypatch):
-    from kappaccino.plotting import jwst_rgb as rgb
-    from kappaccino.diagnostics import position_contours
+    from lumina.plotting import jwst_rgb as rgb
+    from lumina.diagnostics import position_contours
     run=_saved_run(tmp_path)
     _patch_redraw(monkeypatch, run)
     monkeypatch.setattr(position_contours,'load_or_compute_contours',lambda *a,**k:{'curves':[]})
@@ -466,7 +466,7 @@ def test_redraw_logs_a_figure_without_contours(tmp_path, monkeypatch):
 
 
 def test_redraw_falls_back_and_refuses(tmp_path, monkeypatch):
-    from kappaccino.plotting import jwst_rgb as rgb
+    from lumina.plotting import jwst_rgb as rgb
     run=_saved_run(tmp_path)
     _patch_redraw(monkeypatch, run)
     tables=run/'final'/'tables'
@@ -487,7 +487,7 @@ def test_redraw_falls_back_and_refuses(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize('name',['posterior_image_residual_draws','image_fit_quality','final/artifacts/config.json'])
 def test_redraw_names_the_run_of_a_missing_table(tmp_path, monkeypatch, name):
-    from kappaccino.plotting import jwst_rgb as rgb
+    from lumina.plotting import jwst_rgb as rgb
     run=_saved_run(tmp_path)
     _patch_redraw(monkeypatch, run)
     if '/' in name:
@@ -504,7 +504,7 @@ def test_redraw_names_the_run_of_a_missing_table(tmp_path, monkeypatch, name):
 
 
 def test_redraw_entry_point_refuses_a_missing_folder(tmp_path, capsys):
-    from kappaccino.plotting import jwst_rgb as rgb
+    from lumina.plotting import jwst_rgb as rgb
     missing=tmp_path/'results'/'hera'/'no-such-run'
     with pytest.raises(SystemExit) as stop:
         rgb.main([str(missing)])
@@ -515,8 +515,8 @@ def test_redraw_entry_point_refuses_a_missing_folder(tmp_path, capsys):
 def test_rebuilt_run_config_must_match_the_saved_picture_inputs(tmp_path, monkeypatch):
     import json
     from pathlib import Path
-    from kappaccino import cli
-    from kappaccino.plotting.jwst_rgb import rebuild_run_config, saved_grf_field
+    from lumina import cli
+    from lumina.plotting.jwst_rgb import rebuild_run_config, saved_grf_field
     monkeypatch.chdir(Path(__file__).resolve().parents[1])
     run=tmp_path/'results'/'hera'/'myrun'
     (run/'inputs').mkdir(parents=True); (run/'final'/'artifacts').mkdir(parents=True)
@@ -546,7 +546,7 @@ def test_rebuilt_run_config_must_match_the_saved_picture_inputs(tmp_path, monkey
 
 def test_overview_catalog_magnitude_scaling_and_id_alignment(tmp_path):
     from types import SimpleNamespace as NS
-    from kappaccino.plotting.jwst_rgb import overview_marker_photometry, rgb_overview_stem
+    from lumina.plotting.jwst_rgb import overview_marker_photometry, rgb_overview_stem
     path = tmp_path / 'images.yaml'
     path.write_text('''format: lenscluster-images/1
 systems:
@@ -558,7 +558,7 @@ systems:
 ''')
     config = NS(model=NS(image_constraints=NS(catalog_path=path)))
     catalog = pd.DataFrame(dict(image_label=['1.b', '1.a', 'new'], x_obs_arcsec=[0.,0.,0.], y_obs_arcsec=[0.,0.,0.]))
-    from kappaccino.plotting.jwst_rgb import marker_photometry
+    from lumina.plotting.jwst_rgb import marker_photometry
     result = overview_marker_photometry(config, catalog, marker_photometry(catalog, (3,64.,-24.)), 'hst_rgb_critical_z9')
     np.testing.assert_allclose(result.magnitude_AB[:2], [28.,24.])
     np.testing.assert_allclose(result.marker_area_pt2, [9.,16*10**.4,9.])

@@ -1,6 +1,6 @@
 from dataclasses import replace
 import json
-from kappaccino.io import store
+from lumina.io import store
 from types import SimpleNamespace
 
 import jax
@@ -9,14 +9,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.diagnostics.members import (
+from lumina.likelihood.evaluator import Evaluator
+from lumina.diagnostics.members import (
     compute_member_diagnostics, deviation_draws, neighbor_variables, prior_deviation_draws,
     reporting_fields, whiten,
 )
-from kappaccino.plotting.members import render_member_diagnostics, save_member_diagnostics
-from kappaccino.core.model import member_log_deviations
-from kappaccino.core.state import build_state, with_member_classes
+from lumina.plotting.members import render_member_diagnostics, save_member_diagnostics
+from lumina.core.model import member_log_deviations
+from lumina.core.state import build_state, with_member_classes
 
 
 def posterior_for(state, evaluator, n=12):
@@ -118,7 +118,7 @@ def test_hierarchical_prior_width_against_independent_quadrature(synthetic_confi
     # (the default is Student-t with 4 degrees of freedom, whose 84th percentile is wider).
     config = replace(synthetic_config, scaling=replace(synthetic_config.scaling, member_deviation='sigma', member_deviation_tail='normal'))
     state = build_state(config)
-    from kappaccino import priors
+    from lumina import priors
     values = priors.parameters(priors.split(config.scaling.member_velocity_scatter_prior)[0])
     median, log_sigma = np.exp(values["loc"]), values["scale"]
     def cdf(q):
@@ -131,8 +131,8 @@ def test_hierarchical_prior_width_against_independent_quadrature(synthetic_confi
 
 
 def test_normal_output_hook(synthetic_config, tmp_path, monkeypatch):
-    from kappaccino.plotting import members
-    from kappaccino.reporting import outputs, results_tex
+    from lumina.plotting import members
+    from lumina.reporting import outputs, results_tex
     state = build_state(synthetic_config)
     evaluator = Evaluator(state)
     posterior = posterior_for(state, evaluator)
@@ -147,7 +147,7 @@ def test_normal_output_hook(synthetic_config, tmp_path, monkeypatch):
 
 
 def test_multiple_populations_without_large_halo(synthetic_config):
-    from kappaccino.config import ShearHaloConfig
+    from lumina.config import ShearHaloConfig
     first = synthetic_config.model.member_populations[0]
     model = replace(synthetic_config.model, large_halos=(ShearHaloConfig('shear', .03, 0., .3),),
                     member_populations=(first, replace(first, id='second')))

@@ -1,5 +1,5 @@
 """The outputs stage as modules: ordering, selection, skipping, failures, lazy draws, compute and render, the config
-section and the ``kappaccino outputs`` command."""
+section and the ``lumina outputs`` command."""
 from __future__ import annotations
 
 import json
@@ -11,10 +11,10 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from kappaccino.config import LensClusterSolverConfig, OutputsConfig
-from kappaccino.io import artifacts, store
-from kappaccino.outputs import MODULES, OutputContext, OutputModule, module_named, order_modules, plan_modules, run_modules
-from kappaccino.outputs.base import ComputeOnly, ModuleUnavailable, completion_name
+from lumina.config import LensClusterSolverConfig, OutputsConfig
+from lumina.io import artifacts, store
+from lumina.outputs import MODULES, OutputContext, OutputModule, module_named, order_modules, plan_modules, run_modules
+from lumina.outputs.base import ComputeOnly, ModuleUnavailable, completion_name
 
 
 class Fake(OutputModule):
@@ -188,7 +188,7 @@ def test_checkpoint_runs_once_before_the_first_imaging_module(tmp_path):
 
 
 def test_draws_are_built_lazily(monkeypatch, tmp_path):
-    from kappaccino.reporting import draws as draws_module
+    from lumina.reporting import draws as draws_module
     built = []
 
     class FakeDraws(list):
@@ -206,7 +206,7 @@ def test_draws_are_built_lazily(monkeypatch, tmp_path):
 
 
 def test_a_failed_draws_build_is_not_repeated(monkeypatch, tmp_path):
-    from kappaccino.reporting import draws as draws_module
+    from lumina.reporting import draws as draws_module
     built = []
 
     def broken(*a):
@@ -221,9 +221,9 @@ def test_a_failed_draws_build_is_not_repeated(monkeypatch, tmp_path):
 
 
 def test_outputs_stage_builds_draws_only_in_the_step_that_needs_them(monkeypatch, synthetic_config, tmp_path):
-    from kappaccino.outputs import fit
-    from kappaccino.plotting import block_corner, chain_traces, gp, members, plots, potfile
-    from kappaccino.reporting import draws as draws_module, outputs, results_tex
+    from lumina.outputs import fit
+    from lumina.plotting import block_corner, chain_traces, gp, members, plots, potfile
+    from lumina.reporting import draws as draws_module, outputs, results_tex
 
     def no_draws(*a):
         raise RuntimeError("draws built")
@@ -320,7 +320,7 @@ def test_a_failing_step_with_fail_fast_reraises(tmp_path):
 
 
 def test_imaging_is_loaded_once_per_variant(monkeypatch, synthetic_config):
-    from kappaccino.imaging import cutouts
+    from lumina.imaging import cutouts
     loads, lines = [], []
 
     def load(image_config, *args):
@@ -340,7 +340,7 @@ def test_imaging_is_loaded_once_per_variant(monkeypatch, synthetic_config):
 
 
 def test_outputs_config_is_validated(synthetic_config):
-    from kappaccino.config import ImageSolverConfig, RGBOutputConfig, TruthOutputConfig
+    from lumina.config import ImageSolverConfig, RGBOutputConfig, TruthOutputConfig
     synthetic_config.validate()
     outputs = synthetic_config.outputs
     replace(synthetic_config, outputs=replace(outputs, fail_fast=True, rgb=replace(outputs.rgb, enabled=False))).validate()
@@ -364,7 +364,7 @@ def test_outputs_config_is_validated(synthetic_config):
 
 def test_every_module_has_its_own_section():
     from dataclasses import fields
-    from kappaccino.outputs.base import disabled_modules
+    from lumina.outputs.base import disabled_modules
     sections = {f.name: f for f in fields(OutputsConfig)}
     for module in MODULES:
         section = getattr(OutputsConfig(), module.name)
@@ -377,9 +377,9 @@ def test_every_module_has_its_own_section():
 
 
 def test_outputs_settings_leave_the_hash_and_the_resume_alone(synthetic_config, tmp_path):
-    from kappaccino import cli
-    from kappaccino.config import ImageSolverConfig, ImagesOutputConfig, RGBDisplayConfig, RGBOutputConfig, TruthOutputConfig
-    from kappaccino.pipeline import resume_payload
+    from lumina import cli
+    from lumina.config import ImageSolverConfig, ImagesOutputConfig, RGBDisplayConfig, RGBOutputConfig, TruthOutputConfig
+    from lumina.pipeline import resume_payload
     base = synthetic_config
     every = OutputsConfig(draws=3, image_draws=5, workers=2, caustic_source_redshift=2.5, fail_fast=True,
                           image_solver=ImageSolverConfig(match_tolerance_arcsec=1.0),
@@ -414,8 +414,8 @@ def test_outputs_settings_leave_the_hash_and_the_resume_alone(synthetic_config, 
 
 
 def test_outputs_section_from_run_files_and_set():
-    from kappaccino import cli
-    from kappaccino.run_files import load_run
+    from lumina import cli
+    from lumina.run_files import load_run
     config = load_run("catalogs/hera", overrides=["outputs.rgb.enabled=false", "outputs.fail_fast=true", "outputs.workers=2"])
     assert not config.outputs.rgb.enabled and config.outputs.fail_fast and config.outputs.workers == 2
     assert config.outputs.rgb.image_dir.endswith("data/imaging/hera/ffsims")         # resolved against the file's folder
@@ -431,7 +431,7 @@ def test_outputs_section_from_run_files_and_set():
 
 
 def test_outputs_list_command(capsys, synthetic_config, tmp_path):
-    from kappaccino import cli
+    from lumina import cli
     assert cli.main(["outputs", "--list"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert [line.split()[0] for line in lines[1::2]] == [m.name for m in MODULES]
@@ -481,8 +481,8 @@ class SummaryModule(OutputModule):
 
 
 def summary_pass(monkeypatch, tmp_path, modules, *, draws, only=None, disabled=()):
-    from kappaccino.reporting import draws as draws_module, results_tex
-    from kappaccino.reporting.outputs import write_run_summary
+    from lumina.reporting import draws as draws_module, results_tex
+    from lumina.reporting.outputs import write_run_summary
 
     class FakeDraws(list):
         seed, has_field, cache_stage = 7, False, None
@@ -529,9 +529,9 @@ def test_a_disabled_module_keeps_its_numbers_and_says_disabled(monkeypatch, tmp_
 
 
 def test_fail_fast_still_writes_the_summary_and_compacts(monkeypatch, synthetic_config, tmp_path):
-    from kappaccino.io import store as store_module
-    from kappaccino.outputs import fit
-    from kappaccino.reporting import outputs, results_tex
+    from lumina.io import store as store_module
+    from lumina.outputs import fit
+    from lumina.reporting import outputs, results_tex
     compacted = []
     monkeypatch.setattr(store_module, "compact", lambda stage: compacted.append(stage))
     monkeypatch.setattr(results_tex, "write_run_results", lambda *a, **k: None)
@@ -544,10 +544,10 @@ def test_fail_fast_still_writes_the_summary_and_compacts(monkeypatch, synthetic_
     assert store.read_record(tmp_path, "run_summary")["modules"]["fit"]["steps"]["tables"]["status"] == "failed"
 
 
-# ----------------------------------------------------------------------------- kappaccino outputs on a saved run
+# ----------------------------------------------------------------------------- lumina outputs on a saved run
 def test_module_selection_on_the_command_line(monkeypatch, synthetic_config, tmp_path):
-    from kappaccino.io import store as store_module
-    from kappaccino.reporting import outputs
+    from lumina.io import store as store_module
+    from lumina.reporting import outputs
     seen = []
     monkeypatch.setattr(outputs, "run_modules", lambda ctx, modules, **k: seen.append(k) or {})
     monkeypatch.setattr(outputs, "write_run_summary", lambda *a, **k: None)
@@ -572,8 +572,8 @@ def test_module_selection_on_the_command_line(monkeypatch, synthetic_config, tmp
 
 
 def test_skip_keeps_disabled_modules_off_in_a_real_pass(monkeypatch, synthetic_config, tmp_path):
-    from kappaccino.io import store as store_module
-    from kappaccino.reporting import outputs
+    from lumina.io import store as store_module
+    from lumina.reporting import outputs
     monkeypatch.setattr(outputs, "write_run_summary", lambda *a, **k: None)
     monkeypatch.setattr(store_module, "compact", lambda stage: None)
     settings = synthetic_config.outputs
@@ -581,7 +581,7 @@ def test_skip_keeps_disabled_modules_off_in_a_real_pass(monkeypatch, synthetic_c
     paths = SimpleNamespace(tables=tmp_path, figures=tmp_path, root=tmp_path)
     modules = [Fake("fit"), Fake("images"), Fake("mass", requires=["images"]), Fake("truth", requires=["images"]),
                Fake("rgb", requires=["images"])]
-    monkeypatch.setattr("kappaccino.outputs.registry.MODULES", tuple(modules))
+    monkeypatch.setattr("lumina.outputs.registry.MODULES", tuple(modules))
     summary = outputs.write_outputs(off, None, None, None, {}, paths, log=lambda _: None, skip=["truth"])
     statuses = {name: record["status"] for name, record in summary["modules"].items()}
     assert statuses == {"fit": "done", "images": "done", "mass": "done", "truth": "skipped", "rgb": "disabled"}
@@ -590,7 +590,7 @@ def test_skip_keeps_disabled_modules_off_in_a_real_pass(monkeypatch, synthetic_c
 
 
 def test_remap_and_report_overrides(synthetic_config, tmp_path):
-    from kappaccino.outputs.saved_run import apply_overrides, remap_paths
+    from lumina.outputs.saved_run import apply_overrides, remap_paths
     outputs = synthetic_config.outputs
     config = replace(synthetic_config, outputs=replace(outputs, truth=replace(outputs.truth, kappa_true_fits="/far/away/data/kappa.fits"),
                                                        rgb=replace(outputs.rgb, image_dir="/far/away/data/imaging")))
@@ -627,8 +627,8 @@ def test_remap_and_report_overrides(synthetic_config, tmp_path):
 
 
 def test_a_bad_report_setting_is_a_usage_error(synthetic_config, tmp_path, capsys):
-    from kappaccino import cli
-    from kappaccino.io import artifacts
+    from lumina import cli
+    from lumina.io import artifacts
     run = tmp_path / "run"
     artifacts.save_config(run / "final" / "artifacts", synthetic_config)
     assert cli.main(["outputs", str(run), "--set", "outputs.workers=-5"]) == 2
@@ -636,7 +636,7 @@ def test_a_bad_report_setting_is_a_usage_error(synthetic_config, tmp_path, capsy
 
 
 def test_missing_files_name_the_field_and_suggest_remap(synthetic_config):
-    from kappaccino.outputs.command import check_module_paths
+    from lumina.outputs.command import check_module_paths
     outputs = synthetic_config.outputs
     config = replace(synthetic_config, outputs=replace(outputs, truth=replace(outputs.truth, kappa_true_fits="/far/away/kappa.fits")))
     with pytest.raises(FileNotFoundError, match=r"outputs.truth.kappa_true_fits = /far/away/kappa.fits \(module mass\).*--remap"):
@@ -658,7 +658,7 @@ def test_missing_files_name_the_field_and_suggest_remap(synthetic_config):
 
 
 def test_outputs_command_options(monkeypatch, tmp_path, capsys):
-    from kappaccino.outputs import command
+    from lumina.outputs import command
     with pytest.raises(SystemExit):
         command.main([str(tmp_path), "--all", "--only", "fit"])
     seen = {}
@@ -668,7 +668,7 @@ def test_outputs_command_options(monkeypatch, tmp_path, capsys):
         return ("config",)
 
     monkeypatch.setattr(command, "prepare_rerun", prepare)
-    from kappaccino.reporting import outputs
+    from lumina.reporting import outputs
     store.write_record(tmp_path / "final", "run_summary", {"fit": {"rms": 0.25}})
     monkeypatch.setattr(outputs, "write_outputs", lambda *a, **k: {"modules": {"fit": {"status": "done"}}})
     assert command.main([str(tmp_path), "--only", "fit", "--draws", "4", "--remap", "/a=/b", "--set", "outputs.fail_fast=true"]) == 0
@@ -681,19 +681,19 @@ def test_outputs_command_options(monkeypatch, tmp_path, capsys):
     settings = SimpleNamespace(outputs=SimpleNamespace(fail_fast=True))
     monkeypatch.setattr(command, "prepare_rerun", lambda run, **options: (settings,))
     assert command.main([str(tmp_path), "--fail-fast"]) == 1
-    assert capsys.readouterr().out.strip() == "kappaccino outputs: stopped at the first error (fail_fast: ValueError: step broke)"
+    assert capsys.readouterr().out.strip() == "lumina outputs: stopped at the first error (fail_fast: ValueError: step broke)"
     # Without fail_fast an error can only come from outside the modules, which nothing logged: its traceback.
     settings.outputs.fail_fast = False
     assert command.main([str(tmp_path)]) == 1
     out = capsys.readouterr().out
-    assert out.startswith("kappaccino outputs: the pass failed outside the modules (ValueError: step broke)")
+    assert out.startswith("lumina outputs: the pass failed outside the modules (ValueError: step broke)")
     assert "Traceback" in out
     monkeypatch.setattr(command, "prepare_rerun", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("x not found")))
     assert command.main([str(tmp_path)]) == 2
 
 
 def test_draws_option_sets_both_draw_counts(monkeypatch, synthetic_config, tmp_path):
-    from kappaccino.outputs import command, saved_run
+    from lumina.outputs import command, saved_run
     monkeypatch.setattr(saved_run, "load_run", lambda run, **k: (synthetic_config, None, None, None, None))
     monkeypatch.setattr(command, "check_module_paths", lambda config, **k: None)
     config, *_ = command.prepare_rerun(tmp_path, draws=4)
@@ -814,7 +814,7 @@ def test_render_without_a_completed_compute_is_unavailable(tmp_path):
     assert events == []
     assert records["a"]["status"] == "failed" and records["a"]["not_computed"] is True
     assert records["a"]["error"].startswith("NotComputed: no record output_module_a of a compute of a")
-    assert "run its compute first: kappaccino outputs RUN --only a" in records["a"]["error"]
+    assert "run its compute first: lumina outputs RUN --only a" in records["a"]["error"]
     assert records["b"]["reason"] == "requires a, which failed without a product"
 
 
@@ -868,8 +868,8 @@ def test_an_undeclared_step_is_an_error(tmp_path):
 
 
 def test_a_render_pass_keeps_the_numbers_of_the_last_compute(monkeypatch, tmp_path):
-    from kappaccino.reporting import results_tex
-    from kappaccino.reporting.outputs import write_run_summary
+    from lumina.reporting import results_tex
+    from lumina.reporting.outputs import write_run_summary
     monkeypatch.setattr(results_tex, "write_run_results", lambda *a, **k: None)
 
     class Numbers(Phased):
@@ -893,8 +893,8 @@ def test_a_render_pass_keeps_the_numbers_of_the_last_compute(monkeypatch, tmp_pa
 
 
 def test_render_and_compute_flags(monkeypatch, tmp_path, capsys):
-    from kappaccino.outputs import command
-    from kappaccino.reporting import outputs
+    from lumina.outputs import command
+    from lumina.reporting import outputs
     for argv in ([str(tmp_path), "--render", "--compute"], [str(tmp_path), "--render", "--draws", "4"]):
         with pytest.raises(SystemExit):
             command.main(argv)
@@ -913,7 +913,7 @@ def test_render_and_compute_flags(monkeypatch, tmp_path, capsys):
 
 
 def test_a_render_rerun_loads_no_evaluator(monkeypatch, synthetic_config, tmp_path):
-    from kappaccino.outputs import command, saved_run
+    from lumina.outputs import command, saved_run
     monkeypatch.setattr(saved_run, "load_run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("evaluator built")))
     monkeypatch.setattr(saved_run, "load_saved_run", lambda run, **k: (synthetic_config, "state", "posterior"))
     monkeypatch.setattr(command, "check_module_paths", lambda config, **k: (_ for _ in ()).throw(AssertionError("paths checked")))
@@ -924,8 +924,8 @@ def test_a_render_rerun_loads_no_evaluator(monkeypatch, synthetic_config, tmp_pa
 
 
 def test_remap_moves_only_path_fields(synthetic_config, tmp_path, monkeypatch):
-    from kappaccino.outputs.registry import MODULES as registry
-    from kappaccino.outputs.saved_run import catalog_fields, path_fields, remap_paths
+    from lumina.outputs.registry import MODULES as registry
+    from lumina.outputs.saved_run import catalog_fields, path_fields, remap_paths
     outputs = synthetic_config.outputs
     config = replace(synthetic_config, paths=replace(synthetic_config.paths, figure_prefix="/far/away/prefix",
                                                      run_name="/far/away/name"),
@@ -963,7 +963,7 @@ def test_a_module_skipped_after_a_failure_loses_its_numbers(monkeypatch, tmp_pat
     summary_pass(monkeypatch, tmp_path, [images, truth], draws=8)
     ctx = context(tmp_path)
     ctx.config = toy_config()
-    from kappaccino.reporting.outputs import write_run_summary
+    from lumina.reporting.outputs import write_run_summary
     run_modules(ctx, [images, truth], skip=["images"])
     write_run_summary(ctx, partial=True, modules=[images, truth])
     kept = store.read_record(tmp_path, "run_summary")
@@ -979,7 +979,7 @@ class Keyed(Phased):
 
 
 def test_modules_computed_over_other_draws_are_named(monkeypatch, tmp_path):
-    from kappaccino.reporting import draws as draws_module
+    from lumina.reporting import draws as draws_module
 
     def fake(count):
         class FakeDraws(list):
@@ -1095,7 +1095,7 @@ def test_a_render_pass_after_an_interrupted_compute_refuses_the_module(tmp_path)
 
 
 def test_why_a_render_pass_drew_nothing():
-    from kappaccino.outputs.base import nothing_drawn_reason
+    from lumina.outputs.base import nothing_drawn_reason
     assert nothing_drawn_reason({"a": {"status": "disabled"}}).startswith("no selected module ran")
     assert nothing_drawn_reason({"a": {"status": "failed", "not_computed": True}}).startswith(
         "nothing was computed for the selected modules (a)")
@@ -1125,8 +1125,8 @@ def test_a_step_note_is_logged_and_recorded(tmp_path):
 
 
 def test_list_applies_set_and_remap(synthetic_config, tmp_path, capsys):
-    from kappaccino.io import artifacts
-    from kappaccino.outputs import command
+    from lumina.io import artifacts
+    from lumina.outputs import command
     artifacts.save_config(tmp_path / "final" / "artifacts", synthetic_config)
     assert command.main(["--list", str(tmp_path), "--set", "outputs.mass.enabled=false"]) == 0
     rows = {line.split()[0]: line.split() for line in capsys.readouterr().out.splitlines() if not line.startswith(" ")}
@@ -1137,7 +1137,7 @@ def test_list_applies_set_and_remap(synthetic_config, tmp_path, capsys):
 
 
 def test_paths_are_checked_only_for_modules_that_will_run(synthetic_config):
-    from kappaccino.outputs.command import check_module_paths
+    from lumina.outputs.command import check_module_paths
     outputs = synthetic_config.outputs
     config = replace(synthetic_config, outputs=replace(outputs, images=replace(outputs.images, enabled=False),
                                                        rgb=replace(outputs.rgb, image_dir="/far/away/imaging")))
@@ -1159,7 +1159,7 @@ def test_a_module_skipped_for_a_disabled_requirement_replaces_its_saved_record(m
 
 
 def test_the_outputs_section_is_validated_field_by_field(synthetic_config):
-    from kappaccino.outputs.saved_run import apply_overrides
+    from lumina.outputs.saved_run import apply_overrides
     for bad, message in (("outputs.rgb.display.q=abc", "outputs.rgb.display.q must be a finite number or null"),
                          ("outputs.rgb.bands=F1", "outputs.rgb.bands must be a list of strings or null"),
                          ("outputs.rgb.image_scale=99mas", "outputs.rgb.image_scale must be one of auto"),
@@ -1186,8 +1186,8 @@ def _digest(path):
 def test_the_outputs_command_never_writes_the_saved_config(monkeypatch, synthetic_config, tmp_path, mode, fails):
     """--set and --draws hold for one pass: config.json keeps its bytes after any pass mode, successful or failed,
     through the command line and through rerun_outputs."""
-    from kappaccino.outputs import command, saved_run
-    from kappaccino.reporting import outputs
+    from lumina.outputs import command, saved_run
+    from lumina.reporting import outputs
     directory = tmp_path / "final" / "artifacts"
     artifacts.save_config(directory, synthetic_config)
     before = _digest(directory / artifacts.CONFIG_FILE)
@@ -1287,7 +1287,7 @@ def test_a_field_only_render_reads_never_warns(tmp_path):
 
 def test_settings_warnings_of_an_earlier_pass_are_replaced(tmp_path):
     """The settings note in run_summary is that of the last pass, as the draws warning."""
-    from kappaccino.reporting.outputs import merged_summary
+    from lumina.reporting.outputs import merged_summary
     modules = [Setting("a"), Setting("b", requires=["a"])]
     run_modules(context(tmp_path), modules)
     ctx = context(tmp_path, config=toy_config(draws=4))
@@ -1300,7 +1300,7 @@ def test_settings_warnings_of_an_earlier_pass_are_replaced(tmp_path):
 
 
 def test_the_snapshot_of_each_real_module():
-    from kappaccino.outputs.base import settings_snapshot
+    from lumina.outputs.base import settings_snapshot
     outputs = OutputsConfig()
     snapshots = {module.name: settings_snapshot(outputs, module) for module in MODULES}
     for name, snapshot in snapshots.items():
@@ -1351,7 +1351,7 @@ def test_a_render_after_a_fail_fast_compute_reports_the_steps_that_did_not_run(t
 
 
 def test_why_a_render_pass_drew_nothing_names_modules_failed_outside_their_steps():
-    from kappaccino.outputs.base import nothing_drawn_reason
+    from lumina.outputs.base import nothing_drawn_reason
     records = {"a": {"status": "failed", "error": "ModuleUnavailable: no entry a_table; run its compute first"},
                "b": {"status": "failed", "not_computed": True, "error": "NotComputed: no record"}}
     assert nothing_drawn_reason(records) == ("modules failed before drawing: a (ModuleUnavailable: no entry a_table; "
@@ -1359,8 +1359,8 @@ def test_why_a_render_pass_drew_nothing_names_modules_failed_outside_their_steps
 
 
 def test_the_missing_imaging_of_each_variant_says_what_is_true(monkeypatch, tmp_path):
-    from kappaccino.config import RGBOutputConfig
-    from kappaccino.imaging import cutouts
+    from lumina.config import RGBOutputConfig
+    from lumina.imaging import cutouts
     monkeypatch.setattr(cutouts, "load_cluster_imaging", lambda image_config, model, run: (_ for _ in ()).throw(
         FileNotFoundError(f"no folder {image_config.image_dir}")))
     configured = RGBOutputConfig(image_dir=Path("data/imaging/m0416/buffalo"))
@@ -1381,10 +1381,10 @@ def test_the_missing_imaging_of_each_variant_says_what_is_true(monkeypatch, tmp_
 
 
 def test_a_bad_set_on_the_run_command_is_a_usage_error(monkeypatch, capsys):
-    from kappaccino import cli
+    from lumina import cli
     monkeypatch.chdir(Path(__file__).resolve().parents[1])
     assert cli.main(["catalogs/hera", "--dry-run", "--set", "outputs.rgb.bogus=1"]) == 2
     error = capsys.readouterr().err
-    assert error.startswith("kappaccino: outputs.rgb.bogus: no such field") and "Traceback" not in error
+    assert error.startswith("lumina: outputs.rgb.bogus: no such field") and "Traceback" not in error
     assert cli.main(["catalogs/hera", "--dry-run", "--set", "outputs.workers=0"]) == 2
     assert "outputs.workers must be a positive integer" in capsys.readouterr().err

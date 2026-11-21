@@ -1,4 +1,4 @@
-"""The flat wCDM distances of kappaccino.lens.cosmology against astropy, and their derivatives."""
+"""The flat wCDM distances of lumina.lens.cosmology against astropy, and their derivatives."""
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,8 +6,8 @@ import pytest
 from astropy import units as u
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM
 
-from kappaccino.lens import cosmology as c
-from kappaccino.lens.profiles import nfw
+from lumina.lens import cosmology as c
+from lumina.lens.profiles import nfw
 
 Z = np.array([0.01, 0.05, 0.2, 0.348, 0.396, 0.507, 1.0, 2.0, 3.5, 6.0, 9.0, 12.0, 20.0])
 # (H0, Om0, w0): the cosmologies of the clusters (M0416 and AS1063, Hera, Ares), and the corners of the cosmography priors.

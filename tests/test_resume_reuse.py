@@ -10,16 +10,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.io import store
-from kappaccino.reporting import draws as reporting
-from kappaccino.reporting import local_maps
+from lumina.io import store
+from lumina.reporting import draws as reporting
+from lumina.reporting import local_maps
 
 
 # ----------------------------------------------------------------------------- a lens that counts its evaluations
 def _counting_run(monkeypatch):
     """The lens of test_reporting_draws: parametric Jacobian theta[0] I, GRF Jacobian theta[1] I at the reference
     redshift; ``calls`` collects the number of points of every parametric evaluation."""
-    from kappaccino.lens import cosmology
+    from lumina.lens import cosmology
     monkeypatch.setattr(cosmology, 'dpie_sigma0_factor_from_config', lambda zl, z, c: z)
     calls = []
 
@@ -166,7 +166,7 @@ def test_memory_holds_the_newest_grids_and_reads_the_others_back(monkeypatch, tm
 
 
 def test_the_maps_are_identical_with_and_without_the_cache_in_a_worker_thread(monkeypatch, tmp_path):
-    from kappaccino.core.parallel import map_draws
+    from lumina.core.parallel import map_draws
     evaluator, posterior, calls = _counting_run(monkeypatch)
     x, y = _grid()
     draws = reporting.ReportingDraws(evaluator, posterior, 4, 0, workers=2)
@@ -192,7 +192,7 @@ def _recovery_inputs(seed=7, count=3, image_count=4):
 
 
 def test_the_recovery_fingerprint_changes_with_every_input():
-    from kappaccino.diagnostics import image_recovery as recovery
+    from lumina.diagnostics import image_recovery as recovery
     state, draws, config = _recovery_inputs()
     base = recovery.recovery_fingerprint(state, draws, config, extra_images=True)
     assert recovery.recovery_fingerprint(state, draws, config, extra_images=True) == base
@@ -212,7 +212,7 @@ def test_the_recovery_fingerprint_changes_with_every_input():
 
 
 def test_saved_recovery_tables_are_reused_only_with_the_same_fingerprint(monkeypatch, tmp_path):
-    from kappaccino.diagnostics import image_recovery as recovery
+    from lumina.diagnostics import image_recovery as recovery
     state, draws, config = _recovery_inputs()
     tables = {'image_fit_quality': pd.DataFrame({'image_label': ['1.a', '1.b'], 'x': [1.5, np.nan]}),
               'posterior_extra_images': pd.DataFrame(columns=['family_id', 'x_model_arcsec']),
@@ -250,9 +250,9 @@ def toy_lens(tmp_path_factory):
     """The toy cluster with an external shear and an NFW halo (every profile kind the scaling covers) and four draws
     around its start."""
     from conftest import synthetic_cluster_config
-    from kappaccino.config import NFWHaloConfig, ShearHaloConfig
-    from kappaccino.core.state import build_state
-    from kappaccino.likelihood.evaluator import Evaluator
+    from lumina.config import NFWHaloConfig, ShearHaloConfig
+    from lumina.core.state import build_state
+    from lumina.likelihood.evaluator import Evaluator
     config = synthetic_cluster_config(tmp_path_factory.mktemp('local'))
     halos = config.model.large_halos + (ShearHaloConfig('shear', .06, 25., .3),
                                         NFWHaloConfig(id='nfw', x_centre=5., y_centre=-3., angle_pos=10., ellipticite=.1,
@@ -379,9 +379,9 @@ def test_a_reference_lost_from_the_cache_is_evaluated_again_with_the_same_maps(t
 # ----------------------------------------------------------------------------- what the draws key covers
 @pytest.mark.parametrize('constant, value', [('PLOT_FIELD_VERSION', 'another-field-code'), ('N_MODES', 2048)])
 def test_the_field_code_enters_the_grid_recovery_and_aperture_keys(monkeypatch, tmp_path, constant, value):
-    from kappaccino.diagnostics import image_recovery as recovery
-    from kappaccino.plotting import aperture_mass_histogram as am
-    from kappaccino.plotting import grf
+    from lumina.diagnostics import image_recovery as recovery
+    from lumina.plotting import aperture_mass_histogram as am
+    from lumina.plotting import grf
     evaluator, posterior, calls = _counting_run(monkeypatch)
     x, y = _grid()
     state, _, config = _recovery_inputs()
@@ -406,7 +406,7 @@ def test_the_field_code_enters_the_grid_recovery_and_aperture_keys(monkeypatch, 
 
 
 def test_a_moved_or_brighter_member_changes_the_key_of_the_same_latent_draws(toy_lens):
-    from kappaccino.likelihood.evaluator import Evaluator
+    from lumina.likelihood.evaluator import Evaluator
     evaluator, posterior = toy_lens
     state = evaluator.state
     component = int(np.asarray(state.members.component_indices)[0])
@@ -428,7 +428,7 @@ def test_a_moved_or_brighter_member_changes_the_key_of_the_same_latent_draws(toy
 
 
 def test_the_near_bound_covers_elliptical_components_and_a_cut_inside_the_core():
-    from kappaccino.core.model import DP_IE_PROFILE
+    from lumina.core.model import DP_IE_PROFILE
     h, distance, e = .25, 5., .5
     xi = distance * np.sqrt((1 - e) / (1 + e))
     round_bound = 5 / 16 * h ** 4 / xi ** 5                            # per unit E = sigma0 a s / (s - a), core << xi

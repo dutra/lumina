@@ -1,6 +1,6 @@
 """Shared by the scripts that work on a saved run: puts ``src/`` on ``sys.path`` (import this module before
-``kappaccino``) and redirects the catalog and FF-SIMS paths of runs saved before the data layout of 2026-11-08.  The
-loading itself is :mod:`kappaccino.outputs.saved_run`."""
+``lumina``) and redirects the catalog and FF-SIMS paths of runs saved before the data layout of 2026-11-08.  The
+loading itself is :mod:`lumina.outputs.saved_run`."""
 from dataclasses import replace
 from pathlib import Path
 import sys
@@ -33,7 +33,7 @@ def with_ffsims_dir(config, directory):
 
 
 def redirect(catalogs=None, ffsims_dir=None):
-    """The ``transform`` of ``kappaccino.outputs.saved_run.load_run`` that applies :func:`with_catalogs` and
+    """The ``transform`` of ``lumina.outputs.saved_run.load_run`` that applies :func:`with_catalogs` and
     :func:`with_ffsims_dir`."""
     return lambda config: with_ffsims_dir(with_catalogs(config, catalogs), ffsims_dir)
 

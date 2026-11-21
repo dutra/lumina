@@ -6,9 +6,9 @@ import numpyro.distributions as dist
 import pytest
 import yaml
 
-from kappaccino import priors
-from kappaccino.config import DPIEHaloConfig, ShearHaloConfig
-from kappaccino.run_files import input_files, load_priors, load_run, parse_value
+from lumina import priors
+from lumina.config import DPIEHaloConfig, ShearHaloConfig
+from lumina.run_files import input_files, load_priors, load_run, parse_value
 
 ROOT = Path(__file__).resolve().parents[1]
 CLUSTERS = {"catalogs/hera": ("hera", ["fast"]), "catalogs/ares": ("ares", ["fast"]), "catalogs/tngc014/large": ("tngc014", ["fast"]),
@@ -135,7 +135,7 @@ def test_profiles_extends_and_overrides(monkeypatch):
     fast = load_run("catalogs/m0416/canucs2025", ["fast"], ["sampling.warmup=1000", "likelihood.lambda_b_prior=lognormal(10, 1) in [0.5, 80]"])
     # extends ../bergamini2023/run.yaml: its sections and profiles, this folder's priors.
     assert base.members.far_field_cut_radii == 2.0 and base.outputs.rgb.paper_fold_cutouts[0] == "system:K1"
-    assert base.outputs.rgb.candidate_catalog_path == "src/kappaccino/data/m0416_candidates.json"
+    assert base.outputs.rgb.candidate_catalog_path == "src/lumina/data/m0416_candidates.json"
     assert base.scaling.member_shape_scatter == 0.1 and fast.scaling.member_shape_scatter is None
     assert base.likelihood.gp_blocks == "all" and fast.likelihood.gp_blocks == "system" and fast.likelihood.gp_knee_project_modes == ()
     assert fast.sampling.warmup == 1000 and fast.sampling.max_tree_depth == 8
@@ -177,7 +177,7 @@ def test_tng_catalog_sizes_are_nested_and_resolve(tag, monkeypatch):
 
 
 def test_command_line(monkeypatch, capsys):
-    from kappaccino import cli
+    from lumina import cli
     monkeypatch.chdir(ROOT)
     with pytest.raises(SystemExit):
         cli.main(["catalogs/nowhere"])
@@ -219,7 +219,7 @@ def test_command_line(monkeypatch, capsys):
 
 def test_power_law_members(tmp_path, monkeypatch):
     """The cored power-law members: from the command line, and declared in priors.yaml."""
-    from kappaccino import cli
+    from lumina import cli
     monkeypatch.chdir(ROOT)
     dpie = cli.build_config("catalogs/hera")
     sampled = cli.build_config("catalogs/hera", member_profile="power-law").validate()

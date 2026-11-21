@@ -8,13 +8,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.config import LensClusterSolverConfig, OutputsConfig, RuntimeConfig, SamplingConfig, ScalingModelConfig, SearchConfig
-from kappaccino.mock_validation import (MockConfig, MockValidationConfig, MockValidationPathsConfig, MockValidationRuntimeConfig, draw_truth,
+from lumina.config import LensClusterSolverConfig, OutputsConfig, RuntimeConfig, SamplingConfig, ScalingModelConfig, SearchConfig
+from lumina.mock_validation import (MockConfig, MockValidationConfig, MockValidationPathsConfig, MockValidationRuntimeConfig, draw_truth,
                                          generate_images, generate_mock, parameter_truth, run_mock_validation, solver_config_for_mock, write_aggregate_plots)
-from kappaccino.mock_validation.aperture import APERTURE_RADII_KPC, aperture_profiles, truth_groups
-from kappaccino.mock_validation.images import jacobian, lens_state
-from kappaccino import priors
-from kappaccino.core.state import build_state
+from lumina.mock_validation.aperture import APERTURE_RADII_KPC, aperture_profiles, truth_groups
+from lumina.mock_validation.images import jacobian, lens_state
+from lumina import priors
+from lumina.core.state import build_state
 
 SMALL = MockConfig(seed=7, n_members=12, n_primary_families=4, n_member_families=1, unmodelled_members=2, sigma_def_arcsec=0.03)
 
@@ -112,7 +112,7 @@ def test_campaign_end_to_end_scores_only_parameters_with_a_truth(tmp_path):
         assert column in magnification, column
     recovered = magnification[magnification["image_recovery_status"] == "recovered"]
     assert np.isfinite(recovered["magnification_true_at_model_position"]).all() and np.isfinite(recovered["magnification_model_at_model_position"]).all()
-    from kappaccino.mock_validation.aggregate_plots import load_campaign
+    from lumina.mock_validation.aggregate_plots import load_campaign
     everything = load_campaign(recovery_dirs[0].parent.parent, converged_only=False)       # a short test chain rarely converges
     assert len(everything.seeds) == 1 and "converged" in everything.summary
     outputs = write_aggregate_plots(recovery_dirs[0].parent.parent)
@@ -126,8 +126,8 @@ def test_map_search_from_the_prior_recovers_the_truth(tmp_path):
     for bias in about half a minute.  The members (four, far from the images) and the error scales are not constrained
     by twelve images and are not checked."""
     import jax.numpy as jnp
-    from kappaccino.likelihood.evaluator import Evaluator
-    from kappaccino.inference.search import multistart_map, prior_starts
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.inference.search import multistart_map, prior_starts
     config = MockConfig(seed=11, n_members=4, n_primary_families=3, n_member_families=0, mode="idealized",
                         measurement_noise_arcsec=0.01, sigma_def_arcsec=0.0,
                         pivot_magnitude=19.82, schechter_magnitude=19.0, sigma_star_range_kms=(160.0, 240.0),
@@ -215,8 +215,8 @@ def test_injected_noise_is_drawn_per_realization_and_is_the_sigma_meas_truth(tmp
 def test_fisher_precheck_matches_the_white_noise_closed_form(tmp_path):
     """With white noise alone, the restricted Fisher information on ln sigma_meas is about 2 per degree of freedom left
     after the source positions (I = 2 (n - p), up to the 1.5 mas source-plane floor)."""
-    from kappaccino.config import LikelihoodConfig
-    from kappaccino.mock_validation.fisher import hyperparameter_fisher
+    from lumina.config import LikelihoodConfig
+    from lumina.mock_validation.fisher import hyperparameter_fisher
     config = replace(SMALL, sigma_def_arcsec=0.0, n_knotted_families=1, measurement_noise_arcsec=0.1)
     paths = generate_mock(tmp_path / "mock", config, 7)
     truth = json.loads(paths.truth.read_text())
@@ -231,7 +231,7 @@ def test_fisher_precheck_matches_the_white_noise_closed_form(tmp_path):
 
 
 def test_mock_command_line(capsys):
-    from kappaccino.mock_validation import cli
+    from lumina.mock_validation import cli
     config = cli.build_config("production", campaign="c", fast=True, overrides=["sampling.warmup=7", "outputs.draws=4",
                                                                                   "outputs.image_draws=4"])
     assert config.paths.run_name == "analytic_production_production_fast" and config.solver.sampling.warmup == 7

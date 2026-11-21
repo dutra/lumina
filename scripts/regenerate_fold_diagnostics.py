@@ -4,7 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
-from kappaccino.outputs.saved_run import load_run
+from lumina.outputs.saved_run import load_run
 
 
 def main():
@@ -16,11 +16,11 @@ def main():
     from _covariance_plot_cli import add_catalogs_argument, redirect
     add_catalogs_argument(parser)
     args = parser.parse_args()
-    from kappaccino.imaging.cutouts import imaging_variants, load_cluster_imaging, variant_config
-    from kappaccino.plotting.fold_pairs import (
+    from lumina.imaging.cutouts import imaging_variants, load_cluster_imaging, variant_config
+    from lumina.plotting.fold_pairs import (
         compute_fold_diagnostics, save_fold_data, render_fold_diagnostics, load_fold_data,
     )
-    from kappaccino.io import artifacts
+    from lumina.io import artifacts
     log = lambda message: print(message, flush=True)
     final = Path(args.run_directory).resolve() / 'final'
     paths = SimpleNamespace(tables=final/'tables', figures=final/'figures')
@@ -36,7 +36,7 @@ def main():
         log(f'[outputs] rendering saved fold cache: {len(data["draw_indices"])} draws; gp_blocks={config.likelihood.gp_blocks}')
     else:
         config, state, evaluator, posterior, paths = load_run(args.run_directory, transform=redirect(args.catalogs, args.ffsims_dir))
-        from kappaccino.reporting.draws import reporting_draws
+        from lumina.reporting.draws import reporting_draws
         if args.draws is not None:
             config = replace(config, outputs=replace(config.outputs, draws=args.draws))
         data = compute_fold_diagnostics(config, state, reporting_draws(config, evaluator, posterior), paths.tables, log=log)

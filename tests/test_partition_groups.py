@@ -1,25 +1,25 @@
-"""The uncertain-image likelihood summed over partitions (kappaccino.partition.groups) and its inputs."""
+"""The uncertain-image likelihood summed over partitions (lumina.partition.groups) and its inputs."""
 from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
 
 import jax.numpy as jnp
-from kappaccino.io import store
+from lumina.io import store
 import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino import pipeline
-from kappaccino.config import ImageSolverConfig, ImagesOutputConfig, OutputsConfig, PartitionConfig, RuntimeConfig, SamplingConfig, SearchConfig
-from kappaccino.likelihood.evaluator import Evaluator
-from kappaccino.diagnostics.exact_images import ExactImageSolver
-from kappaccino.partition import add_uncertain_images, write_partition_outputs
-from kappaccino.partition import catalog_evidence as ce, groups, inputs, lens_evidence as le
-from kappaccino.likelihood import smoothed as sl
-from kappaccino.core.state import build_state
-from kappaccino.io.hdf5 import load_arrays
-from kappaccino.priors import truncated_lognormal
+from lumina import pipeline
+from lumina.config import ImageSolverConfig, ImagesOutputConfig, OutputsConfig, PartitionConfig, RuntimeConfig, SamplingConfig, SearchConfig
+from lumina.likelihood.evaluator import Evaluator
+from lumina.diagnostics.exact_images import ExactImageSolver
+from lumina.partition import add_uncertain_images, write_partition_outputs
+from lumina.partition import catalog_evidence as ce, groups, inputs, lens_evidence as le
+from lumina.likelihood import smoothed as sl
+from lumina.core.state import build_state
+from lumina.io.hdf5 import load_arrays
+from lumina.priors import truncated_lognormal
 from conftest import _brute_force_images as brute_force_images
 
 SOURCES = [(2.0, (0.5, 0.3)), (3.0, (-1.0, 0.8)), (2.5, (2.0, -1.5))]       # (z, source position) of the new sources
@@ -123,7 +123,7 @@ def test_closed_form_source_integral_matches_quadrature(synthetic_config):
 
 
 def test_efficiency_grid_is_uniform_in_the_lensing_efficiency(synthetic_config):
-    from kappaccino.lens.cosmology import dpie_sigma0_factor_from_config
+    from lumina.lens.cosmology import dpie_sigma0_factor_from_config
     state = build_state(synthetic_config)
     grid = inputs.efficiency_spaced_grid(1.0, 5.0, 30, float(state.z_lens), state.cosmo_config)
     assert grid[0] == pytest.approx(1.0) and grid[-1] == pytest.approx(5.0) and np.all(np.diff(grid) > 0)
@@ -383,7 +383,7 @@ def test_groups_under_the_gp_likelihoods(synthetic_config, tmp_path, mode):
 def test_groups_sit_inside_the_membership_sum(synthetic_config, tmp_path):
     """With enumerated uncertain members, every member configuration evaluates the uncertain images with its own lens."""
     from scipy.special import logsumexp
-    from kappaccino.core.state import with_member_classes
+    from lumina.core.state import with_member_classes
     path, _ = _mock(synthetic_config, tmp_path)
     p = 0.6
     config = _with_partition(replace(synthetic_config, members=replace(synthetic_config.members, membership="marginalize",
