@@ -79,10 +79,19 @@ def median_geometry(state, draws):
     return draws._median_geometry
 
 
-def write_covariance_cutouts(config, state, draws, paths, imaging, *, log=print):
-    """Up to twelve cutouts of the images with the smallest median |lambda_arc|, from the median local mapping over the
-    reporting draws; reuses already loaded cluster imaging."""
-    stem = f'small_lambda_covariance_cutouts{config.image_catalog.figure_suffix}'
+def covariance_cutouts_stem(config):
+    return f'small_lambda_covariance_cutouts{config.outputs.rgb.figure_suffix}'
+
+
+def save_covariance_cutouts(config, state, draws, paths, imaging, *, intervals=None, log=print):
+    """Up to twelve images with the smallest median |lambda_arc|, from the median local mapping over the reporting
+    draws: the table and record ``small_lambda_covariance_cutouts<suffix>``, the second-order contours (arrays
+    ``..._contours``), the linear ellipses (arrays ``..._ellipses``) and the posterior 16-84% widths along the stretch
+    of the selected images (table ``..._intervals``: ``image_label``, ``total_p16_arcsec``, ``total_p84_arcsec``, from
+    ``intervals``, the table ``covariance_errors_both_planes`` of the ``fit`` module, or none when it is None) that
+    :func:`render_covariance_cutouts` draws.  Of the imaging only the band paths (for the record) are read.  Returns
+    the stem, or None (with a record that says why) when the likelihood is not smoothed or no image qualifies."""
+    stem = covariance_cutouts_stem(config)
     if config.likelihood.likelihood_mode != 'smoothed':
         store.write_record(paths.tables, stem, {'skipped': 'Requires the smoothed likelihood'})
         return None
@@ -93,14 +102,10 @@ def write_covariance_cutouts(config, state, draws, paths, imaging, *, log=print)
     if not order:
         store.write_record(paths.tables, stem, {'skipped': 'No finite nonsingular image-plane covariance'})
         return None
-    images, bands, display, _ = imaging
-    reference = images[rgb_reference_band(bands)]
-    solver = ExactImageSolver(evaluator, config.image_diagnostics)
+    images = imaging[0]
+    solver = ExactImageSolver(evaluator, config.outputs.image_solver)
     families = {str(f.family_id): f for f in state.family_data}
     records, contours = [], {}
-    intervals = None
-    if store.has_table(paths.tables, 'covariance_errors_both_planes') and store.has_record(paths.tables, 'covariance_errors_both_planes'):
-        intervals = store.read_table(paths.tables, 'covariance_errors_both_planes', legacy_csv=dict(dtype={'image_label': str})).query("plane == 'image' and direction == 'arc'").set_index('image_label')
     for i in order:
         family_id = state.images.family_ids[int(state.images.family_index_per_image[i])]
         family = families[str(family_id)]
@@ -133,6 +138,39 @@ def write_covariance_cutouts(config, state, draws, paths, imaging, *, log=print)
                             sigma_meas=float(g['meas'][i]), fov_arcsec=fov, quadratic_segments=len(segments),
                             quadratic_clipped=clipped, linear_clipped=bool(2*g['widths'][i, 0] > fov),
                             sampled_max_exact_map_error=error))
+    columns = ['image_label', 'total_p16_arcsec', 'total_p84_arcsec']
+    shown = pd.DataFrame(columns=columns)
+    if intervals is not None:
+        arc = intervals.query("plane == 'image' and direction == 'arc'")
+        shown = arc[arc['image_label'].isin([r['image_label'] for r in records])][columns].reset_index(drop=True)
+    with store.batch(paths.tables):
+        store.write_table(paths.tables, stem, pd.DataFrame(records))
+        store.write_arrays(paths.tables, f'{stem}_contours',
+                           {f'image_{i}_segment_{k}': seg for i in order for k, seg in enumerate(contours[i])})
+        store.write_arrays(paths.tables, f'{stem}_ellipses', image_index=np.asarray(order, dtype=int),
+                           directions=g['directions'][order], widths=g['widths'][order])
+        store.write_table(paths.tables, f'{stem}_intervals', shown)
+        store.write_record(paths.tables, stem, dict(posterior_draw_indices=np.asarray(draws.indices).tolist(), definition=DEFINITION, selection='12 smallest absolute Jacobian singular values; ties by image label',
+                                                kernel='exact', excluded_singular_or_nonfinite=int((~g['valid']).sum()), records=records,
+                                                rgb_files={band: str(image.path) for band, image in images.items()}))
+    return stem
+
+
+def render_covariance_cutouts(config, state, paths, imaging, *, log=print):
+    """The figure ``small_lambda_covariance_cutouts<suffix>.pdf`` from what :func:`save_covariance_cutouts` saved,
+    the posterior 16-84% widths along the stretch included."""
+    stem = covariance_cutouts_stem(config)
+    records = store.read_record(paths.tables, stem)['records']
+    saved = store.read_arrays(paths.tables, f'{stem}_ellipses')
+    order = [int(i) for i in saved['image_index']]
+    n = len(state.images.image_labels)
+    g = dict(directions=np.full((n, 2, 2), np.nan), widths=np.full((n, 2), np.nan))
+    g['directions'][order], g['widths'][order] = saved['directions'], saved['widths']
+    segments = store.read_arrays(paths.tables, f'{stem}_contours')
+    contours = {i: [segments[f'image_{i}_segment_{k}'] for k in range(row['quadratic_segments'])] for i, row in zip(order, records)}
+    images, bands, display, _ = imaging
+    reference = images[rgb_reference_band(bands)]
+    intervals = store.read_table(paths.tables, f'{stem}_intervals').set_index('image_label')
     output = figure_path(paths.figures, f'{stem}.pdf', config.paths.figure_prefix)
     angle = np.linspace(0, 2*np.pi, 361)
     with plt.rc_context(fname=STYLE, rc={'font.size': 9, 'mathtext.fontset': 'dejavusans', 'mathtext.default': 'regular'}):
@@ -186,7 +224,7 @@ def write_covariance_cutouts(config, state, draws, paths, imaging, *, log=print)
                         elif col == 1:
                             text = (f"Linear mapping | {fov:.1f}″ field | axis ratio {row['sigma_arc']/row['sigma_perp']:.1f}\n"
                                     + rf"$\sigma_{{arc}}={row['sigma_arc']:.2f}$″, $\sigma_\perp={row['sigma_perp']:.2f}$″")
-                            if intervals is not None and row['image_label'] in intervals.index:
+                            if row['image_label'] in intervals.index:
                                 q = intervals.loc[row['image_label']]
                                 text += f"\nPosterior 16–84%: {q.total_p16_arcsec:.2f}–{q.total_p84_arcsec:.2f}″ along stretch"
                             if row['linear_clipped']: text += '\nEllipse extends beyond field'
@@ -205,12 +243,5 @@ def write_covariance_cutouts(config, state, draws, paths, imaging, *, log=print)
                          'Quadratic contours are geometric diagnostics, not calibrated probability contours. Median over posterior draws of A, B and C; each family redshift.',
                          ha='center', fontsize=8)
                 pdf.savefig(fig); plt.close(fig)
-    with store.batch(paths.tables):
-        store.write_table(paths.tables, stem, pd.DataFrame(records))
-        store.write_arrays(paths.tables, f'{stem}_contours',
-                           {f'image_{i}_segment_{k}': seg for i in order for k, seg in enumerate(contours[i])})
-        store.write_record(paths.tables, stem, dict(posterior_draw_indices=np.asarray(draws.indices).tolist(), definition=DEFINITION, selection='12 smallest absolute Jacobian singular values; ties by image label',
-                                                kernel='exact', excluded_singular_or_nonfinite=int((~g['valid']).sum()), records=records,
-                                                rgb_files={band: str(image.path) for band, image in images.items()}))
     log(f'[outputs] covariance RGB cutouts: {len(order)} images -> {output}')
     return output

@@ -47,12 +47,16 @@ Likelihood, search and sampling
 .. autoclass:: kappaccino.config.SearchConfig
 .. autoclass:: kappaccino.config.SamplingConfig
 
-Diagnostics and figures
------------------------
+The outputs stage
+-----------------
 
-.. autoclass:: kappaccino.config.ImageDiagnosticsConfig
-.. autoclass:: kappaccino.config.TruthRecoveryConfig
-.. autoclass:: kappaccino.config.ImageCatalogCutoutConfig
+.. autoclass:: kappaccino.config.OutputsConfig
+.. autoclass:: kappaccino.config.ImageSolverConfig
+.. autoclass:: kappaccino.config.FitOutputConfig
+.. autoclass:: kappaccino.config.ImagesOutputConfig
+.. autoclass:: kappaccino.config.MassOutputConfig
+.. autoclass:: kappaccino.config.TruthOutputConfig
+.. autoclass:: kappaccino.config.RGBOutputConfig
 .. autoclass:: kappaccino.config.RGBDisplayConfig
 ```
 

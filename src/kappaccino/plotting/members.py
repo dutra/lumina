@@ -240,34 +240,54 @@ def scaling_correlations(samples, specs, population, path):
     finish(fig, path)
 
 
-def write_member_diagnostic_plots(config, state, evaluator, posterior, paths, *, log=print):
-    """Normal-run and saved-run entry point; all reporting shares one numerical dataset."""
+def save_member_diagnostics(config, state, evaluator, posterior, paths, *, log=print):
+    """The member and likelihood diagnostics (``diagnostics.members.compute_member_diagnostics``), saved in one batch:
+    the tables ``member_diagnostics``, ``diagnostic_image_index`` and ``image_field_diagnostics``, the arrays
+    ``member_diagnostic_draws`` (the per-draw fields and the deviation draws) and the record
+    ``member_diagnostic_provenance``.  None, after logging, without population members."""
     if not len(state.members.member_ids):
         log('[diagnostics] member suite skipped: no population members')
-        return []
+        return None
     data = compute_member_diagnostics(state, evaluator, posterior, config, log=log)
-    paths.figures.mkdir(parents=True, exist_ok=True)
-    with store.batch(paths.tables):
-        store.write_table(paths.tables, 'member_diagnostics', data.members)
-        store.write_table(paths.tables, 'diagnostic_image_index', data.images)
-        store.write_arrays(paths.tables, 'member_diagnostic_draws', data.fields,
-                           deviations=data.deviations, prior_deviations=data.prior_deviations)
-        rows = []
-        for d, index in enumerate(data.provenance['selected_draw_indices']):
-            frame = data.images.copy()
-            frame['draw_index'] = index
-            for key in ('error_arcsec', 'error_whitened'):
-                frame[key] = data.fields[key][d]
-            frame['whitened_u1'], frame['whitened_u2'] = data.fields['residual'][d].T
-            rows.append(frame)
-        store.write_table(paths.tables, 'image_field_diagnostics', pd.concat(rows))
+    rows = []
+    for d, index in enumerate(data.provenance['selected_draw_indices']):
+        frame = data.images.copy()
+        frame['draw_index'] = index
+        for key in ('error_arcsec', 'error_whitened'):
+            frame[key] = data.fields[key][d]
+        frame['whitened_u1'], frame['whitened_u2'] = data.fields['residual'][d].T
+        rows.append(frame)
     far = data.members[data.members.member_class == 'far-field']
     data.provenance['failed_guard_members'] = far.loc[far.guard_ratio_min < data.provenance['guard_cut_radii'], 'member_id'].tolist()
     data.provenance['failed_error_members'] = far.loc[far.member_error_whitened_max >= data.provenance['tolerance'], 'member_id'].tolist()
     data.provenance['failed_error_images'] = data.images.loc[np.max(data.fields['error_whitened'], axis=0) >= data.provenance['tolerance'], 'image_label'].tolist()
     log(f"[diagnostics] selected-model max whitened error={data.fields['error_whitened'].max():.5g} "
         f"(limit={data.provenance['tolerance']:g}); guard failures={len(data.provenance['failed_guard_members'])}")
-    store.write_record(paths.tables, 'member_diagnostic_provenance', data.provenance)
+    with store.batch(paths.tables):
+        store.write_table(paths.tables, 'member_diagnostics', data.members)
+        store.write_table(paths.tables, 'diagnostic_image_index', data.images)
+        store.write_arrays(paths.tables, 'member_diagnostic_draws', data.fields,
+                           deviations=data.deviations, prior_deviations=data.prior_deviations)
+        store.write_table(paths.tables, 'image_field_diagnostics', pd.concat(rows))
+        store.write_record(paths.tables, 'member_diagnostic_provenance', data.provenance)
+    return 'member_diagnostics'
+
+
+def load_member_diagnostics(stage):
+    """The ``MemberDiagnostics`` that :func:`save_member_diagnostics` saved in ``stage``."""
+    from ..diagnostics.members import MemberDiagnostics
+    fields = store.read_arrays(stage, 'member_diagnostic_draws')
+    deviations, prior_deviations = fields.pop('deviations'), fields.pop('prior_deviations')
+    provenance = store.read_record(stage, 'member_diagnostic_provenance')
+    return MemberDiagnostics(store.read_table(stage, 'member_diagnostics'), provenance['variable_definitions'],
+                             deviations, prior_deviations, fields, store.read_table(stage, 'diagnostic_image_index'),
+                             provenance)
+
+
+def render_member_diagnostics(config, paths, *, log=print):
+    """The four member and likelihood diagnostic figures, from what :func:`save_member_diagnostics` saved."""
+    data = load_member_diagnostics(paths.tables)
+    paths.figures.mkdir(parents=True, exist_ok=True)
     prefix = config.paths.figure_prefix
     def output(name):
         return paths.figures / ((f'{prefix}_' if prefix else '') + name + '.pdf')

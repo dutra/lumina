@@ -15,14 +15,20 @@ member catalog:
 kappaccino catalogs/hera --dry-run
 kappaccino catalogs/m0416/canucs2025 --profile fast --profile jwst
 kappaccino catalogs/as1063/bergamini2019 --set sampling.warmup=1000 --set runtime.skip_plots=true
+kappaccino catalogs/hera --set outputs.rgb.enabled=false
+kappaccino outputs results/hera/w500s250t7_allblocks-3f9a1c --only truth
 ```
+
+`kappaccino outputs RUN_DIR` reruns the outputs stage of a finished run without fitting; see {doc}`outputs`. A cluster
+folder that is literally named `outputs` must be given as `./outputs`.
 
 Each run goes to `results/<name>/<description>-<hash>`, for example `results/hera/w500s250t7_allblocks-3f9a1c`. The
 description gives the NUTS warmup, samples and tree depth, the GP blocks (or the likelihood when it is not the GRF),
 the image catalog when `--images` replaces it, `uncertain` with uncertain images, and the profiles. The hash is six
-characters of a hash of the whole configuration except its paths and WBIC settings, the part the pipeline checks
-when it resumes. The same command therefore resumes its run on any day, and any change, a prior set with `--set`
-included, starts a new folder. `--run-label NAME` names the folder by hand, and `--results DIR` moves the tree
+characters of a hash of the whole configuration except its paths, WBIC settings and `outputs` section (which never
+changes a fit), the part the pipeline checks when it resumes. The same command therefore resumes its run on any day,
+any change of a fit setting, a prior set with `--set` included, starts a new folder, and a change under `outputs`
+(more draws, another truth map, a module switched off) keeps the folder. `--run-label NAME` names the folder by hand, and `--results DIR` moves the tree
 (`DIR/<name>/...`). The files the run read and the command are copied to the run's `inputs/` folder.
 `--images YAML` fits another image catalog in place of the one `priors.yaml` names (a degraded catalog, say).
 Images of unknown family are a `partition` section: `--set partition.catalog_path=uncertain.csv`, or
@@ -30,8 +36,8 @@ Images of unknown family are a `partition` section: `--set partition.catalog_pat
 `partition.redshift_grid=[z_min,z_max,points]` for their redshift quadrature.
 
 The common fields have named options, applied after the profiles and before `--set`: `--chains`, `--seed`,
-`--starts`, `--warm-start RUN_DIR`, `--warmup`, `--samples`, `--tree-depth`, `--target-accept`, `--draws` (both
-reporting draw counts) and `--skip-plots`. `kappaccino --help` lists them with the field each sets.
+`--starts`, `--warm-start RUN_DIR`, `--warmup`, `--samples`, `--tree-depth`, `--target-accept`, `--draws`
+(`outputs.draws` and `outputs.image_draws`) and `--skip-plots`. `kappaccino --help` lists them with the field each sets.
 
 `--member-profile power-law` fits the members as cored power laws, the dPIE with a free 3D slope (one sampled slope
 per population), and `--member-slope G` holds that slope at G. In `priors.yaml` the same is `profile_type: 102` on a
@@ -172,16 +178,29 @@ likelihood:
   gp_blocks: all
   lambda_b_prior: lognormal(50.0, 1.0) in [0.5, 200.0]
 sampling: {warmup: 500, samples: 250, max_tree_depth: 7, target_accept: 0.8}
-reporting: {draws: 64, image_draws: 64, extra_images: true}
+outputs:
+  draws: 64
+  image_draws: 64
+  fit: {enabled: true}
+  images: {enabled: true, extra_images: true}
+  mass: {enabled: true}
+  truth:
+    enabled: true
+    kappa_true_fits: ../../data/imaging/hera/ffsims/kappa_z9_0.fits
+  rgb:
+    enabled: true
+    image_dir: ../../data/imaging/hera/ffsims
 profiles:
   fast:
     likelihood: {gp_blocks: system, gp_knee_project_modes: []}
-    reporting: {draws: 8, image_draws: 8, extra_images: false}
+    outputs: {draws: 8, image_draws: 8, images: {extra_images: false}}
 ```
 
 `name` sets the figure prefix and the output folder, and `priors` names the priors file. Every other top-level key is a
 section of {class}`~kappaccino.config.LensClusterSolverConfig` with its field names; `scaling` here changes what
-`priors.yaml` set. `profiles` are overlays of the same sections, applied in the order given on the command line, and
+`priors.yaml` set. `outputs` lists what the run produces, one section per output module with its `enabled` switch and
+its settings (see {doc}`outputs`); paths in it (`outputs.truth.*_true_fits`, `outputs.rgb.image_dir`,
+`outputs.rgb.candidate_catalog_path`) are relative to the file's folder, as `partition.catalog_path` is. `profiles` are overlays of the same sections, applied in the order given on the command line, and
 `--set section.field=value` overrides come last. The defaults of every field are the library defaults.
 
 The fast profile of each cluster is exploratory: far-field members down to 2 cut radii, classified at the current

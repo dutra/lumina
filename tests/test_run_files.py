@@ -126,7 +126,7 @@ def test_cluster_folders_load_and_validate(folder, monkeypatch):
         config = load_run(folder, chosen, ["paths.run_name=test"]).validate()
         assert config.paths.figure_prefix == name
         assert config.model.image_constraints.catalog_path.startswith(folder)
-        assert config.reporting.extra_images == ("fast" not in chosen)
+        assert config.outputs.images.extra_images == ("fast" not in chosen)
 
 
 def test_profiles_extends_and_overrides(monkeypatch):
@@ -134,8 +134,8 @@ def test_profiles_extends_and_overrides(monkeypatch):
     base = load_run("catalogs/m0416/canucs2025")
     fast = load_run("catalogs/m0416/canucs2025", ["fast"], ["sampling.warmup=1000", "likelihood.lambda_b_prior=lognormal(10, 1) in [0.5, 80]"])
     # extends ../bergamini2023/run.yaml: its sections and profiles, this folder's priors.
-    assert base.members.far_field_cut_radii == 2.0 and base.image_catalog.paper_fold_cutouts[0] == "system:K1"
-    assert base.image_catalog.candidate_catalog_path == "src/kappaccino/data/m0416_candidates.json"
+    assert base.members.far_field_cut_radii == 2.0 and base.outputs.rgb.paper_fold_cutouts[0] == "system:K1"
+    assert base.outputs.rgb.candidate_catalog_path == "src/kappaccino/data/m0416_candidates.json"
     assert base.scaling.member_shape_scatter == 0.1 and fast.scaling.member_shape_scatter is None
     assert base.likelihood.gp_blocks == "all" and fast.likelihood.gp_blocks == "system" and fast.likelihood.gp_knee_project_modes == ()
     assert fast.sampling.warmup == 1000 and fast.sampling.max_tree_depth == 8
@@ -170,7 +170,7 @@ def test_tng_catalog_sizes_are_nested_and_resolve(tag, monkeypatch):
         assert Path(config.model.image_constraints.catalog_path).resolve() == parent / size / 'images.yaml'
         assert Path(config.model.member_populations[0].catalog_path).resolve() == parent / size / 'members.yaml'
         for quantity in ('kappa', 'gammax', 'gammay'):
-            assert Path(getattr(config.truth, f'{quantity}_true_fits')).resolve() == ROOT / 'data' / tag / f'{quantity}_z9.fits'
+            assert Path(getattr(config.outputs.truth, f'{quantity}_true_fits')).resolve() == ROOT / 'data' / tag / f'{quantity}_z9.fits'
         if size != 'large':
             dependencies = {p.resolve() for p in input_files(parent / size)}
             assert {parent / 'large/run.yaml', parent / 'large/priors.yaml'} <= dependencies
@@ -203,7 +203,7 @@ def test_command_line(monkeypatch, capsys):
                   "--skip-plots", "--set", "sampling.samples=60", "--dry-run"])
     assert seen["overrides"] == ["runtime.chains=2", "runtime.seed=7", "search.n_starts=16", "search.warm_start=results/a/hera/r",
                                  "sampling.warmup=100", "sampling.samples=50", "sampling.max_tree_depth=9",
-                                 "sampling.target_accept=0.9", "reporting.draws=8", "reporting.image_draws=8",
+                                 "sampling.target_accept=0.9", "outputs.draws=8", "outputs.image_draws=8",
                                  "runtime.skip_plots=true", "sampling.samples=60"]
     with pytest.raises(SystemExit):
         cli.main(["catalogs/hera", "--target-accept", "1.5"])
@@ -212,7 +212,7 @@ def test_command_line(monkeypatch, capsys):
     built = cli.build_config("catalogs/hera", overrides=seen["overrides"])
     assert (built.sampling.warmup, built.sampling.samples, built.sampling.max_tree_depth, built.sampling.target_accept) == (100, 60, 9, 0.9)
     assert (built.runtime.chains, built.runtime.seed, built.runtime.skip_plots, built.search.n_starts) == (2, 7, True, 16)
-    assert built.search.warm_start == "results/a/hera/r" and (built.reporting.draws, built.reporting.image_draws) == (8, 8)
+    assert built.search.warm_start == "results/a/hera/r" and (built.outputs.draws, built.outputs.image_draws) == (8, 8)
     swapped = cli.build_config("catalogs/hera", images="catalogs/ares/images.yaml", overrides=["partition.catalog_path=u.csv"])
     assert swapped.model.image_constraints.catalog_path == "catalogs/ares/images.yaml" and swapped.partition.catalog_path == "u.csv"
 

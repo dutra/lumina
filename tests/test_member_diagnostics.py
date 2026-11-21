@@ -14,7 +14,7 @@ from kappaccino.diagnostics.members import (
     compute_member_diagnostics, deviation_draws, neighbor_variables, prior_deviation_draws,
     reporting_fields, whiten,
 )
-from kappaccino.plotting.members import write_member_diagnostic_plots
+from kappaccino.plotting.members import render_member_diagnostics, save_member_diagnostics
 from kappaccino.core.model import member_log_deviations
 from kappaccino.core.state import build_state, with_member_classes
 
@@ -79,7 +79,7 @@ def test_exact_reporting_preserves_sampled_sources(synthetic_config):
 
 
 def test_suite_with_one_reporting_draw(synthetic_config, tmp_path):
-    config = replace(synthetic_config, reporting=replace(synthetic_config.reporting, draws=1))
+    config = replace(synthetic_config, outputs=replace(synthetic_config.outputs, draws=1))
     state = build_state(config)
     evaluator = Evaluator(state)
     posterior = posterior_for(state, evaluator)
@@ -91,7 +91,8 @@ def test_suite_with_one_reporting_draw(synthetic_config, tmp_path):
     assert data.members.member_id.tolist() == list(state.members.member_ids)
     paths = SimpleNamespace(figures=tmp_path/'figures', tables=tmp_path/'tables')
     style = plt.rcParams['font.size']
-    results = write_member_diagnostic_plots(config, state, evaluator, posterior, paths)
+    assert save_member_diagnostics(config, state, evaluator, posterior, paths) == 'member_diagnostics'
+    results = render_member_diagnostics(config, paths)
     assert len(results) == 4
     assert not list(paths.figures.glob('*scaling_correlations.pdf'))
     for path in results:
@@ -104,8 +105,8 @@ def test_suite_with_one_reporting_draw(synthetic_config, tmp_path):
 
 @pytest.mark.parametrize('count', [0, -1, True, 1.5])
 def test_reporting_draw_count_validation(synthetic_config, count):
-    config = replace(synthetic_config, reporting=replace(synthetic_config.reporting, draws=count))
-    with pytest.raises(ValueError, match='reporting.draws'):
+    config = replace(synthetic_config, outputs=replace(synthetic_config.outputs, draws=count))
+    with pytest.raises(ValueError, match='outputs.draws'):
         config.validate()
 
 
@@ -130,25 +131,17 @@ def test_hierarchical_prior_width_against_independent_quadrature(synthetic_confi
 
 
 def test_normal_output_hook(synthetic_config, tmp_path, monkeypatch):
-    from kappaccino.reporting import outputs
-    import pandas as pd
+    from kappaccino.plotting import members
+    from kappaccino.reporting import outputs, results_tex
     state = build_state(synthetic_config)
     evaluator = Evaluator(state)
     posterior = posterior_for(state, evaluator)
     calls = []
-    monkeypatch.setattr(outputs, 'posterior_summary_table', lambda *a: pd.DataFrame())
-    monkeypatch.setattr(outputs, 'classification_table', lambda *a: pd.DataFrame())
-    monkeypatch.setattr(outputs.plots, 'member_scaling_table', lambda *a: pd.DataFrame())
-    monkeypatch.setattr(outputs, 'write_potfile_plots', lambda *a, **k: [])
-    monkeypatch.setattr(outputs, 'write_member_diagnostic_plots', lambda *a, **k: calls.append(a))
-    class StopAfterHook(Exception):
-        pass
-    def stop(*a, **k):
-        raise StopAfterHook
-    monkeypatch.setattr(outputs, 'image_recovery_tables', stop)
-    paths = SimpleNamespace(figures=tmp_path/'figures', tables=tmp_path/'tables')
-    with pytest.raises(StopAfterHook):
-        outputs.write_outputs(synthetic_config, state, evaluator, posterior, {}, paths)
+    monkeypatch.setattr(members, 'save_member_diagnostics', lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(results_tex, 'write_run_results', lambda *a, **k: None)
+    paths = SimpleNamespace(figures=tmp_path/'figures', tables=tmp_path/'tables', root=tmp_path)
+    summary = outputs.write_outputs(synthetic_config, state, evaluator, posterior, {}, paths, only=('fit',), log=lambda _: None)
+    assert list(summary['modules']) == ['fit'] and summary['modules']['fit']['steps']['members']['status'] == 'done'
     assert len(calls) == 1
     assert calls[0][0] is synthetic_config and calls[0][1] is state
 
@@ -159,7 +152,7 @@ def test_multiple_populations_without_large_halo(synthetic_config):
     model = replace(synthetic_config.model, large_halos=(ShearHaloConfig('shear', .03, 0., .3),),
                     member_populations=(first, replace(first, id='second')))
     config = replace(synthetic_config, model=model,
-                     reporting=replace(synthetic_config.reporting, draws=1))
+                     outputs=replace(synthetic_config.outputs, draws=1))
     state = build_state(config)
     evaluator = Evaluator(state)
     data = compute_member_diagnostics(state, evaluator, posterior_for(state, evaluator), config)
@@ -171,14 +164,14 @@ def test_multiple_populations_without_large_halo(synthetic_config):
 
 def test_failed_budget_is_saved_without_changing_classes(synthetic_config, tmp_path):
     config = replace(synthetic_config, members=replace(synthetic_config.members, template_tolerance=1e-14),
-                     reporting=replace(synthetic_config.reporting, draws=1))
+                     outputs=replace(synthetic_config.outputs, draws=1))
     state = with_member_classes(build_state(config), np.array([0, 1]))
     before = state.members.exact_positions.copy()
     evaluator = Evaluator(state)
     paths = SimpleNamespace(figures=tmp_path/'figures', tables=tmp_path/'tables')
-    write_member_diagnostic_plots(config, state, evaluator, posterior_for(state, evaluator), paths)
+    save_member_diagnostics(config, state, evaluator, posterior_for(state, evaluator), paths)
     p = store.read_record(paths.tables, 'member_diagnostic_provenance')
     assert p['failed_error_images']
     assert p['failed_error_members']
     np.testing.assert_array_equal(state.members.exact_positions, before)
-    assert write_member_diagnostic_plots(config, SimpleNamespace(members=SimpleNamespace(member_ids=[])), None, None, paths) == []
+    assert save_member_diagnostics(config, SimpleNamespace(members=SimpleNamespace(member_ids=[])), None, None, paths) is None

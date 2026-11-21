@@ -1,7 +1,7 @@
 # Configuration
 
 Every fit is described by one frozen dataclass, {class}`~kappaccino.config.LensClusterSolverConfig`. It groups the
-lens model, the likelihood, the search and the sampler, the run paths and the figure options. Build it, call
+lens model, the likelihood, the search and the sampler, the run paths and the settings of the outputs stage. Build it, call
 `validate()`, and pass it to {func}`kappaccino.pipeline.run`. Build it in Python, as on this page, read the lens
 model from a Lenstool parameter file (see {ref}`lenstool-par`), or declare it in a cluster folder's `priors.yaml` and
 `run.yaml` (see {doc}`run-files`). Change a field of a frozen config with
@@ -23,10 +23,8 @@ config = replace(config, sampling=replace(config.sampling, warmup=500, samples=2
 | `sampling` | `SamplingConfig` | NUTS |
 | `runtime` | `RuntimeConfig` | seed, chains, CPU threads, resume, plotting on/off |
 | `paths` | `RunPathsConfig` | output directory, run name, figure prefix |
-| `image_diagnostics` | `ImageDiagnosticsConfig` | the exact-image finder and posterior image diagnostics |
-| `truth` | `TruthRecoveryConfig` | truth maps of simulated clusters |
-| `image_catalog` | `ImageCatalogCutoutConfig` | imaging, RGB display and cutout figures |
 | `partition` | `PartitionConfig` or None | uncertain images assigned to sources with the lens (see {doc}`likelihoods`) |
+| `outputs` | `OutputsConfig` | the outputs stage: reporting draws, image solver, one section per output module; never part of the fit |
 
 ## Lens model
 
@@ -289,11 +287,26 @@ second NUTS run on the tempered posterior that gives WBIC for model comparison. 
 the length of that run (see {doc}`model-comparison`).
 
 `RuntimeConfig` sets `seed`, `chains`, `nuts_chain_method` (`"parallel"`, `"sequential"` or `"vectorized"`),
-`resume`, `skip_plots` and `output_workers`. `output_workers` (default 4, at least 1) is the number of threads that
-evaluate the reporting draws of the output stage at the same time, for the image recovery and the lens maps on grids.
-The products are identical for any value; each thread holds the working arrays of one draw, so more threads use more
-memory. It is a performance setting: it is not part of the run hash and a resume ignores it, so
-`--set runtime.output_workers=8` reuses the existing run folder.
+`resume` and `skip_plots` (no outputs stage at all).
+
+`OutputsConfig` (the `outputs` section) holds everything the outputs stage reads and nothing a fit reads: the
+reporting draws (`draws`, `image_draws`), `workers` (default 4, at least 1, the threads that evaluate the draws; the
+products are identical for any value and each thread holds one draw's working arrays), `caustic_source_redshift`,
+`fail_fast`, the exact-image solver (`image_solver`, {class}`~kappaccino.config.ImageSolverConfig`) and one section per
+output module (`fit`, `images`, `mass`, `truth`, `rgb`), each with an `enabled` switch and its own settings: the truth
+maps of a simulated cluster in `truth` ({class}`~kappaccino.config.TruthOutputConfig`), the imaging, RGB display,
+paper cutouts and fold-pair search in `rgb` ({class}`~kappaccino.config.RGBOutputConfig`), the extra-image search in
+`images`. The section is not part of the run hash and a resume ignores it, so `--set outputs.workers=8` or
+`--set outputs.rgb.enabled=false` reuses the existing run folder. See {doc}`outputs`.
+
+```python
+from kappaccino.config import OutputsConfig, RGBOutputConfig, TruthOutputConfig
+
+config = replace(config, outputs=OutputsConfig(
+    draws=64, image_draws=256,
+    truth=TruthOutputConfig(kappa_true_fits="data/imaging/hera/ffsims/kappa_z9_0.fits"),
+    rgb=RGBOutputConfig(image_dir="data/imaging/hera/ffsims", bands=("F435W", "F606W", "F814W"))))
+```
 
 ## Run paths
 
@@ -341,6 +354,7 @@ Common changes on an existing configuration:
 | drop a large-scale component | rebuild `LensModelConfig.large_halos` without it |
 | start from a previous run | `SearchConfig(warm_start="results/demo/v1")` |
 | skip figures and tables | `RuntimeConfig(skip_plots=True)` |
+| skip the imaging figures | `OutputsConfig(rgb=RGBOutputConfig(enabled=False))` |
 
 (lenstool-par)=
 ## From a Lenstool `.par` file

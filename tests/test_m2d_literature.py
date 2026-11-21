@@ -3,13 +3,13 @@ from dataclasses import replace
 import numpy as np
 import pandas as pd
 
-from kappaccino.config import TruthRecoveryConfig
+from kappaccino.config import TruthOutputConfig
 from kappaccino.diagnostics.truth_recovery import LITERATURE_RATIOS, annular_kappa_profile, literature_m2d_ratios, literature_ratios
 from kappaccino.plotting import plots
 
 
 def test_literature_ratios_are_read_beside_the_truth_map_and_drawn(tmp_path):
-    config = replace(TruthRecoveryConfig(), kappa_true_fits=str(tmp_path/"kappa.fits"))
+    config = replace(TruthOutputConfig(), kappa_true_fits=str(tmp_path/"kappa.fits"))
     assert literature_m2d_ratios(config) is None
     radius = np.geomspace(5., 90., 60)
     rows = [dict(quantity=q, approach=a, model=m, r_arcsec=r, ratio=1.02, width_px=3.0, flag=0) for q in ("mass", "kappa") for m, a in (("CATS", "parametric"), ("GRALE", "free-form")) for r in radius]
@@ -62,3 +62,32 @@ def test_footprint_mean_ratios_from_draws():
     found = footprint_mean_ratios(profile, profile, np.array([40.0]), None, None, draws, draws)
     median, low, high = found["mass"]["This work"]
     assert np.allclose(median, (1.0, 0.015, 0.015)) and low[2] < 0.015 < high[2]
+
+
+def test_truth_recovery_reads_back_what_its_figures_draw(tmp_path):
+    from kappaccino.diagnostics.truth_recovery import load_truth_recovery, save_truth_recovery
+    from kappaccino.io import store
+    rng = np.random.default_rng(1)
+    x, y = np.meshgrid(np.linspace(-1, 1, 5), np.linspace(-1, 1, 4))
+    maps = {q: rng.normal(size=x.shape) for q in ("kappa", "abs_mu", "detA", "mu")}
+    center = dict(center_mode="smoothed_truth_kappa_peak", center_x_arcsec=0.1, center_y_arcsec=-0.2,
+                  center_smoothing_sigma_pix=2.0, center_smoothed_kappa_peak=1.5)
+    profile = pd.DataFrame({"radius_arcsec": [1.0, 2.0], "m2d_ratio_median": [1.0, 1.1]})
+    literature = pd.DataFrame({"approach": ["parametric"], "model": ["CATS"], "r_arcsec": [3.0], "ratio": [1.0], "width_px": [2.0], "flag": [0]})
+    recovery = {"x": x, "y": y, "truth": maps, "model": {q: {"median": 2 * v} for q, v in maps.items()}, "shape": x.shape,
+                "z_source": 9.0, "grf_included": True, "mass_per_kappa_pixel_msun": 1.25e9, "center": center,
+                "profile": profile, "kappa_profile": profile, "literature_m2d": literature, "literature_kappa": None}
+    store.write_table(tmp_path, "truth_recovery_m2d_aperture_profile", profile)
+    store.write_table(tmp_path, "truth_recovery_kappa_annulus_profile", profile)
+    save_truth_recovery(tmp_path, recovery, n_draws=8)
+    view = load_truth_recovery(tmp_path)
+    assert set(view["truth"]) == {"kappa", "abs_mu", "detA"}                 # only what the residual figure draws
+    for q in view["truth"]:
+        np.testing.assert_array_equal(view["truth"][q], maps[q])
+        np.testing.assert_array_equal(view["model"][q]["median"], 2 * maps[q])
+    np.testing.assert_array_equal(view["x"], x)
+    assert view["center"] == center and view["mass_per_kappa_pixel_msun"] == 1.25e9 and view["z_source"] == 9.0
+    pd.testing.assert_frame_equal(view["profile"], profile)
+    pd.testing.assert_frame_equal(view["literature_m2d"], literature)
+    assert view["literature_kappa"] is None
+    assert store.read_record(tmp_path, "truth_recovery")["n_draws"] == 8

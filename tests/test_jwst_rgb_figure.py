@@ -1,11 +1,12 @@
 """Photometry must remain attached to the right image when catalogs change."""
+from pathlib import Path
+
 import pytest
 import h5py
 import numpy as np
 import pandas as pd
 from kappaccino.plotting.jwst_rgb import marker_photometry
 from kappaccino.io import store
-from kappaccino.io.hdf5 import save_arrays
 
 
 def test_marker_matches_survive_reordering_but_reject_moved_images(tmp_path):
@@ -14,19 +15,19 @@ def test_marker_matches_survive_reordering_but_reject_moved_images(tmp_path):
         phot_id=[1,2],match_separation_arcsec=[.1,.2],m_F200W_AB=[24.,28.],
         valid_photometry=[True,True])).to_csv(path,index=False)
     catalog=pd.DataFrame(dict(image_label=['b','a','new'],x_obs_arcsec=[0.,0.,0.],y_obs_arcsec=[0.,0.,0.]))
-    result=marker_photometry(catalog,(3,64.,-24.),path)
+    result=marker_photometry(catalog,(3,64.,-24.),pd.read_csv(path))
     np.testing.assert_allclose(result.m_F200W_AB[:2],[28,24])
     assert result.marker_area_pt2.iloc[1]>result.marker_area_pt2.iloc[0]
     assert result.marker_area_pt2.iloc[2]==9
     catalog.loc[1,'y_obs_arcsec']=1
-    result=marker_photometry(catalog,(3,64.,-24.),path)
+    result=marker_photometry(catalog,(3,64.,-24.),pd.read_csv(path))
     assert not result.valid_photometry.iloc[1]
     assert result.marker_area_pt2.iloc[1]==9
 
 
-def test_missing_photometry_keeps_all_image_markers(tmp_path):
+def test_no_photometry_keeps_all_image_markers():
     catalog=pd.DataFrame(dict(image_label=['a','b'],x_obs_arcsec=[0.,1.],y_obs_arcsec=[0.,1.]))
-    result=marker_photometry(catalog,(3,64.,-24.),tmp_path/'missing.csv')
+    result=marker_photometry(catalog,(3,64.,-24.))
     assert len(result)==2
     assert not result.valid_photometry.any()
     assert (result.marker_area_pt2==9).all()
@@ -122,21 +123,39 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
         position_calls.append(True)
         return {'curves': []}
     monkeypatch.setattr(image_position_contours, 'load_or_compute_contours', positions)
+    monkeypatch.setattr(image_position_contours, 'load_position_contours', lambda tables: {'curves': []})
     catalog=_overview_catalog()
     extra=pd.DataFrame(dict(family_id=['1'],x_model_arcsec=[.1],y_model_arcsec=[-.2]))
-    config=NS(paths=NS(run_name=cluster),image_catalog=NS(candidate_catalog_path='must-not-read.json'))
+    config=NS(paths=NS(run_name=cluster),outputs=NS(rgb=NS(candidate_catalog_path='must-not-read.json',figure_suffix='')),
+              model=NS(image_constraints=NS(catalog_path='')))
     if cluster == 'm0416':
         import json
         candidate_path = tmp_path/'candidates.json'
         candidate_path.write_text(json.dumps({'candidates':[
             dict(id='K66.c1',system='K66',kind='counterimage',ra=64.,dec=-24.),
             dict(id='A.1',system='A',kind='new_family',ra=64.,dec=-24.)]}))
-        config.image_catalog.candidate_catalog_path = candidate_path
+        config.outputs.rgb.candidate_catalog_path = candidate_path
         catalog['family_id'] = ['K66','K67']
     state=NS(reference=(3,64.,-24.))
     output=tmp_path/f'{cluster}_hst_rgb_critical_z9.pdf'
-    assert rgb.render_rgb_critical(config,state,Draws(),catalog,extra,
-        ({'F814W':object()},('F814W',),None,cluster),output,tmp_path,log=lambda _:None) == output
+    imaging=({'F814W':object()},('F814W',),None,cluster)
+    rgb.save_rgb_critical(config,state,Draws(),catalog,extra,imaging,tmp_path,log=lambda _:None)
+    if cluster == 'm0416':
+        candidate_path.unlink()             # the render draws the candidates the compute saved, never the file
+        # ... and sizes the markers from the photometry the compute saved, never from the packaged file.
+        matched = store.read_table(tmp_path, 'hst_rgb_critical_z9_marker_photometry')
+        assert matched.image_label.tolist() == ['1.a', '2.b'] and 'marker_area_pt2' in matched
+        assert store.read_record(tmp_path, 'hst_rgb_critical_z9_marker_photometry') == {'path': str(rgb.MARKER_PHOTOMETRY)}
+        monkeypatch.setattr(rgb, 'MARKER_PHOTOMETRY', tmp_path / 'must-not-read.csv')
+        monkeypatch.setattr(pd, 'read_csv', lambda *a, **k: pytest.fail('the render read a csv file'))
+    else:
+        assert not store.has_table(tmp_path, 'hst_rgb_critical_z9_marker_photometry')
+    assert rgb.render_saved_rgb_critical(config,state,catalog,extra,imaging,output,tmp_path,log=lambda _:None)[0] == output
+    if cluster == 'm0416':
+        shown = store.read_figure_record(output.with_name(output.stem + '_candidates.pdf'))
+        assert shown['candidate_overlays'] == ['K66.c1', 'A.1'] and shown['candidate_catalog'] == str(candidate_path)
+    else:
+        assert not store.has_record(tmp_path, 'hst_rgb_critical_z9_candidate_catalog')
     import json
     info=store.read_figure_record(output)
     assert not output.with_suffix('.json').exists()
@@ -147,7 +166,8 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
     assert 'stretch_sticks' not in info and 'stretch_direction' not in info and info['redrawn_from_tables'] is False
     assert info['recovered_position_probability'] == .682689492 and info['recovered_position_contour_scale'] == 4.0
     assert info['candidate_catalog'] is None
-    assert (info['marker_photometry'] is None) == (cluster != 'm0416')
+    assert info['marker_photometry'] == (str(Path(rgb.__file__).parents[1] / 'data' / 'm0416_image_f200w_photometry.csv')
+                                         if cluster == 'm0416' else None)
     assert info['insets'] is None
     assert info['magnitude_band'] == []
     assert store.has_arrays(tmp_path,'hst_rgb_critical_z9') and store.has_record(tmp_path,'hst_rgb_critical_z9_band')
@@ -190,23 +210,21 @@ def test_recovered_contours_are_enlarged_about_their_own_mean_position():
     assert recovered_contour_segments(dict(curves=[]))==[]
 
 
-@pytest.mark.parametrize('layout',['store','legacy'])
-def test_saved_tables_keep_string_ids(tmp_path, layout):
+def test_saved_tables_keep_string_ids(tmp_path):
     tables=tmp_path/'final'/'tables'
-    from kappaccino.plotting.jwst_rgb import read_saved_table, read_saved_extra_images
+    from kappaccino.plotting.jwst_rgb import read_saved_extra_images
     frame=pd.DataFrame(dict(family_id=['1','NA'],image_label=['1.a','NA.b'],x_obs_arcsec=[1.,np.nan],
                             image_recovery_status=['recovered','not_recovered']))
-    _put(tables,'image_fit_quality',frame,layout)
-    read=read_saved_table(tables,'image_fit_quality')
+    store.write_table(tables,'image_fit_quality',frame)
+    read=store.read_table(tables,'image_fit_quality')
     assert read.family_id.tolist()==['1','NA'] and read.image_label.tolist()==['1.a','NA.b']
     assert read.x_obs_arcsec.dtype==float and np.isnan(read.x_obs_arcsec.iloc[1])
-    if layout=='store':
-        pd.testing.assert_frame_equal(read,frame)
+    pd.testing.assert_frame_equal(read,frame)
     empty=read_saved_extra_images(tables)                             # missing: the pipeline's empty table
     assert empty.empty and {'family_id','x_model_arcsec','y_model_arcsec'} <= set(empty.columns)
-    _put(tables,'image_recovery_extra_images',pd.DataFrame(columns=['family_id','x_model_arcsec','y_model_arcsec']),layout)
+    store.write_table(tables,'image_recovery_extra_images',pd.DataFrame(columns=['family_id','x_model_arcsec','y_model_arcsec']))
     assert read_saved_extra_images(tables).empty
-    _put(tables,'image_recovery_extra_images',pd.DataFrame(dict(family_id=['3'],x_model_arcsec=[.1],y_model_arcsec=[.2])),layout)
+    store.write_table(tables,'image_recovery_extra_images',pd.DataFrame(dict(family_id=['3'],x_model_arcsec=[.1],y_model_arcsec=[.2])))
     assert read_saved_extra_images(tables).family_id.tolist()==['3']
 
 
@@ -226,18 +244,9 @@ def _write_run_inputs(run, likelihood):
     (run/'final'/'artifacts'/'config.json').write_text(json.dumps(dict(likelihood=likelihood)))
 
 
-def _put(tables, name, frame, layout):
-    """A table of a run in the new layout (results.h5) or as the loose CSV of an old run."""
-    if layout=='store':
-        store.write_table(tables, name, frame)
-    else:
-        tables.mkdir(parents=True, exist_ok=True)
-        frame.to_csv(tables/f'{name}.csv',index=False)
-
-
-def _write_recovery(tables, catalog, indices=REDRAW_INDICES, layout='legacy'):
+def _write_recovery(tables, catalog, indices=REDRAW_INDICES):
     """The per-draw positions of the image recovery (12 draws, enough for a KDE) and the common extra image."""
-    _put(tables,'image_recovery_extra_images',pd.DataFrame(dict(family_id=['1'],x_model_arcsec=[.1],y_model_arcsec=[-.2])),layout)
+    store.write_table(tables,'image_recovery_extra_images',pd.DataFrame(dict(family_id=['1'],x_model_arcsec=[.1],y_model_arcsec=[-.2])))
     rng=np.random.default_rng(1)
     rows=[]
     for draw,index in enumerate(indices):
@@ -246,40 +255,34 @@ def _write_recovery(tables, catalog, indices=REDRAW_INDICES, layout='legacy'):
             rows.append(dict(draw_index=draw,posterior_index=int(index),family_id=family,image_label=label,recovered=True,
                              x_obs_arcsec=x,y_obs_arcsec=y,x_model_arcsec=x+dx,y_model_arcsec=y+dy,x_true_arcsec=x+dx,
                              y_true_arcsec=y+dy,x_predicted_arcsec=x+dx,y_predicted_arcsec=y+dy))
-    _put(tables,'posterior_image_residual_draws',pd.DataFrame(rows),layout)
+    store.write_table(tables,'posterior_image_residual_draws',pd.DataFrame(rows))
 
 
-def _saved_run(tmp_path, *, shape=32, likelihood=KNEE_LIKELIHOOD, layout='legacy'):
-    """A finished run's saved results: the band, the catalog, the extra images, the per-draw positions of the image
-    recovery; in ``final/results.h5`` (``layout='store'``) or as the loose files of a run
-    made before it (``'legacy'``)."""
-    import json
+def _saved_run(tmp_path, *, shape=32, likelihood=KNEE_LIKELIHOOD):
+    """A finished run's saved results in ``final/results.h5``: the band, the catalog, the extra images, the per-draw
+    positions of the image recovery."""
     run=tmp_path/'results'/'hera'/'run'
     tables=run/'final'/'tables'; tables.mkdir(parents=True)
     (run/'final'/'figures').mkdir()
     _write_run_inputs(run, likelihood)
     catalog=_overview_catalog()
-    _put(tables,'image_fit_quality',catalog,layout)
-    _write_recovery(tables, catalog, layout=layout)
+    store.write_table(tables,'image_fit_quality',catalog)
+    _write_recovery(tables, catalog)
     x,y=np.meshgrid(np.linspace(-1,1,shape),np.linspace(-1,1,shape))
     determinant=x*x+y*y-.4
     band=dict(determinant=determinant,lower=determinant-.1,upper=determinant+.1,
               band=np.abs(determinant)<.1,fingerprint='saved-key',z_source=9.,draw_indices=REDRAW_INDICES,
               central_statistic='pointwise posterior median determinant')
-    if layout=='store':
-        store.write_arrays(tables,'hst_rgb_critical_z9',band)
-        store.write_record(tables,'hst_rgb_critical_z9_band',dict(resolution=shape))
-    else:
-        save_arrays(tables/'hst_rgb_critical_z9.h5',**band)
-        (tables/'hst_rgb_critical_z9_band.json').write_text(json.dumps(dict(resolution=shape))+'\n')
+    store.write_arrays(tables,'hst_rgb_critical_z9',band)
+    store.write_record(tables,'hst_rgb_critical_z9_band',dict(resolution=shape))
     return run
 
 
 def _redraw_config(run):
     from types import SimpleNamespace as NS
     image_config=NS(bands=('F814W',),image_dir='fake',figure_suffix='',candidate_catalog_path=None)
-    return NS(paths=NS(run_name=run.name,figure_prefix='hera'),image_catalog=image_config,
-              model=NS(reference=NS(reference=3,ra0_deg=64.,dec0_deg=-24.),image_constraints=None))
+    return NS(paths=NS(run_name=run.name,figure_prefix='hera'),outputs=NS(rgb=image_config),
+              model=NS(reference=NS(reference=3,ra0_deg=64.,dec0_deg=-24.),image_constraints=NS(catalog_path='')))
 
 
 FAKE_IMAGING=({'F814W':object()},('F814W',),None,'hera')
@@ -292,7 +295,7 @@ def _patch_redraw(monkeypatch, run, config=None):
     _fake_overview(monkeypatch)
     config=_redraw_config(run) if config is None else config
     monkeypatch.setattr(rgb,'rebuild_run_config',lambda run_dir:config)
-    monkeypatch.setattr(cutouts,'imaging_variants',lambda config:[config.image_catalog])
+    monkeypatch.setattr(cutouts,'imaging_variants',lambda config:[config.outputs.rgb])
     monkeypatch.setattr(cutouts,'load_cluster_imaging',lambda image_config,model,run_name:FAKE_IMAGING)
     import dataclasses
     monkeypatch.setattr(dataclasses,'replace',lambda obj,**changes:NS(**{**vars(obj),**changes}))
@@ -303,16 +306,14 @@ def _snapshot(run):
     return {path.relative_to(run):path.read_bytes() for path in sorted(run.rglob('*')) if path.is_file()}
 
 
-@pytest.mark.parametrize('layout',['legacy','store'])
-def test_redraw_from_saved_tables(tmp_path, monkeypatch, layout):
+def test_redraw_from_saved_tables(tmp_path, monkeypatch):
     from kappaccino.plotting import jwst_rgb as rgb
-    run=_saved_run(tmp_path, layout=layout)
+    run=_saved_run(tmp_path)
     _patch_redraw(monkeypatch, run)
     tables=run/'final'/'tables'
     def band():
         return store.read_arrays(tables,'hst_rgb_critical_z9'), store.read_record(tables,'hst_rgb_critical_z9_band')
     before=band()
-    legacy_files=_snapshot(tables) if layout=='legacy' else None
     drawn=[]
     select=rgb.recovered_contour_segments
     monkeypatch.setattr(rgb,'recovered_contour_segments',lambda contours:drawn.extend(select(contours)) or drawn)
@@ -326,13 +327,11 @@ def test_redraw_from_saved_tables(tmp_path, monkeypatch, layout):
     assert 'stretch_sticks' not in info and info['not_recovered_images']==1 and info['extra_images']==1
     assert info['grf_field']=='shared field of the run' and info['determinant_resolution']==32
     assert info['model'].startswith('parametric + conditional GRF') and info['recovered_position_contours']==2
-    # The band is read, never rewritten; an old run's loose files are left as they were.
+    # The band is read, never rewritten.
     after=band()
     assert after[1]==before[1] and set(after[0])==set(before[0])
     for key in before[0]:
         np.testing.assert_array_equal(after[0][key],before[0][key])
-    if layout=='legacy':
-        assert _snapshot(tables)==legacy_files
     # One enlarged 1 sigma contour per image, centred on the mean of its draws.
     positions=store.read_arrays(tables,'posterior_overview_positions')
     assert sorted(identity for identity,_ in drawn)==['1.a','2.b']
@@ -395,7 +394,7 @@ def test_pipeline_and_redraw_draw_the_same_picture(tmp_path, monkeypatch, field)
     import json
     from types import SimpleNamespace as NS
     from kappaccino.plotting import jwst_rgb as rgb, mass_figure
-    run=_saved_run(tmp_path, likelihood=KNEE_LIKELIHOOD if field else NO_FIELD_LIKELIHOOD, layout='store')
+    run=_saved_run(tmp_path, likelihood=KNEE_LIKELIHOOD if field else NO_FIELD_LIKELIHOOD)
     tables,figures=run/'final'/'tables',run/'final'/'figures'
     with h5py.File(tables.parent/store.RESULTS_FILE,'a') as file:     # the band is written by the pipeline below
         del file['arrays/hst_rgb_critical_z9'], file['records/hst_rgb_critical_z9_band']
@@ -417,10 +416,11 @@ def test_pipeline_and_redraw_draw_the_same_picture(tmp_path, monkeypatch, field)
         records={path.name:store.read_figure_record(path) for path in written}
         return written if not records else (calls[-1][1].update(_records=records) or written)
     monkeypatch.setattr(rgb,'draw_rgb_critical',recording)
-    catalog=read_catalog=rgb.read_saved_table(tables,'image_fit_quality')
+    catalog=store.read_table(tables,'image_fit_quality')
     extra=rgb.read_saved_extra_images(tables)
     output=figures/'hera_hst_rgb_critical_z9.pdf'
-    rgb.render_rgb_critical(config,NS(reference=(3,64.,-24.)),RunDraws(),catalog,extra,FAKE_IMAGING,output,tables,log=lambda _:None)
+    rgb.save_rgb_critical(config,NS(reference=(3,64.,-24.)),RunDraws(),catalog,extra,FAKE_IMAGING,tables,log=lambda _:None)
+    rgb.render_saved_rgb_critical(config,NS(reference=(3,64.,-24.)),catalog,extra,FAKE_IMAGING,output,tables,log=lambda _:None)
     pipeline_record=store.read_figure_record(output)
     pipeline_markers=store.read_table(tables,'hst_rgb_markers')
     rgb.redraw_rgb_critical(run,log=lambda _:None)
@@ -440,18 +440,14 @@ def test_pipeline_and_redraw_draw_the_same_picture(tmp_path, monkeypatch, field)
     pd.testing.assert_frame_equal(pipeline_markers,store.read_table(tables,'hst_rgb_markers'))
 
 
-@pytest.mark.parametrize('layout',['legacy','store'])
-def test_redraw_refuses_draws_missing_from_the_image_recovery(tmp_path, monkeypatch, layout):
+def test_redraw_refuses_draws_missing_from_the_image_recovery(tmp_path, monkeypatch):
     from kappaccino.plotting import jwst_rgb as rgb
-    run=_saved_run(tmp_path, layout=layout)
+    run=_saved_run(tmp_path)
     _patch_redraw(monkeypatch, run)
     rgb.redraw_rgb_critical(run,log=lambda _:None)                    # a first redraw writes every output
     tables=run/'final'/'tables'
     saved=store.read_arrays(tables,'hst_rgb_critical_z9')
-    if layout=='store':
-        store.write_arrays(tables,'hst_rgb_critical_z9',{**saved,'draw_indices':REDRAW_INDICES+1})
-    else:
-        save_arrays(tables/'hst_rgb_critical_z9.h5',**{**saved,'draw_indices':REDRAW_INDICES+1})
+    store.write_arrays(tables,'hst_rgb_critical_z9',{**saved,'draw_indices':REDRAW_INDICES+1})
     before=_snapshot(run)
     with pytest.raises(ValueError, match=r'1 of the 12 draw indices of hst_rgb_critical_z9 are not a posterior_index .*\(112\)'):
         rgb.redraw_rgb_critical(run,log=lambda _:None)
@@ -469,46 +465,38 @@ def test_redraw_logs_a_figure_without_contours(tmp_path, monkeypatch):
     assert any('no recovered-position contour drawn although 1 images are recovered' in line for line in lines)
 
 
-@pytest.mark.parametrize('layout',['legacy','store'])
-def test_redraw_falls_back_and_refuses(tmp_path, monkeypatch, layout):
+def test_redraw_falls_back_and_refuses(tmp_path, monkeypatch):
     from kappaccino.plotting import jwst_rgb as rgb
-    run=_saved_run(tmp_path, layout=layout)
+    run=_saved_run(tmp_path)
     _patch_redraw(monkeypatch, run)
     tables=run/'final'/'tables'
     figure=run/'final'/'figures'/'hera_hst_rgb_critical_z9.pdf'
     # The mass figure's stretch directions, when saved, are not read: the overview draws no sticks.
-    _put(tables,'image_catalog_arc_directions',pd.DataFrame(dict(image_label=['1.a','1.a'],e_arc_x=[1.,0.],e_arc_y=[0.,1.])),layout)
+    store.write_table(tables,'image_catalog_arc_directions',pd.DataFrame(dict(image_label=['1.a','1.a'],e_arc_x=[1.,0.],e_arc_y=[0.,1.])))
     lines=[]
     rgb.redraw_rgb_critical(run,log=lines.append)
     assert not any('stretch' in line for line in lines) and 'stretch_sticks' not in store.read_figure_record(figure)
-    if layout=='store':
-        with h5py.File(tables.parent/store.RESULTS_FILE,'a') as file:
-            del file['arrays/hst_rgb_critical_z9']
-    else:
-        (tables/'hst_rgb_critical_z9.h5').unlink()
+    with h5py.File(tables.parent/store.RESULTS_FILE,'a') as file:
+        del file['arrays/hst_rgb_critical_z9']
     assert rgb.redraw_rgb_critical(run,log=lambda _:None)==[]          # no band: skipped
-    other=_saved_run(tmp_path/'other', shape=16, layout=layout)
+    other=_saved_run(tmp_path/'other', shape=16)
     _patch_redraw(monkeypatch, other)
     with pytest.raises(ValueError, match='determinant'):
         rgb.redraw_rgb_critical(other,log=lambda _:None)
 
 
-@pytest.mark.parametrize('layout',['legacy','store'])
 @pytest.mark.parametrize('name',['posterior_image_residual_draws','image_fit_quality','final/artifacts/config.json'])
-def test_redraw_names_the_run_of_a_missing_table(tmp_path, monkeypatch, name, layout):
+def test_redraw_names_the_run_of_a_missing_table(tmp_path, monkeypatch, name):
     from kappaccino.plotting import jwst_rgb as rgb
-    run=_saved_run(tmp_path, layout=layout)
+    run=_saved_run(tmp_path)
     _patch_redraw(monkeypatch, run)
     if '/' in name:
         (run/name).unlink()
         message=f'no {name}'
     else:
         message=f'no final table {name}'
-        if layout=='store':
-            with h5py.File(run/'final'/store.RESULTS_FILE,'a') as file:
-                del file[f'tables/{name}']
-        else:
-            (run/'final'/'tables'/f'{name}.csv').unlink()
+        with h5py.File(run/'final'/store.RESULTS_FILE,'a') as file:
+            del file[f'tables/{name}']
     before=_snapshot(run)
     with pytest.raises(FileNotFoundError, match=rf'Run {run.resolve()}: {message}; .*completed image recovery'):
         rgb.redraw_rgb_critical(run,log=lambda _:None)
@@ -545,9 +533,9 @@ def test_rebuilt_run_config_must_match_the_saved_picture_inputs(tmp_path, monkey
         'shared field rebuilt from a system-block run (all-block twin, projected)'}
     assert shared==(label!='none: no knee mass field')
     altered=json.loads(json.dumps(saved))
-    altered['image_catalog']['bands']=['F105W','F125W','F160W']
+    altered['outputs']['rgb']['bands']=['F105W','F125W','F160W']
     (run/'final'/'artifacts'/'config.json').write_text(json.dumps(altered))
-    with pytest.raises(ValueError, match='image_catalog'):
+    with pytest.raises(ValueError, match='outputs.rgb'):
         rebuild_run_config(run)
     altered=json.loads(json.dumps(saved))
     del altered['model']['image_constraints']
@@ -570,9 +558,10 @@ systems:
 ''')
     config = NS(model=NS(image_constraints=NS(catalog_path=path)))
     catalog = pd.DataFrame(dict(image_label=['1.b', '1.a', 'new'], x_obs_arcsec=[0.,0.,0.], y_obs_arcsec=[0.,0.,0.]))
-    result = overview_marker_photometry(config, catalog, (3,64.,-24.), None, 'hst_rgb_critical_z9')
+    from kappaccino.plotting.jwst_rgb import marker_photometry
+    result = overview_marker_photometry(config, catalog, marker_photometry(catalog, (3,64.,-24.)), 'hst_rgb_critical_z9')
     np.testing.assert_allclose(result.magnitude_AB[:2], [28.,24.])
     np.testing.assert_allclose(result.marker_area_pt2, [9.,16*10**.4,9.])
     assert result.valid_photometry.tolist() == [True, True, False]
-    assert rgb_overview_stem(NS(), ['F435W','F606W','F814W']) == 'hst_rgb_critical_z9'
-    assert rgb_overview_stem(NS(), ['F150W','F200W','F444W']) == 'jwst_rgb_critical_z9'
+    assert rgb_overview_stem(NS(figure_suffix=''), ['F435W','F606W','F814W']) == 'hst_rgb_critical_z9'
+    assert rgb_overview_stem(NS(figure_suffix=''), ['F150W','F200W','F444W']) == 'jwst_rgb_critical_z9'

@@ -9,7 +9,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize, LinearSegmentedColormap
 from matplotlib.lines import Line2D
-from _covariance_plot_cli import load_run
+import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
+from kappaccino.outputs.saved_run import load_run
 from kappaccino.diagnostics.truth_recovery import load_truth_fits, grid_arcsec
 from kappaccino.io.hdf5 import load_arrays, save_arrays
 from kappaccino.plotting.style import PAPER_STYLE

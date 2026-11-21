@@ -30,7 +30,7 @@ def binned_recovery(true_mu, model_mu):
     return pd.DataFrame(rows, columns=BIN_COLUMNS)
 
 
-def image_truth_magnification(images, reference, z_lens, cosmology, truth_config):
+def image_truth_magnification(images, reference, z_lens, cosmology, outputs):
     """Interpolate native kappa/shear, scale lens efficiency, then invert det A."""
     from ..diagnostics.truth_recovery import load_truth_fits
     from ..imaging.cutouts import arcsec_to_radec
@@ -45,10 +45,11 @@ def image_truth_magnification(images, reference, z_lens, cosmology, truth_config
         return (cosmology.angular_diameter_distance_z1z2(z_lens, z) / cosmology.angular_diameter_distance(z)).value
 
     fields, redshifts = [], []
+    truth_config = outputs.truth
     for path in (truth_config.kappa_true_fits, truth_config.gammax_true_fits, truth_config.gammay_true_fits):
         native, wcs = load_truth_fits(path)
         header = fits.getheader(path)
-        z_ref = float(header.get('ZSOURCE', header.get('REDSHIFT', truth_config.caustic_source_redshift)))
+        z_ref = float(header.get('ZSOURCE', header.get('REDSHIFT', outputs.caustic_source_redshift)))
         if not np.isfinite(z_ref) or z_ref <= z_lens:
             raise ValueError(f'Invalid truth source redshift in {path}')
         px, py = wcs.world_to_pixel(sky)
@@ -109,10 +110,13 @@ def render_recovery(true_mu, model_mu, bins, images, path):
     save_page(fig, path)
 
 
-def write_magnification_recovery(truth, images, reference, z_lens, cosmology, truth_config,
-                                 figures, tables, prefix, *, log=print):
-    """Write one figure plus its numbers/provenance; only simulations with shear truth qualify."""
-    paths = (truth_config.kappa_true_fits, truth_config.gammax_true_fits, truth_config.gammay_true_fits)
+def save_magnification_recovery(truth, images, reference, z_lens, cosmology, outputs, tables, *, log=print):
+    """The numbers of the magnification recovery figure (only simulations with shear truth qualify), to the stage's
+    results: the tables ``magnification_recovery_bins`` and ``magnification_recovery_images``, the record
+    ``magnification_recovery_provenance`` and the arrays ``magnification_recovery`` (``true_abs_mu`` and
+    ``model_abs_mu`` of the map pixels drawn: inside the image hull, finite, true |mu| >= 1).  Returns the
+    ``results.h5`` written, or None (logged) when the figure does not apply."""
+    paths = (outputs.truth.kappa_true_fits, outputs.truth.gammax_true_fits, outputs.truth.gammay_true_fits)
     if truth is None or 'mu' not in truth['truth'] or not all(paths) or images.empty:
         log('[outputs] magnification recovery skipped: image catalog and kappa/shear truth required')
         return None
@@ -134,7 +138,7 @@ def write_magnification_recovery(truth, images, reference, z_lens, cosmology, tr
         log('[outputs] magnification recovery skipped: no finite map pixels inside the image hull')
         return None
     bins = binned_recovery(t[mask], m[mask])
-    mu, reference_z = image_truth_magnification(images, reference, z_lens, cosmology, truth_config)
+    mu, reference_z = image_truth_magnification(images, reference, z_lens, cosmology, outputs)
     points = images[['family_id', 'image_label', 'x_obs_arcsec', 'y_obs_arcsec', 'z_source']].copy()
     points['true_abs_mu'] = np.abs(mu)
     points['model_abs_mu'] = np.abs(images.magnification_model.to_numpy(float))
@@ -143,6 +147,7 @@ def write_magnification_recovery(truth, images, reference, z_lens, cosmology, tr
     with store.batch(tables):
         store.write_table(tables, 'magnification_recovery_bins', bins)
         store.write_table(tables, 'magnification_recovery_images', points)
+        store.write_arrays(tables, 'magnification_recovery', true_abs_mu=t[mask], model_abs_mu=m[mask])
         metadata = dict(map_source_redshift=float(truth['z_source']), truth_field_reference_redshifts=reference_z,
                         truth_paths=list(map(str, paths)), region='convex hull of observed images; finite true |mu| >= 1',
                         map_model='per-pixel median over the reporting posterior draws',
@@ -154,7 +159,14 @@ def write_magnification_recovery(truth, images, reference, z_lens, cosmology, tr
                         images_outside_display=int((points.finite & ~points.within_display).sum()),
                         map_pixels_outside_display=int(((t[mask] > 100) | (m[mask] < .5) | (m[mask] > 200)).sum()))
         store.write_record(tables, 'magnification_recovery_provenance', metadata)
-    path = figures / f'{prefix + "_" if prefix else ""}magnification_recovery.pdf'
-    render_recovery(t[mask], m[mask], bins, points, path)
+    return store.results_path(tables)
+
+
+def render_magnification_recovery(stage, path, *, log=print):
+    """``magnification_recovery.pdf`` at ``path`` (:func:`render_recovery`) from what :func:`save_magnification_recovery`
+    wrote in ``stage``; returns the figure."""
+    pixels = store.read_arrays(stage, 'magnification_recovery')
+    points = store.read_table(stage, 'magnification_recovery_images')
+    render_recovery(pixels['true_abs_mu'], pixels['model_abs_mu'], store.read_table(stage, 'magnification_recovery_bins'), points, path)
     log(f'[outputs] magnification recovery: {path} ({points.finite.sum()}/{len(points)} finite image markers)')
     return path

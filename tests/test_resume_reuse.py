@@ -201,7 +201,7 @@ def test_the_recovery_fingerprint_changes_with_every_input():
                   recovery.recovery_fingerprint(state, _recovery_inputs(count=4)[1], config, extra_images=True),
                   recovery.recovery_fingerprint(state, _recovery_inputs(image_count=5)[1], config, extra_images=True)],
         'extra_images': [recovery.recovery_fingerprint(state, draws, config, extra_images=False)],
-        'image_diagnostics': [recovery.recovery_fingerprint(state, draws, SimpleNamespace(**{**vars(config), 'exact_image_grid_pitch_arcsec': .4}),
+        'image_solver': [recovery.recovery_fingerprint(state, draws, SimpleNamespace(**{**vars(config), 'exact_image_grid_pitch_arcsec': .4}),
                                                             extra_images=True)],
     }
     moved = SimpleNamespace(**{**vars(state), 'family_data': [SimpleNamespace(**{**vars(state.family_data[0]), 'x_obs': np.array([1., -1.001])})]})
@@ -388,7 +388,7 @@ def test_the_field_code_enters_the_grid_recovery_and_aperture_keys(monkeypatch, 
     truth = tmp_path / 'truth.fits'
     truth.write_bytes(b'0')
     members = pd.DataFrame(dict(member_id=['p:1'], catalog_id=['1'], x_centre=[0.], y_centre=[0.], catalog_mag=[20.]))
-    aperture_config = SimpleNamespace(truth=SimpleNamespace(kappa_true_fits=truth, caustic_source_redshift=9.))
+    aperture_config = SimpleNamespace(outputs=SimpleNamespace(truth=SimpleNamespace(kappa_true_fits=truth), caustic_source_redshift=9.))
 
     def keys():
         draws = reporting.ReportingDraws(evaluator, posterior, 4, 0)

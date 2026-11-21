@@ -8,7 +8,7 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('runs', nargs='+', type=Path)
-    from _covariance_plot_cli import add_catalogs_argument
+    from _covariance_plot_cli import add_catalogs_argument, redirect
     add_catalogs_argument(parser)
     parser.add_argument('--draws', type=int, default=None,
                         help='reporting draws behind the model masses (default: the run config)')
@@ -17,12 +17,12 @@ def main():
     import matplotlib
     matplotlib.use('Agg')
     import pandas as pd
-    from _covariance_plot_cli import load_run
+    from kappaccino.outputs.saved_run import load_run
     from dataclasses import replace
     from kappaccino.plotting.zeta_masses import write_zeta_masses
     from kappaccino.reporting.draws import reporting_draws
     for run in args.runs:
-        config, state, evaluator, posterior, paths = load_run(run, catalogs=args.catalogs, ffsims_dir=args.ffsims_dir)
+        config, state, evaluator, posterior, paths = load_run(run, transform=redirect(args.catalogs, args.ffsims_dir))
         images = pd.read_csv(paths.tables/'image_fit_quality.csv', dtype={'family_id': str, 'image_label': str})
         if args.draws is not None:
             config = replace(config, reporting=replace(config.reporting, draws=args.draws))

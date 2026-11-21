@@ -35,10 +35,10 @@ def aperture_fingerprint(config, draws, members, image_xy, reach):
     import json
     if getattr(draws, 'key', None) is None:
         return None
-    fits = Path(config.truth.kappa_true_fits)
+    fits = Path(config.outputs.truth.kappa_true_fits)
     stat = fits.stat() if fits.is_file() else None
     h = hashlib.sha256(json.dumps([APERTURE_VERSION, draws.key, str(fits), stat.st_size if stat else None,
-                                   stat.st_mtime_ns if stat else None, repr(float(config.truth.caustic_source_redshift)),
+                                   stat.st_mtime_ns if stat else None, repr(float(config.outputs.caustic_source_redshift)),
                                    NORMALIZATION_KPC, bool(draws.has_field), repr(float(reach)),
                                    members.member_id.astype(str).tolist(), members.catalog_id.astype(str).tolist()]).encode())
     for column in ('x_centre', 'y_centre', 'catalog_mag'):
@@ -104,7 +104,7 @@ def render_histogram(table, path):
                              all_members=counts,inside_image_hull=inner))
 
 
-def aperture_masses(state, evaluator, physical, members, image_xy, truth_config, *, normalization_kpc=NORMALIZATION_KPC,
+def aperture_masses(state, evaluator, physical, members, image_xy, outputs, *, normalization_kpc=NORMALIZATION_KPC,
                     grf_correction=None, grf_weight=1.):
     if not np.isfinite(normalization_kpc) or normalization_kpc <= 0:
         raise ValueError('Effective-radius normalization must be finite and positive')
@@ -112,8 +112,8 @@ def aperture_masses(state, evaluator, physical, members, image_xy, truth_config,
     mag = members.catalog_mag.to_numpy(float)
     re = normalization_kpc * 10**(-.24*(mag-20.))
     radius = 2*re/state.kpc_per_arcsec
-    native, wcs = load_truth_fits(truth_config.kappa_true_fits)
-    z = float(truth_config.caustic_source_redshift)
+    native, wcs = load_truth_fits(outputs.truth.kappa_true_fits)
+    z = float(outputs.caustic_source_redshift)
     _, ra0, dec0 = state.reference
     def pixels(xy):
         return wcs.world_to_pixel_values(ra0-xy[...,0]/(3600*np.cos(np.deg2rad(dec0))),
@@ -190,7 +190,7 @@ def write_aperture_mass_histogram(config,state,draws,paths,image_df,*,log=print)
     prefix=str(config.paths.figure_prefix or '')
     if prefix.lower() not in {'hera','ares'}:
         return None
-    if not config.truth.kappa_true_fits or not len(state.members.member_ids):
+    if not config.outputs.truth.kappa_true_fits or not len(state.members.member_ids):
         log('[aperture] skipped: truth convergence or population members unavailable')
         return None
     bands = {str(b).upper() for p in getattr(state,'potfiles',[])
@@ -198,12 +198,12 @@ def write_aperture_mass_histogram(config,state,draws,paths,image_df,*,log=print)
     if bands and bands != {'F160W'}:
         log(f'[aperture] skipped: fixed size relation requires F160W, catalog uses {sorted(bands)}')
         return None
-    members=store.read_table(paths.tables,'member_diagnostics',legacy_csv=dict(dtype={'member_id':str,'catalog_id':str}))
+    members=store.read_table(paths.tables,'member_diagnostics')
     if members.member_id.tolist()!=list(state.members.member_ids):
         raise ValueError('Aperture catalog identities differ from saved model')
     evaluator=draws.evaluator
     physical=draws.physical
-    z=float(config.truth.caustic_source_redshift)
+    z=float(config.outputs.caustic_source_redshift)
     description=('conditional GRF realization of each draw included' if draws.has_field
                  else 'parametric only; shared GRF correction unavailable')
     centres=members[['x_centre','y_centre']].to_numpy(float)
@@ -228,7 +228,7 @@ def write_aperture_mass_histogram(config,state,draws,paths,image_df,*,log=print)
         def draw_masses(k):          # one draw; the draws run in draws.workers threads
             correction,weight=(draws.correction(k,reach),draws.grf_weight(z)) if draws.has_field else (None,1.)
             return aperture_masses(state,evaluator,physical[k],members,image_xy,
-                                   config.truth,grf_correction=correction,grf_weight=weight)
+                                   config.outputs,grf_correction=correction,grf_weight=weight)
         tables=map_draws(draw_masses,range(len(draws)),workers=int(getattr(draws,'workers',1)),desc='aperture draws')
         table=median_over_draws(tables)
     stats=dict(normalization_kpc=NORMALIZATION_KPC,samples=distribution_statistics(table),

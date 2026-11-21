@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -11,7 +12,7 @@ import pytest
 
 from kappaccino.io import artifacts, store
 from kappaccino import pipeline
-from kappaccino.config import ReportingConfig, ImageDiagnosticsConfig, RuntimeConfig, SamplingConfig, SearchConfig
+from kappaccino.config import OutputsConfig, RuntimeConfig, SamplingConfig, SearchConfig
 from kappaccino.likelihood.evaluator import Evaluator
 from kappaccino.core.state import build_state
 
@@ -19,7 +20,7 @@ from kappaccino.core.state import build_state
 def _fast(config):
     return replace(config, runtime=RuntimeConfig(seed=3, chains=2, nuts_chain_method="sequential", resume=True),
                    search=SearchConfig(n_starts=2, member_starts=1, lbfgs_max_iter=30, polish_max_iter=20), sampling=SamplingConfig(warmup=10, samples=10, max_tree_depth=4),
-                   reporting=ReportingConfig(draws=2))
+                   outputs=OutputsConfig(draws=2))
 
 
 @pytest.mark.slow                       # full pipeline run: about two minutes
@@ -78,6 +79,49 @@ def test_single_stage_end_to_end(synthetic_config, monkeypatch):
     assert (result.paths.final.figures / "critical_curves.pdf").is_file()
     assert (result.paths.init.tables / "classification_report.txt").is_file()
     assert {p.suffix for p in result.paths.init.tables.iterdir()} <= {".txt"}
+    assert {name for name, record in store.read_record(final, "run_summary")["modules"].items()
+            if record["status"] == "done"} == {"fit", "images", "mass"}
+
+    # The outputs stage again on the saved run, fit module only (kappaccino outputs RUN --only fit): the
+    # saved fit numbers stay in run_summary.
+    from kappaccino.outputs.command import main as outputs_main
+    fit = store.read_record(final, "run_summary")["fit"]
+    assert outputs_main([str(result.paths.root), "--only", "fit", "--fail-fast"]) == 0
+    rerun = store.read_record(final, "run_summary")
+    assert json.dumps(rerun["fit"], sort_keys=True, default=float) == json.dumps(fit, sort_keys=True, default=float)
+    assert rerun["modules"]["fit"]["status"] == "done" and "images" in rerun["modules"]
+
+    # A full pass of the real modules, then every figure deleted and drawn again by a render pass that can evaluate
+    # nothing: the same figures come back, and the numbers and macros stay as the full pass wrote them.
+    # (The toy cluster has no truth maps and no imaging, so truth and rgb are inactive here.)
+    assert outputs_main([str(result.paths.root), "--all"]) == 0
+    full = store.read_record(final, "run_summary")
+    done = {name for name, record in full["modules"].items() if record["status"] == "done"}
+    assert done == {"fit", "images", "mass"}
+    figures = result.paths.final.figures
+    drawn = sorted(p.name for p in figures.glob("*.pdf"))
+    macros = {p.name: p.read_text() for p in figures.glob("*_results.tex")}
+    assert drawn and macros
+    for path in figures.glob("*.pdf"):
+        path.unlink()
+    from kappaccino.outputs import saved_run
+    from kappaccino.reporting import draws as draws_module
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("a render pass evaluated the lens")
+
+    with monkeypatch.context() as patch:
+        for target, name in ((Evaluator, "__init__"), (draws_module, "reporting_draws"),
+                             (draws_module.ReportingDraws, "__init__"), (saved_run, "load_run")):
+            patch.setattr(target, name, forbidden)
+        assert outputs_main([str(result.paths.root), "--render"]) == 0
+    rendered = store.read_record(final, "run_summary")
+    assert {name for name, record in rendered["modules"].items() if record["status"] == "done"} == done
+    assert all(rendered["modules"][name]["mode"] == "render" for name in done)
+    assert sorted(p.name for p in figures.glob("*.pdf")) == drawn
+    assert {p.name: p.read_text() for p in figures.glob("*_results.tex")} == macros
+    numbers = lambda record: json.dumps({k: v for k, v in record.items() if k != "modules"}, sort_keys=True, default=float)
+    assert numbers(rendered) == numbers(full)
 
     # Resuming reloads both stages without searching or sampling again (the outputs, written above, are not redrawn here).
     monkeypatch.setattr(pipeline, "write_outputs", lambda *args, **kwargs: {})
@@ -88,6 +132,15 @@ def test_single_stage_end_to_end(synthetic_config, monkeypatch):
     # The init stage alone resumes too; a changed sampling setting under the same run name is refused
     # rather than silently overwriting the saved posterior.
     assert pipeline.run(config, stage="init").resumed
+    # A resume with other outputs settings (outside the hash) saves them: the saved configuration describes the
+    # products that pass rewrites, and the rest of it is left as it was.
+    before = artifacts.load_config(result.paths.final.artifacts)
+    fewer = replace(config, outputs=replace(config.outputs, draws=3, image_draws=3))
+    assert pipeline.run(fewer).resumed
+    after = artifacts.load_config(result.paths.final.artifacts)
+    assert (after.outputs.draws, after.outputs.image_draws) == (3, 3)
+    assert after.to_json_dict() | {"outputs": None} == before.to_json_dict() | {"outputs": None}
+    assert pipeline.run(config).resumed and artifacts.load_config(result.paths.final.artifacts).outputs == config.outputs
 
     # Model comparison: the init stage writes BIC, the final stage copies it.  Turning on WBIC for the finished run adds
     # only the tempered NUTS run; the posterior is not sampled again.
@@ -159,3 +212,31 @@ def test_gp_image_plane_model(synthetic_config):
     expected = np.asarray(stats["whitening"]["centroid"]) + np.einsum("fij,fj->fi", np.asarray(stats["whitening"]["cholesky"]), offsets)
     np.testing.assert_allclose(np.asarray(stats["source_by_family"]), expected, rtol=1e-12, atol=1e-12)
     assert np.isfinite(float(evaluator.loglike(jnp.asarray(theta))))
+
+
+def test_a_saved_configuration_is_written_atomically(monkeypatch, synthetic_config, tmp_path):
+    """config.json goes through a temporary file in its own folder and a rename; a failure before the rename leaves
+    the old file whole and no temporary file behind."""
+    import os
+    config = synthetic_config
+    tmp_path = tmp_path / "artifacts"
+    artifacts.save_config(tmp_path, config)
+    before = (tmp_path / artifacts.CONFIG_FILE).read_bytes()
+    renames = []
+    real = os.replace
+    monkeypatch.setattr(os, "replace", lambda src, dst: renames.append((Path(src), Path(dst))) or real(src, dst))
+    changed = replace(config, outputs=replace(config.outputs, draws=3, image_draws=3))
+    artifacts.save_config(tmp_path, changed)
+    (source, target), = renames
+    assert source.parent == target.parent == tmp_path and target.name == artifacts.CONFIG_FILE and source != target
+    assert artifacts.load_config(tmp_path).outputs.draws == 3
+    written = (tmp_path / artifacts.CONFIG_FILE).read_bytes()
+
+    def crash(src, dst):
+        raise OSError("crashed before the rename")
+
+    monkeypatch.setattr(os, "replace", crash)
+    with pytest.raises(OSError, match="before the rename"):
+        artifacts.save_config(tmp_path, config)
+    assert (tmp_path / artifacts.CONFIG_FILE).read_bytes() == written != before
+    assert sorted(p.name for p in tmp_path.iterdir()) == [artifacts.CONFIG_FILE]

@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 import json
+from kappaccino.config import OutputsConfig
 from kappaccino.io import store
 
 import matplotlib.pyplot as plt
@@ -7,7 +8,7 @@ import numpy as np
 import pytest
 from numpyro.diagnostics import effective_sample_size, split_gelman_rubin
 
-from kappaccino.plotting.chain_traces import trace_data, write_chain_traces
+from kappaccino.plotting.chain_traces import render_chain_traces, save_chain_traces, trace_data
 
 
 def fixture(chains=2, draws=30):
@@ -48,14 +49,15 @@ def test_constant_parameter_and_missing_chains(tmp_path):
     d = trace_data(p, specs)
     assert np.isnan(d['rhat'][1])
     p.grouped_samples = None
-    assert write_chain_traces(p, specs, tmp_path/'fig', tmp_path/'tables', log=lambda _: None) is None
+    assert save_chain_traces(p, specs, tmp_path/'tables', log=lambda _: None) is None
     assert not (tmp_path/'fig').exists()
 
 
 def test_pdf_provenance_and_style_isolation(tmp_path):
     p, specs = fixture()
     style = plt.rcParams.copy()
-    path = write_chain_traces(p, specs, tmp_path/'figures', tmp_path/'tables', 'hera', log=lambda _: None)
+    assert save_chain_traces(p, specs, tmp_path/'tables', log=lambda _: None) is not None
+    path = render_chain_traces(p, specs, tmp_path/'figures', 'hera', log=lambda _: None)
     assert path.name == 'hera_chain_traces.pdf'
     assert path.read_bytes().startswith(b'%PDF')
     meta = store.read_record(tmp_path/'tables', 'chain_traces')
@@ -66,16 +68,21 @@ def test_pdf_provenance_and_style_isolation(tmp_path):
 
 
 def test_normal_output_hook(tmp_path, monkeypatch):
+    from kappaccino.outputs import fit as module
+    from kappaccino.plotting import plots
     from kappaccino.reporting import outputs
     p, specs = fixture()
     state = SimpleNamespace(parameter_specs=specs)
-    config = SimpleNamespace(paths=SimpleNamespace(figure_prefix='test'), reporting=SimpleNamespace(draws=2), runtime=SimpleNamespace(seed=0))
-    paths = SimpleNamespace(tables=tmp_path/'tables', figures=tmp_path/'figures')
-    monkeypatch.setattr(outputs, 'posterior_summary_table', lambda *a: __import__('pandas').DataFrame())
-    monkeypatch.setattr(outputs, 'classification_table', lambda *a: __import__('pandas').DataFrame())
-    class StopAfterTrace(Exception):
-        pass
-    monkeypatch.setattr(outputs.plots, 'member_scaling_table', lambda *a: (_ for _ in ()).throw(StopAfterTrace()))
-    with pytest.raises(StopAfterTrace):
-        outputs.write_outputs(config, state, SimpleNamespace(physical=lambda x: x), p, {}, paths, log=lambda _: None)
+    config = SimpleNamespace(paths=SimpleNamespace(figure_prefix='test'), outputs=OutputsConfig(draws=2, image_draws=2, workers=1), runtime=SimpleNamespace(seed=0))
+    paths = SimpleNamespace(tables=tmp_path/'tables', figures=tmp_path/'figures', root=tmp_path)
+    monkeypatch.setattr(module, 'posterior_summary_table', lambda *a: __import__('pandas').DataFrame())
+    monkeypatch.setattr(module, 'classification_table', lambda *a: __import__('pandas').DataFrame())
+    monkeypatch.setattr(plots, 'member_scaling_table', lambda *a: __import__('pandas').DataFrame())
+    from kappaccino.reporting import results_tex
+    monkeypatch.setattr(results_tex, 'write_run_results', lambda *a, **k: None)
+    summary = outputs.write_outputs(config, state, SimpleNamespace(physical=lambda x: x), p, {}, paths, log=lambda _: None,
+                                    only=('fit',), skip=(), fail_fast=False)
+    record = summary['modules']['fit']
+    assert record['steps']['chain_traces']['wrote'] and record['render_steps']['chain_traces']['status'] == 'done'
+    assert store.has_table(paths.tables, 'chain_convergence')
     assert (paths.figures/'test_chain_traces.pdf').is_file()

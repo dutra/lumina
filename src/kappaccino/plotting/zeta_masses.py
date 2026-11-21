@@ -121,8 +121,8 @@ def compute_zeta_masses(config, state, draws, members, image_xy, *, log=print):
     """Zeta masses and contrasts of ``members`` (``member_diagnostics.csv``) for both apertures, on the true map and,
     for the reporting draws (``reporting.draws.ReportingDraws``), on the parametric and parametric + GRF model maps.  Returns {aperture: (member table with ``truth_zeta_msun``,
     ``truth_contrast`` and ``inside_image_hull``, {model: {"zeta": (draw, member) in Msun, "contrast": (draw, member)}})}."""
-    native, wcs = rebinned(*load_truth_fits(config.truth.kappa_true_fits))
-    z_source = float(config.truth.caustic_source_redshift)
+    native, wcs = rebinned(*load_truth_fits(config.outputs.truth.kappa_true_fits))
+    z_source = float(config.outputs.caustic_source_redshift)
     pixel_arcsec = float(np.sqrt(abs(np.linalg.det(wcs.pixel_scale_matrix)))) * 3600
     apertures = member_apertures(members, wcs, state.reference, native.shape, state.kpc_per_arcsec, pixel_arcsec)
     factor = mass_per_kappa_pixel_msun(state, wcs, z_source)
@@ -175,7 +175,7 @@ def save_cache(stage, results, key):
 
 
 def load_cache(stage, key):
-    """The results saved by ``save_cache`` (or, for an old run, its ``tables/zeta_masses_cache.h5``), or None when
+    """The results saved by ``save_cache``, or None when
     there is no cache or it was made with other draws."""
     try:
         arrays = store.read_cache_arrays(stage, CACHE_NAME)
@@ -322,24 +322,23 @@ def well_measured(values):
     return (q84 - q16) <= MAX_RELATIVE_WIDTH * np.abs(q50)
 
 
-def select_members(table, model, keep):
-    """``table`` and ``model`` restricted to the members in ``keep``."""
-    return (table[keep].reset_index(drop=True),
-            {m: {q: values[:, keep] for q, values in quantities.items()} for m, quantities in model.items()})
+FIGURE_ARRAYS = 'subhalo_mass_concentration'
 
 
-def write_zeta_masses(config, state, draws, paths, image_df, *, recompute=False, log=print):
-    """Zeta masses (10 kpc aperture) and concentrations (R_e aperture) of a Hera or Ares run with a truth map:
-    ``<prefix>_subhalo_mass_concentration.pdf`` (``render_subhalo_figure``) with the members ``well_measured`` in both.
-    The masses come from the stage's cache (``zeta_masses_cache``) when it was made with the same reporting draws and ``recompute`` is False, and are otherwise computed and cached there.  Also writes to the stage's results
-    the tables ``member_zeta_masses`` (one row per member and aperture: truth and the model median, 16th and 84th
-    percentiles) and ``zeta_mass_function`` and the record ``zeta_masses`` (summary).  Made for every run with a true
-    convergence map and cluster members; returns None otherwise."""
-    prefix = str(config.paths.figure_prefix or '')
-    if not config.truth.kappa_true_fits or not len(state.members.member_ids):
+def save_zeta_masses(config, state, draws, paths, image_df, *, recompute=False, log=print):
+    """Zeta masses (10 kpc aperture) and concentrations (R_e aperture) of a run with a true convergence map and cluster
+    members, computed or taken from the stage's cache (``zeta_masses_cache``) when it was made with the same reporting
+    draws and ``recompute`` is False (and otherwise cached there).  Writes to the stage's results the table
+    ``member_zeta_masses`` (one row per member and aperture: truth and the model median, 16th and 84th percentiles),
+    the record ``zeta_masses`` (summary) and the arrays ``subhalo_mass_concentration``: what the figure draws, for the
+    members ``well_measured`` in both apertures and ``narrow_enough`` (``member_id``, ``truth_zeta_msun`` of the 10 kpc
+    aperture, ``truth_contrast`` of the R_e aperture, and per draw and member the full model's ``model_zeta_msun`` and
+    ``model_contrast``).  Returns the ``results.h5`` written, or None (logged) for a run without a true map or
+    members."""
+    if not config.outputs.truth.kappa_true_fits or not len(state.members.member_ids):
         log('[zeta] skipped: no true convergence map or no cluster members')
         return None
-    members = store.read_table(paths.tables, 'member_diagnostics', legacy_csv=dict(dtype={'member_id': str, 'catalog_id': str}))
+    members = store.read_table(paths.tables, 'member_diagnostics')
     if members.member_id.tolist() != list(state.members.member_ids):
         raise ValueError('Zeta-mass catalog identities differ from saved model')
     cache = paths.tables
@@ -377,19 +376,32 @@ def write_zeta_masses(config, state, draws, paths, image_df, *, recompute=False,
                 entry[f'{m}_zeta_ratio_{sample}'] = {'n': int(len(values)), 'median': float(median), 'p25': float(low), 'p75': float(high)}
         summary[name] = entry
         rows.append(out)
-    store.write_table(paths.tables, 'member_zeta_masses', pd.concat(rows, ignore_index=True))
-    path = paths.figures / f'{prefix}_subhalo_mass_concentration.pdf'
     mass_table, mass_model = results['10kpc']
     concentration_table, concentration_model = results['re']
     if mass_table.member_id.tolist() != concentration_table.member_id.tolist():
         raise ValueError('The two apertures list different members')
     keep = np.logical_and.reduce([well_measured(results[name][1]['full'][quantity]) for name, quantity in plotted.items()])
     keep &= narrow_enough(mass_model['full']['zeta'], concentration_model['full']['contrast'])
-    table = mass_table.assign(truth_contrast=concentration_table.truth_contrast)
-    table, mass_model = select_members(table, mass_model, keep)
-    _, concentration_model = select_members(concentration_table, concentration_model, keep)
-    store.write_table(paths.tables, 'zeta_mass_function', render_subhalo_figure(table, mass_model, concentration_model, path))
-    store.write_record(paths.tables, 'zeta_masses', summary)
-    log(f'[zeta] wrote {path}; {int(keep.sum())} of {len(keep)} members shown (well measured in both, error bars within '
+    with store.batch(paths.tables):
+        store.write_table(paths.tables, 'member_zeta_masses', pd.concat(rows, ignore_index=True))
+        store.write_arrays(paths.tables, FIGURE_ARRAYS, member_id=mass_table.member_id.to_numpy(str)[keep],
+                           truth_zeta_msun=mass_table.truth_zeta_msun.to_numpy()[keep],
+                           truth_contrast=concentration_table.truth_contrast.to_numpy()[keep],
+                           model_zeta_msun=mass_model['full']['zeta'][:, keep],
+                           model_contrast=concentration_model['full']['contrast'][:, keep])
+        store.write_record(paths.tables, 'zeta_masses', summary)
+    log(f'[zeta] {int(keep.sum())} of {len(keep)} members shown (well measured in both, error bars within '
         f'{MAX_MASS_WIDTH_DEX:g} dex and {MAX_CONCENTRATION_WIDTH:g})')
+    return store.results_path(paths.tables)
+
+
+def render_zeta_masses(stage, path, *, log=print):
+    """``<prefix>_subhalo_mass_concentration.pdf`` at ``path`` (``render_subhalo_figure``) from the arrays
+    ``subhalo_mass_concentration`` of ``stage`` (:func:`save_zeta_masses`), and the table ``zeta_mass_function`` it
+    draws.  Returns the figure."""
+    arrays = store.read_arrays(stage, FIGURE_ARRAYS)
+    table = pd.DataFrame({'truth_zeta_msun': arrays['truth_zeta_msun'], 'truth_contrast': arrays['truth_contrast']})
+    store.write_table(stage, 'zeta_mass_function', render_subhalo_figure(
+        table, {'full': {'zeta': arrays['model_zeta_msun']}}, {'full': {'contrast': arrays['model_contrast']}}, path))
+    log(f'[zeta] wrote {path}')
     return path

@@ -59,7 +59,7 @@ class SkyPositions:
     def __init__(self, config, state, lenses):
         from kappaccino.diagnostics.exact_images import ExactImageSolver
         self.state, self.lenses = state, lenses
-        self.solver = ExactImageSolver(lenses.evaluator, config.image_diagnostics)
+        self.solver = ExactImageSolver(lenses.evaluator, config.outputs.image_solver)
         self._draws = {}
 
     def _catalog(self, k):

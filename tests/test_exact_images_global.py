@@ -15,7 +15,7 @@ def test_global_search_matches_brute_force_and_recovers_observed_images(syntheti
     state = build_state(synthetic_config)
     evaluator = Evaluator(state)
     # The synthetic catalog does not sit on the model's images, so widen the window to contain them.
-    config = replace(synthetic_config.image_diagnostics, exact_image_finder="global-jax", exact_image_min_distance_arcsec=0.1, exact_image_window_margin_arcsec=12.0)
+    config = replace(synthetic_config.outputs.image_solver, exact_image_finder="global-jax", exact_image_min_distance_arcsec=0.1, exact_image_window_margin_arcsec=12.0)
     solver = ExactImageSolver(evaluator, config)
     theta = jnp.asarray(state.initial_theta)
     physical, sources = np.asarray(evaluator.physical(theta)), np.asarray(evaluator.source_positions(theta))
@@ -48,7 +48,7 @@ def test_magnifications_are_those_of_the_lens_with_its_added_field(synthetic_con
     """A deflection field added to the lens moves the images and enters their magnifications, in both solvers."""
     state = build_state(synthetic_config)
     evaluator = Evaluator(state)
-    config = replace(synthetic_config.image_diagnostics, exact_image_finder="global-jax", exact_image_window_margin_arcsec=12.0)
+    config = replace(synthetic_config.outputs.image_solver, exact_image_finder="global-jax", exact_image_window_margin_arcsec=12.0)
     solver = ExactImageSolver(evaluator, config)
     theta = jnp.asarray(state.initial_theta)
     physical, sources = np.asarray(evaluator.physical(theta)), np.asarray(evaluator.source_positions(theta))

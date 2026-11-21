@@ -32,11 +32,14 @@ def test_render_from_the_reporting_draws(tmp_path, monkeypatch):
     state=NS(images=NS(image_labels=['a'],x_obs=[0.],y_obs=[0.],
                       family_index_per_image=[0],family_ids=['f']),
              family_data=[NS(family_id='f',z_source=2.)],reference=None)
-    config=NS(paths=NS(figure_prefix='test'),image_catalog=NS(image_dir='test'))
+    config=NS(paths=NS(figure_prefix='test'),outputs=NS(rgb=NS(image_dir='test')))
     paths=NS(tables=tmp_path,figures=tmp_path)
     from kappaccino.plotting import critical_fields
-    monkeypatch.setattr(critical_fields,'median_cutout_determinants',
-        lambda *a,**k:(np.zeros((1,2,2,2)),np.ones((1,2,2)),np.ones((1,2,2)),np.ones((1,2,2))))
+    def critical(draws,centers,fovs,redshifts,path,**k):           # what median_cutout_determinants saves
+        store.write_arrays(path.parent,path.stem,median_determinant=np.ones((1,2,2)),lower=np.ones((1,2,2)),upper=np.ones((1,2,2)),
+                           centers=np.asarray(centers),fovs=np.asarray(fovs),redshifts=np.asarray(redshifts))
+        store.write_record(path.parent,path.stem,dict(resolution=2))
+    monkeypatch.setattr(critical_fields,'median_cutout_determinants',critical)
     calls=[]
     def fields(t,**kwargs):
         calls.append(kwargs)
@@ -46,6 +49,7 @@ def test_render_from_the_reporting_draws(tmp_path, monkeypatch):
     data=dict(recovered=np.random.default_rng(1).normal(0,.1,(32,1,2)),
               image_labels=np.array(['a']),draw_indices=np.arange(32))
     contours=dict(position_data=data,fingerprint='test-fingerprint')
+    store.write_arrays(tmp_path,'posterior_overview_positions',data)    # as load_or_compute_contours saves them
     ref=NS(pixel_scale_arcsec=.03,wcs=NS(world_to_pixel_values=lambda x,y:(x/.03+50,y/.03+50)))
     imaging=({'band':ref},('band',),None,'test')
     monkeypatch.setattr(module,'rgb_reference_band',lambda _: 'band')
@@ -54,7 +58,9 @@ def test_render_from_the_reporting_draws(tmp_path, monkeypatch):
     monkeypatch.setattr(module,'cutout_window',lambda *a:NS(x0=0,y0=0))
     monkeypatch.setattr(module,'rgb_cutout',lambda *a:np.zeros((100,100,3)))
     before=plt.rcParams.copy()
-    output=module.write_small_lambda_jwst(config,state,draws,paths,imaging,contours,minimum_major_sigma=0,minimum_axis_ratio=1,log=lambda _:None)
+    assert module.save_small_lambda_jwst(config,state,draws,paths,imaging,contours,minimum_major_sigma=0,minimum_axis_ratio=1,
+                                         log=lambda _:None) is not None
+    output=module.render_small_lambda_jwst(config,state,paths,imaging,log=lambda _:None)
     assert output.exists()
     assert calls and calls[0]==dict(force_exact=True,derivative=False)
     assert plt.rcParams['font.size']==before['font.size']
@@ -64,8 +70,8 @@ def test_render_from_the_reporting_draws(tmp_path, monkeypatch):
     saved = store.read_arrays(tmp_path, 'test_small_lambda_a_image_posteriors_jwst')
     assert saved['posterior_axis_statistics'].shape==(1,3)
     assert saved['posterior_axis_statistics'][0,2]>=1
-    assert module.write_small_lambda_jwst(config,state,draws,paths,imaging,contours,
-                                         minimum_major_sigma=100,log=lambda _:None) is None
+    assert module.save_small_lambda_jwst(config,state,draws,paths,imaging,contours,
+                                        minimum_major_sigma=100,log=lambda _:None) is None
     import pandas as pd
     rejected=store.read_table(tmp_path, 'test_small_lambda_a_image_posteriors_jwst')
     assert not rejected.shown.any()

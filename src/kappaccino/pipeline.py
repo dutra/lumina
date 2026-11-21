@@ -621,15 +621,11 @@ def write_init_bic(state: ModelState, evaluator: Evaluator, theta: np.ndarray, d
 
 def resume_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """The part of a configuration dictionary (``to_json_dict``) that a resume compares and the run hash covers: all
-    of it but the WBIC settings, which may change between a finished run and its resume, and the performance settings
-    (``config.PERFORMANCE_FIELDS``), which do not change what a run computes, and the report-only settings
-    (``config.REPORT_ONLY_FIELDS``)."""
-    from .config import PERFORMANCE_FIELDS, REPORT_ONLY_FIELDS
+    of it but the WBIC settings, which may change between a finished run and its resume, and the sections that change
+    only what is reported (``config.REPORT_ONLY_SECTIONS``: ``outputs``)."""
+    from .config import REPORT_ONLY_SECTIONS
     dropped: dict[str, tuple[str, ...]] = {"sampling": ("wbic", "wbic_warmup", "wbic_samples")}
-    for fields in (PERFORMANCE_FIELDS, REPORT_ONLY_FIELDS):
-        for section, names in fields.items():
-            dropped[section] = dropped.get(section, ()) + tuple(names)
-    payload = dict(payload)
+    payload = {key: value for key, value in payload.items() if key not in REPORT_ONLY_SECTIONS}
     for section, fields in dropped.items():
         if isinstance(payload.get(section), dict):
             payload[section] = {k: v for k, v in payload[section].items() if k not in fields}
@@ -728,7 +724,7 @@ def _run_init(config: LensClusterSolverConfig) -> InitResult:
         signature = artifacts.init_signature(config)
         if config.runtime.resume and artifacts.is_init_complete(paths.artifacts):
             saved = json.loads((paths.artifacts / artifacts.INIT_SIGNATURE_FILE).read_text())
-            if artifacts.without_partition(saved) != artifacts._jsonable(signature):
+            if saved != artifacts._jsonable(signature):
                 raise ValueError("The saved init stage was made with a different model, likelihood, member or search configuration; use a new run name.")
             log("[init] complete init stage found; loading the saved start")
             saved_classes = json.loads((paths.artifacts / artifacts.CLASSIFICATION_FILE).read_text())
@@ -742,7 +738,7 @@ def _run_init(config: LensClusterSolverConfig) -> InitResult:
                 write_init_bic(state, evaluator, theta, paths.artifacts, log=log)
             if not config.runtime.skip_plots and not (paths.figures / "init_fit.pdf").exists() and not any(paths.figures.glob("*init_fit.pdf")):
                 write_init_plots(state, evaluator, search, theta, paths.figures, margin=config.search.mode_margin,
-                                 prefix=config.paths.figure_prefix, z_source=float(config.truth.caustic_source_redshift), log=log)
+                                 prefix=config.paths.figure_prefix, z_source=float(config.outputs.caustic_source_redshift), log=log)
             return InitResult(paths, state, evaluator, search, theta, resumed=True)
 
         artifacts.write_json(paths.artifacts / artifacts.INIT_SIGNATURE_FILE, signature)
@@ -855,7 +851,7 @@ def _run_init(config: LensClusterSolverConfig) -> InitResult:
         summary["model_comparison"] = write_init_bic(state, evaluator, theta, paths.artifacts, log=log)
         if not config.runtime.skip_plots:
             summary["fit_at_start"] = write_init_plots(state, evaluator, search, theta, paths.figures, margin=config.search.mode_margin,
-                                                       prefix=config.paths.figure_prefix, z_source=float(config.truth.caustic_source_redshift), log=log)
+                                                       prefix=config.paths.figure_prefix, z_source=float(config.outputs.caustic_source_redshift), log=log)
         artifacts.write_json(paths.artifacts / artifacts.SUMMARY_FILE, summary)
         return InitResult(paths, state, evaluator, search, theta, resumed=False)
     finally:
@@ -944,6 +940,11 @@ def run_final(config: LensClusterSolverConfig, init: InitResult) -> RunResult:
                 log(f"[final] model comparison written ({time.perf_counter() - wbic_started:.0f}s)")
             audit = json.loads((stage.artifacts / artifacts.AUDIT_FILE).read_text())
             write_membership_table(state, evaluator, posterior.samples, stage.tables, log=log)
+            if not runtime.skip_plots:
+                # The outputs section is outside the hash, so this pass may use other settings than the saved ones:
+                # the saved configuration takes them, so that it describes the products this pass rewrites.
+                from dataclasses import replace
+                artifacts.save_config(stage.artifacts, replace(artifacts.load_config(stage.artifacts), outputs=config.outputs))
             outputs_started = time.perf_counter()
             summary = write_outputs(config, state, evaluator, posterior, audit, stage, log=log) if not runtime.skip_plots else {}
             timing = {"sampling": 0.0, "outputs": time.perf_counter() - outputs_started}

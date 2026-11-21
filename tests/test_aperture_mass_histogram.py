@@ -28,9 +28,9 @@ def test_uniform_mass_apertures_and_output(tmp_path,monkeypatch,prefix):
     monkeypatch.setattr(am,'mass_per_kappa_pixel_msun',lambda *a:.01)
     paths=NS(tables=tmp_path/'tables',figures=tmp_path/'figures')
     paths.tables.mkdir();paths.figures.mkdir()
-    members.to_csv(paths.tables/'member_diagnostics.csv',index=False)
+    store.write_table(paths.tables,'member_diagnostics',members)
     images=pd.DataFrame(dict(x_obs_arcsec=[-2,2,2,-2],y_obs_arcsec=[-2,-2,2,2]))
-    config=NS(paths=NS(figure_prefix=prefix),truth=NS(kappa_true_fits=truth,caustic_source_redshift=9.))
+    config=NS(paths=NS(figure_prefix=prefix),outputs=NS(truth=NS(kappa_true_fits=truth),caustic_source_redshift=9.))
     class Draws(NS):
         def __len__(self):return len(self.physical)
     draws=Draws(evaluator=Evaluator(),physical=np.ones((2,1)),has_field=False)
@@ -47,11 +47,11 @@ def test_uniform_mass_apertures_and_output(tmp_path,monkeypatch,prefix):
     assert stats['samples']['image_hull']['n']==1
     assert stats['skipped_member_ids']==['p:3']
     smaller=am.aperture_masses(state,Evaluator(),np.ones(1),members,
-        images.to_numpy(),config.truth,normalization_kpc=3.)
+        images.to_numpy(),config.outputs,normalization_kpc=3.)
     np.testing.assert_allclose(smaller.model_mass_msun[:2],table.model_mass_msun[:2]*(3/am.NORMALIZATION_KPC)**2,rtol=1e-12)
     def field(x,y,family):
         return .1*x,.1*y,np.full_like(x,.1),np.zeros_like(x),np.zeros_like(x),np.full_like(x,.1)
-    corrected=am.aperture_masses(state,Evaluator(),np.ones(1),members,images.to_numpy(),config.truth,
+    corrected=am.aperture_masses(state,Evaluator(),np.ones(1),members,images.to_numpy(),config.outputs,
                                 grf_correction=field,grf_weight=2.)
     np.testing.assert_allclose(corrected.ratio[:2],1.4,atol=1e-12)
 
@@ -102,7 +102,7 @@ def test_a_second_pass_reuses_the_saved_masses_until_an_input_changes(tmp_path,m
     paths.tables.mkdir();paths.figures.mkdir()
     store.write_table(paths.tables,'member_diagnostics',members)
     images=pd.DataFrame(dict(x_obs_arcsec=[-2,2,2,-2],y_obs_arcsec=[-2,-2,2,2]))
-    config=NS(paths=NS(figure_prefix='hera'),truth=NS(kappa_true_fits=truth,caustic_source_redshift=9.))
+    config=NS(paths=NS(figure_prefix='hera'),outputs=NS(truth=NS(kappa_true_fits=truth),caustic_source_redshift=9.))
     class Draws(NS):
         def __len__(self):return len(self.physical)
     lines=[]
@@ -139,7 +139,7 @@ def test_a_pass_interrupted_between_the_masses_and_their_fingerprint_leaves_the_
     paths.tables.mkdir();paths.figures.mkdir()
     store.write_table(paths.tables,'member_diagnostics',members)
     images=pd.DataFrame(dict(x_obs_arcsec=[-2,2,2,-2],y_obs_arcsec=[-2,-2,2,2]))
-    config=NS(paths=NS(figure_prefix='hera'),truth=NS(kappa_true_fits=truth,caustic_source_redshift=9.))
+    config=NS(paths=NS(figure_prefix='hera'),outputs=NS(truth=NS(kappa_true_fits=truth),caustic_source_redshift=9.))
     class Draws(NS):
         def __len__(self):return len(self.physical)
     def run(key):

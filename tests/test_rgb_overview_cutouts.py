@@ -76,30 +76,11 @@ def test_partial_system_draws_median_critical_field_without_anchor(monkeypatch):
     plt.close(fig)
 
 
-def test_partial_system_saved_before_the_position_band_draws_without_critical_line(monkeypatch):
-    monkeypatch.setattr(rc,'rgb_reference_band',lambda b:b[0])
-    monkeypatch.setattr(rc,'arcsec_to_skycoord',lambda *a:None)
-    monkeypatch.setattr(rc,'arcsec_to_radec',lambda x,y,*a:(x,y))
-    monkeypatch.setattr(rc,'cutout_window',lambda *a:NS(x0=0,y0=0))
-    monkeypatch.setattr(rc,'rgb_cutout',lambda *a:np.zeros((100,100,3)))
-    monkeypatch.setattr(rc,'_credible_density_grid',lambda *a:None)
-    old=np.zeros((8,8))      # the intermediate record: pixel-wise det A percentiles, no critical_points
-    system=dict(system_id='K6',center=[0,0],fov=3,z_source=2,partial_reason='changes branch',labels=['a'],
-                image_family_index=[0],positions=np.zeros((20,1,2)),observed=[[0,0]],
-                critical_x=np.arange(8.),critical_y=np.arange(8.),critical_median=old,critical_lower=old,critical_upper=old)
-    ref=NS(pixel_scale_arcsec=.03,wcs=NS(world_to_pixel_values=lambda x,y:(x*40+50,y*40+50)))
-    fig=plt.figure()
-    rc.render_overview_cutouts(fig,dict(images=[],systems=[system]),({'f':ref},('f',),None,'m0416'),(3,0,0))
-    ax=fig.axes[0]
-    assert not ax.patches and not ax.collections and [len(line.get_xdata()) for line in ax.lines]==[2,1]   # scale bar and marker only
-    plt.close(fig)
-
-
 def test_configured_panel_order_roundtrip_and_limit(tmp_path):
     from dataclasses import asdict
-    from kappaccino.config import ImageCatalogCutoutConfig
+    from kappaccino.config import RGBOutputConfig
     import json
-    config=ImageCatalogCutoutConfig(paper_small_lambda_cutouts=IMAGE_LABELS,
+    config=RGBOutputConfig(paper_small_lambda_cutouts=IMAGE_LABELS,
                                    paper_fold_cutouts=SYSTEM_IDS)
     saved=json.loads(json.dumps(asdict(config)))
     assert saved['paper_small_lambda_cutouts']==list(IMAGE_LABELS)
@@ -115,8 +96,8 @@ def test_launcher_declares_ordered_panels():
         data = yaml.safe_load(run.read_text())
         if 'extends' in data:
             data = yaml.safe_load((run.parent/data['extends']).read_text())
-        assert tuple(data['image_catalog']['paper_small_lambda_cutouts'])==tuple('image:'+s for s in M0416_SMALL_LAMBDA)
-        assert tuple(data['image_catalog']['paper_fold_cutouts'])==tuple('system:'+s for s in SYSTEM_IDS)
+        assert tuple(data['outputs']['rgb']['paper_small_lambda_cutouts'])==tuple('image:'+s for s in M0416_SMALL_LAMBDA)
+        assert tuple(data['outputs']['rgb']['paper_fold_cutouts'])==tuple('system:'+s for s in SYSTEM_IDS)
 
 
 def test_explicit_panels_compute_missing_critical_fields(tmp_path,monkeypatch):

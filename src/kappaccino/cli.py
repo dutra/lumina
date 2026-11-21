@@ -12,6 +12,9 @@ Outputs go to ``results/<name>/<description>-<hash>``: :func:`describe` of the r
 configuration has its own folder and running the same command again, on any day, resumes it.  ``--run-label`` names
 the folder by hand instead, and ``--results`` moves the tree.  The files the run read and the command are copied to
 the run's ``inputs/`` folder the first time.
+
+``kappaccino outputs RUN_DIR`` reruns the outputs stage of a finished run without fitting (:mod:`kappaccino.outputs.command`);
+a cluster folder literally named ``outputs`` is given as ``./outputs``.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -49,9 +53,9 @@ def describe(config, profiles=()) -> str:
 
 def config_hash(config) -> str:
     """Six hex characters identifying a configuration: a hash of everything the pipeline compares when it resumes a
-    run (the whole configuration but ``paths``, the WBIC settings, which a finished run may add, and the performance
-    settings such as ``runtime.output_workers``: ``pipeline.resume_payload``).  Equal hashes are resumable runs; any
-    other change, a prior set with ``--set`` included, gives a new folder."""
+    run (the whole configuration but ``paths``, the WBIC settings, which a finished run may add, and the ``outputs``
+    section, which never changes a fit: ``pipeline.resume_payload``).  Equal hashes are resumable runs; any other
+    change of a fit setting, a prior set with ``--set`` included, gives a new folder."""
     from .pipeline import resume_payload
     payload = {key: value for key, value in resume_payload(config.to_json_dict()).items() if key != "paths"}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:6]
@@ -81,7 +85,7 @@ def _accept(text: str) -> float:
 FIELD_OPTIONS = {"chains": ("runtime.chains",), "seed": ("runtime.seed",), "starts": ("search.n_starts",),
                  "warm_start": ("search.warm_start",), "warmup": ("sampling.warmup",), "samples": ("sampling.samples",),
                  "tree_depth": ("sampling.max_tree_depth",), "target_accept": ("sampling.target_accept",),
-                 "draws": ("reporting.draws", "reporting.image_draws")}
+                 "draws": ("outputs.draws", "outputs.image_draws")}
 
 
 def _option_overrides(args) -> list[str]:
@@ -107,7 +111,10 @@ def _folder(text: str) -> str:
 def parser() -> argparse.ArgumentParser:
     """The command-line options."""
     p = argparse.ArgumentParser(prog="kappaccino", description=__doc__.split("\n\n")[0],
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+                                formatter_class=argparse.RawDescriptionHelpFormatter,
+                                epilog="kappaccino outputs RUN_DIR [--only A,B | --skip C,D | --all] [--remap OLD=NEW] [--set ...] [--draws N] "
+                                       "reruns the outputs stage of a finished run without fitting; see kappaccino outputs --help.  "
+                                       "A cluster folder named outputs is given as ./outputs.")
     p.add_argument("cluster", type=_folder, help="the cluster folder, e.g. catalogs/hera")
     p.add_argument("--profile", action="append", default=[], metavar="NAME",
                    help="apply a profile of run.yaml (fast; jwst or hst for the figures' imaging), in order; repeatable")
@@ -126,7 +133,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--tree-depth", type=_positive_int, metavar="N", help="NUTS maximum tree depth (sampling.max_tree_depth)")
     p.add_argument("--target-accept", type=_accept, metavar="P", help="NUTS target acceptance in (0, 1) (sampling.target_accept)")
     p.add_argument("--draws", type=_positive_int, metavar="N",
-                   help="posterior draws behind every reported product (reporting.draws and reporting.image_draws)")
+                   help="posterior draws behind every reported product (outputs.draws and outputs.image_draws)")
     p.add_argument("--skip-plots", action="store_true", help="no figures or tables after sampling (runtime.skip_plots)")
     p.add_argument("--member-profile", choices=("dpie", "power-law"), default=None,
                    help="the member halos: dpie, or power-law, the cored power law (the dPIE with a free 3D slope gamma, "
@@ -191,21 +198,31 @@ def _fast_warning(config) -> None:
 
 
 def main(argv=None) -> int:
-    """Run (or dry-run) one cluster folder; returns the exit code."""
+    """Run (or dry-run) one cluster folder, or with ``outputs`` first rerun the outputs stage of a finished run
+    (:func:`kappaccino.outputs.command.main`); returns the exit code."""
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] == "outputs":
+        from .outputs.command import main as outputs_main
+        return outputs_main(argv[1:])
     args = parser().parse_args(argv)
     args.overrides = [*_option_overrides(args), *args.overrides]
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-kappaccino")
+    from .config import UnknownField
     from .cpu_runtime import configure_cpu_runtime, resolve_cpu_plan
     from .run_files import input_files, read_run
-    # The CPU devices are set before anything starts JAX (building a prior does).
-    runtime = read_run(args.cluster, args.profile, args.overrides).get("runtime") or {}
-    chains, method = int(runtime.get("chains", 1)), runtime.get("nuts_chain_method", "parallel")
-    cpu_plan = resolve_cpu_plan(chains, method)
-    if not args.dry_run:
-        configure_cpu_runtime(chains, method)
-    config = build_config(args.cluster, profiles=args.profile, overrides=args.overrides, results=args.results,
-                          member_profile=args.member_profile, member_slope=args.member_slope,
-                          run_label=args.run_label, images=args.images).validate()
+    try:
+        # The CPU devices are set before anything starts JAX (building a prior does).
+        runtime = read_run(args.cluster, args.profile, args.overrides).get("runtime") or {}
+        chains, method = int(runtime.get("chains", 1)), runtime.get("nuts_chain_method", "parallel")
+        cpu_plan = resolve_cpu_plan(chains, method)
+        if not args.dry_run:
+            configure_cpu_runtime(chains, method)
+        config = build_config(args.cluster, profiles=args.profile, overrides=args.overrides, results=args.results,
+                              member_profile=args.member_profile, member_slope=args.member_slope,
+                              run_label=args.run_label, images=args.images).validate()
+    except (ValueError, UnknownField) as error:     # a bad run file, profile or --set value: a usage error
+        print(f"kappaccino: {error}", file=sys.stderr, flush=True)
+        return 2
     if args.dry_run:
         from .pipeline import dry_run
         print(json.dumps({"dry_run": True, "cpu_plan": cpu_plan.to_dict(), **dry_run(config)}, indent=2, default=str))

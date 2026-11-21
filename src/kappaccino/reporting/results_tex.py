@@ -53,11 +53,10 @@ def _record(final, name):
         return {}
 
 
-def _table(final, name, **legacy_csv):
-    """The table ``name`` of the stage ``final``, or None when missing; an old run's CSV is read with
-    ``pd.read_csv(path, **legacy_csv)``, as before the tables moved into ``results.h5``."""
+def _table(final, name):
+    """The table ``name`` of the stage ``final``, or None when missing."""
     try:
-        return store.read_table(final, name, legacy_csv=legacy_csv)
+        return store.read_table(final, name)
     except store.MissingEntry:
         return None
 
@@ -286,16 +285,16 @@ def footprint_metrics(final, cfg):
     cent range; without those tables they come from the median profile and the intervals are not available."""
     import numpy as np
     import pandas as pd
-    from ..config import TruthRecoveryConfig
+    from ..config import TruthOutputConfig, _from_jsonable
     from ..diagnostics.truth_recovery import footprint_mean_ratios, literature_ratios
     names = ('truth_recovery_m2d_aperture_profile', 'truth_recovery_kappa_annulus_profile', 'image_fit_quality')
-    if not all(store.has_table(final, name) for name in names) or not cfg.get('truth', {}).get('kappa_true_fits'):
+    if not all(store.has_table(final, name) for name in names) or not cfg.get('outputs', {}).get('truth', {}).get('kappa_true_fits'):
         return {}
     mass, kappa, images = (_table(final, name) for name in names)
     draws = ('truth_recovery_m2d_aperture_ratio_draws', 'truth_recovery_kappa_annulus_ratio_draws')
     mass_draws, kappa_draws = (_table(final, name) for name in draws) if all(store.has_table(final, name) for name in draws) else (None, None)
     radii = np.hypot(images['x_obs_arcsec'] - mass['center_x_arcsec'].iloc[0], images['y_obs_arcsec'] - mass['center_y_arcsec'].iloc[0])
-    truth = TruthRecoveryConfig(**cfg['truth'])
+    truth = _from_jsonable(cfg['outputs']['truth'], TruthOutputConfig)
     found = footprint_mean_ratios(mass, kappa, radii.to_numpy(float), literature_ratios(truth, 'mass'),
                                   literature_ratios(truth, 'kappa'), mass_draws, kappa_draws)
     result = {'FootprintInnerArcsec': number(found['inner_arcsec'], 1), 'FootprintOuterArcsec': number(found['outer_arcsec'], 1),
@@ -438,8 +437,7 @@ def write_run_results(final_dir: str | Path, *, name: str | None = None) -> Path
     Files read (relative to the run root; all except the first are optional):
     ``final/artifacts/summary.json``, ``final/artifacts/config.json``,
     ``final/artifacts/posterior_diagnostics.json``,
-    and from ``final/results.h5`` (:mod:`kappaccino.io.store`; the loose
-    ``final/tables/<name>.csv`` and ``.json`` files of an old run) the records
+    and from ``final/results.h5`` (:mod:`kappaccino.io.store`) the records
     ``run_summary``, ``runtime`` and ``aperture_mass_histogram`` and the tables
     ``posterior_summary``, ``posterior_image_residual_draws*``,
     ``posterior_image_rms``, ``position_coverage`` and ``image_fit_quality``.

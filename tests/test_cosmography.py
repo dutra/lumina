@@ -11,7 +11,7 @@ import numpyro.distributions as dist
 import pytest
 
 from kappaccino import pipeline
-from kappaccino.config import PartitionConfig, ReportingConfig, RuntimeConfig, SamplingConfig, SearchConfig
+from kappaccino.config import ImagesOutputConfig, OutputsConfig, PartitionConfig, RuntimeConfig, SamplingConfig, SearchConfig
 from kappaccino.core.state import build_state
 from kappaccino.lens.cosmology import flat_wcdm_kpc_per_arcsec, flat_wcdm_lensing_efficiency
 from kappaccino.likelihood.evaluator import Evaluator
@@ -141,7 +141,7 @@ def test_cosmography_end_to_end(synthetic_config):
     config = replace(cosmography(synthetic_config), runtime=RuntimeConfig(seed=3, chains=2, nuts_chain_method="sequential", resume=True),
                      search=SearchConfig(n_starts=2, member_starts=1, lbfgs_max_iter=30, polish_max_iter=20),
                      sampling=SamplingConfig(warmup=10, samples=10, max_tree_depth=4),
-                     reporting=ReportingConfig(draws=2, image_draws=2, extra_images=False))
+                     outputs=OutputsConfig(draws=2, image_draws=2, images=ImagesOutputConfig(extra_images=False)))
     result = pipeline.run(config)
     state, posterior = result.state, result.posterior
     assert posterior.samples.shape == (20, state.n_parameters) and np.isfinite(posterior.log_prob).all()

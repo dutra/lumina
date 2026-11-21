@@ -216,34 +216,45 @@ def compute_fields(config, state, draws, *, step=.5, log=print):
     return data
 
 
-def write_field_plots(config, state, evaluator, posterior, paths, *, log=print):
-    """Standard outputs for a single shared knee-spectrum GRF plus image GP."""
-    import matplotlib.pyplot as plt
+FIELD_MAPS = 'conditional_field_maps'     # the arrays and record the shared-field figures are drawn from
+
+
+def save_field_maps(config, state, evaluator, posterior, paths, *, log=print):
+    """The shared knee-spectrum GRF and image GP maps over the reporting draws (:func:`compute_fields`), saved as the
+    arrays and record ``conditional_field_maps``; None, after logging, without an active shared GRF."""
     if not getattr(evaluator, 'gp_knee', False):
-        return []
+        return None
     from ..likelihood.grf_fields import shared_field_evaluator, shared_grf_label
     from ..reporting.draws import reporting_draws
     if shared_field_evaluator(evaluator) is None:
         log('[outputs] shared field maps skipped: no active knee-spectrum GRF')
-        return []
+        return None
     field_label = shared_grf_label(evaluator)
     draws = reporting_draws(config, evaluator, posterior)
     log(f'[outputs] computing shared GRF and GP diagnostic maps over {len(draws)} posterior draws ({field_label})')
     data = compute_fields(config, state, draws, log=log)
-    paths.figures.mkdir(parents=True, exist_ok=True)
-    prefix = f'{config.paths.figure_prefix}_' if config.paths.figure_prefix else ''
-    store.write_arrays(paths.tables, 'conditional_field_maps', data)
-    outputs = [paths.figures / f'{prefix}total_grf_dimensionless_power.pdf',
-               paths.figures / f'{prefix}gp_correction_correlation.pdf']
-    with plt.rc_context():
-        render_grf(data, outputs[0]); render_gp(data, outputs[1])
     provenance = dict(draw_indices=np.asarray(data['draw_indices']).tolist(), reference_redshift=float(data['reference_redshift']),
                       conditioning='each random posterior draw conditioned at itself; fitted source positions and projection retained',
                       spectrum='homogeneous kernel before projection; Delta_kappa^2=k^2 P_kappa/(2 pi); median and 16-84% over the draws',
                       map='per-pixel median over the draws of each draw\'s conditional realization; grf_q16/grf_q84 the 16-84% range', field=field_label,
                       nonpositive_total_pixels=int(np.sum(data['total']<=0)),
                       nonpositive_display='masked in the logarithmic total-convergence panel')
-    store.write_record(paths.tables, 'conditional_field_maps', provenance)
+    with store.batch(paths.tables):
+        store.write_arrays(paths.tables, FIELD_MAPS, data)
+        store.write_record(paths.tables, FIELD_MAPS, provenance)
+    return FIELD_MAPS
+
+
+def render_field_plots(config, paths, *, log=print):
+    """The GRF overview and the GP correction figures, from the arrays ``conditional_field_maps``."""
+    import matplotlib.pyplot as plt
+    data = store.read_arrays(paths.tables, FIELD_MAPS)
+    paths.figures.mkdir(parents=True, exist_ok=True)
+    prefix = f'{config.paths.figure_prefix}_' if config.paths.figure_prefix else ''
+    outputs = [paths.figures / f'{prefix}total_grf_dimensionless_power.pdf',
+               paths.figures / f'{prefix}gp_correction_correlation.pdf']
+    with plt.rc_context():
+        render_grf(data, outputs[0]); render_gp(data, outputs[1])
     for output in outputs:
         log(f'[outputs] {output}')
     return outputs

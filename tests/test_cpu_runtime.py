@@ -142,12 +142,3 @@ finally:
 """
     subprocess.run([sys.executable, "-c", code, cluster], check=True, timeout=45,
                    env=dict(os.environ, PYTHONPATH=str(Path("src").resolve())))
-
-
-def test_saved_config_with_removed_pinning_field_loads():
-    from kappaccino.config import LensClusterSolverConfig, RuntimeConfig, _from_jsonable
-    runtime = _from_jsonable({"seed": 3, "chains": 2, "cpu_threads_per_chain": 2}, RuntimeConfig)
-    assert runtime == RuntimeConfig(seed=3, chains=2)
-    payload = LensClusterSolverConfig().to_json_dict()
-    payload["runtime"]["cpu_threads_per_chain"] = 2
-    assert LensClusterSolverConfig.from_json_dict(payload).to_json_dict() == LensClusterSolverConfig().to_json_dict()

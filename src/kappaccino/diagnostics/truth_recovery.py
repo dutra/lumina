@@ -2,7 +2,8 @@
 
 The WCS helpers that place a model grid on a truth map (:func:`load_truth_fits`, :func:`diagnostic_grid`,
 :func:`sample_on_grid`, :func:`grid_arcsec`), and the run-level comparison against the truth convergence and shear maps
-of a simulated cluster (:func:`compute_truth_recovery`, configured by ``TruthRecoveryConfig``).  Model positions are
+of a simulated cluster (:func:`compute_truth_recovery`, configured by ``config.OutputsConfig``: its ``truth`` section
+and ``caustic_source_redshift``).  Model positions are
 arcsec offsets from the state's reference, :math:`x = (\\alpha_0 - \\alpha)\\cos\\delta_0 \\cdot 3600` (positive west) and
 :math:`y = (\\delta - \\delta_0) \\cdot 3600`.  The model maps come from the reporting draws
 (``ReportingDraws.grid_maps``): from :math:`A = I - \\partial\\alpha/\\partial\\theta`,
@@ -22,7 +23,7 @@ from astropy.io import fits
 from astropy.wcs import WCS, FITSFixedWarning
 from scipy.ndimage import gaussian_filter, map_coordinates
 
-from ..config import TruthRecoveryConfig
+from ..config import OutputsConfig, TruthOutputConfig
 from ..io import store
 from ..core.model import ModelState
 from ..likelihood.grf_fields import shared_field_evaluator, shared_grf_label
@@ -258,7 +259,7 @@ def ratio_draws_table(radius, ratio_draws) -> pd.DataFrame:
 LITERATURE_RATIOS = "meneghetti2017_ratios.csv"
 
 
-def literature_ratios(config: TruthRecoveryConfig, quantity: str = "mass") -> pd.DataFrame | None:
+def literature_ratios(config: TruthOutputConfig, quantity: str = "mass") -> pd.DataFrame | None:
     """Model-to-true ratios of the published FF-SIMS reconstructions, digitized from Figs. 12 (Ares) and 13 (Hera) of
     Meneghetti et al. (2017): the ``quantity`` rows (``"mass"``, enclosed projected mass; ``"kappa"``, azimuthally averaged
     convergence) of ``meneghetti2017_ratios.csv`` beside the truth convergence map, or None when there is no such file.
@@ -342,7 +343,7 @@ def footprint_mean_ratios(mass_profile: pd.DataFrame, kappa_profile: pd.DataFram
     return result
 
 
-def literature_m2d_ratios(config: TruthRecoveryConfig) -> pd.DataFrame | None:
+def literature_m2d_ratios(config: TruthOutputConfig) -> pd.DataFrame | None:
     """The enclosed-mass rows of :func:`literature_ratios`."""
     return literature_ratios(config, "mass")
 
@@ -361,15 +362,15 @@ def mass_per_kappa_pixel_msun(state: ModelState, wcs: WCS, z_source: float) -> f
     return float((sigma_crit * dl ** 2).to_value(u.Msun) * pixel_solid_angle)
 
 
-def truth_maps_on_grid(state: ModelState, config: TruthRecoveryConfig):
+def truth_maps_on_grid(state: ModelState, config: TruthOutputConfig):
     """The true lens maps on the diagnostic grid.
 
     Parameters
     ----------
     state : ModelState
         Model state; only ``reference`` is read.
-    config : TruthRecoveryConfig
-        Truth configuration with ``kappa_true_fits`` set.
+    config : TruthOutputConfig
+        The ``outputs.truth`` section, with ``kappa_true_fits`` set.
 
     Returns
     -------
@@ -383,7 +384,7 @@ def truth_maps_on_grid(state: ModelState, config: TruthRecoveryConfig):
         ``"kappa"``, and with shear truth also ``"gamma1"``, ``"gamma2"``, ``"detA"``, ``"mu"`` and ``"abs_mu"``.
     """
     native_kappa, native_wcs = load_truth_fits(config.kappa_true_fits)
-    wcs, shape = diagnostic_grid(native_wcs, native_kappa.shape, int(config.truth_grid_size))
+    wcs, shape = diagnostic_grid(native_wcs, native_kappa.shape, int(config.grid_size))
     truth = {"kappa": sample_on_grid(native_kappa, native_wcs, wcs, shape)}
     if config.gammax_true_fits and config.gammay_true_fits:
         for name, path in (("gamma1", config.gammax_true_fits), ("gamma2", config.gammay_true_fits)):
@@ -396,13 +397,13 @@ def truth_maps_on_grid(state: ModelState, config: TruthRecoveryConfig):
     return wcs, shape, x, y, truth
 
 
-def compute_truth_recovery(state: ModelState, draws, config: TruthRecoveryConfig,
+def compute_truth_recovery(state: ModelState, draws, config: OutputsConfig,
                            fits_dir: Path, tables_dir: Path, *, log=print) -> dict[str, Any] | None:
     """Write median and 16/84 percentile grids of the lens quantities and the aperture profile. Returns grid data.
 
     Every grid is the parametric model plus the same draw's conditional realization of the shared GRF, when the run has one
     shared mass field.  The truth convergence (and, when both are configured, shear) maps are resampled onto a grid of at most
-    ``config.truth_grid_size`` pixels per side.  The model is evaluated at the reporting draws
+    ``config.truth.grid_size`` pixels per side.  The model is evaluated at the reporting draws
     (``reporting.draws.ReportingDraws``), for a source at ``config.caustic_source_redshift``, and every map is a
     per-pixel percentile over those draws: the field is never conditioned at a summary of the parameters, which is not
     a posterior state.
@@ -413,7 +414,10 @@ def compute_truth_recovery(state: ModelState, draws, config: TruthRecoveryConfig
     truth and model in circular apertures about the smoothed truth-convergence peak),
     ``truth_recovery_kappa_annulus_profile`` and, with at least two draws, the model/true ratio of every draw in
     ``truth_recovery_m2d_aperture_ratio_draws`` and ``truth_recovery_kappa_annulus_ratio_draws``
-    (``ratio_draws_table``) to the stage's ``results.h5`` (:mod:`kappaccino.io.store`).
+    (``ratio_draws_table``) to the stage's ``results.h5`` (:mod:`kappaccino.io.store`), together with what the figures
+    drawn from the result need (:func:`load_truth_recovery` reads it back): the record ``truth_recovery``, the arrays
+    ``truth_recovery_residuals`` (``x``, ``y`` and the true and median model maps of :data:`RESIDUAL_QUANTITIES`) and
+    the published ratios as the tables ``truth_literature_m2d_ratios`` and ``truth_literature_kappa_ratios``.
 
     Parameters
     ----------
@@ -423,8 +427,9 @@ def compute_truth_recovery(state: ModelState, draws, config: TruthRecoveryConfig
         Evaluator of the fitted model.
     draws : ReportingDraws
         The reporting draws and their cached lens evaluations.
-    config : TruthRecoveryConfig
-        Truth map paths, source redshift, grid size and number of draws.
+    config : OutputsConfig
+        The ``outputs`` section: the truth map paths and grid size (``truth``) and the source redshift
+        (``caustic_source_redshift``).
     fits_dir : pathlib.Path
         Output directory of the FITS grids (created if missing).
     tables_dir : pathlib.Path
@@ -443,13 +448,13 @@ def compute_truth_recovery(state: ModelState, draws, config: TruthRecoveryConfig
         ``"z_source"``; ``"literature_m2d"`` and ``"literature_kappa"`` (:func:`literature_ratios`); ``"mass_per_kappa_pixel_msun"`` (Msun per unit
         convergence per grid pixel).
     """
-    if not config.kappa_true_fits:
+    if not config.truth.kappa_true_fits:
         return None
     z_source = float(config.caustic_source_redshift)
     if z_source <= state.z_lens:
         log(f"[truth] skipped: source redshift {z_source:g} is not behind the lens")
         return None
-    wcs, shape, x, y, truth = truth_maps_on_grid(state, config)
+    wcs, shape, x, y, truth = truth_maps_on_grid(state, config.truth)
     evaluator = draws.evaluator
     n_draws = len(draws)
     grf_included = draws.has_field
@@ -481,16 +486,67 @@ def compute_truth_recovery(state: ModelState, draws, config: TruthRecoveryConfig
             fits.writeto(fits_dir / f"truth_recovery_{q}_true.fits", truth[q], truth_header, overwrite=True)
     center = smoothed_peak_center(truth["kappa"], x, y)
     profile = kappa_profile = None
-    if center is not None:
-        profile, profile_draws = aperture_profile(truth["kappa"], grids["kappa"], x, y, center, return_draws=True)
-        kappa_profile, kappa_draws = annular_kappa_profile(truth["kappa"], grids["kappa"], x, y, center, return_draws=True)
-        with store.batch(tables_dir):
+    result = {"wcs": wcs, "shape": shape, "x": x, "y": y, "truth": truth, "model": products, "profile": None, "kappa_profile": None,
+              "center": center, "grf_included": grf_included,
+              "z_source": z_source, "mass_per_kappa_pixel_msun": mass_per_kappa_pixel_msun(state, wcs, z_source),
+              "literature_m2d": literature_m2d_ratios(config.truth), "literature_kappa": literature_ratios(config.truth, "kappa")}
+    with store.batch(tables_dir):
+        if center is not None:
+            profile, profile_draws = aperture_profile(truth["kappa"], grids["kappa"], x, y, center, return_draws=True)
+            kappa_profile, kappa_draws = annular_kappa_profile(truth["kappa"], grids["kappa"], x, y, center, return_draws=True)
             store.write_table(tables_dir, "truth_recovery_m2d_aperture_profile", profile)
             store.write_table(tables_dir, "truth_recovery_kappa_annulus_profile", kappa_profile)
             if n_draws > 1:
                 store.write_table(tables_dir, "truth_recovery_m2d_aperture_ratio_draws", profile_draws)
                 store.write_table(tables_dir, "truth_recovery_kappa_annulus_ratio_draws", kappa_draws)
-    return {"wcs": wcs, "shape": shape, "x": x, "y": y, "truth": truth, "model": products, "profile": profile, "kappa_profile": kappa_profile, "center": center,
-            "grf_included": grf_included,
-            "z_source": z_source, "mass_per_kappa_pixel_msun": mass_per_kappa_pixel_msun(state, wcs, z_source),
-            "literature_m2d": literature_m2d_ratios(config), "literature_kappa": literature_ratios(config, "kappa")}
+        result.update(profile=profile, kappa_profile=kappa_profile)
+        save_truth_recovery(tables_dir, result, n_draws=n_draws)
+    return result
+
+
+# The maps of the figure truth_recovery_residuals: true and median model convergence, |mu| and det A.
+RESIDUAL_QUANTITIES = ("kappa", "abs_mu", "detA")
+LITERATURE_TABLES = {"literature_m2d": "truth_literature_m2d_ratios", "literature_kappa": "truth_literature_kappa_ratios"}
+
+
+def save_truth_recovery(stage, recovery: dict[str, Any], *, n_draws: int) -> None:
+    """Write what the figures drawn from ``recovery`` (:func:`compute_truth_recovery`) need besides its profile
+    tables: the record ``truth_recovery`` (source redshift, whether the GRF is included, the draws, the grid shape,
+    Msun per unit convergence per pixel, the profile centre or None, the true quantities, and which published ratios
+    exist), the arrays ``truth_recovery_residuals`` (``x``, ``y``, ``truth_<q>`` and ``model_<q>_median`` for the
+    quantities of :data:`RESIDUAL_QUANTITIES` the truth has) and the tables of :data:`LITERATURE_TABLES` that exist."""
+    truth, model = recovery["truth"], recovery["model"]
+    arrays = {"x": recovery["x"], "y": recovery["y"]}
+    for q in RESIDUAL_QUANTITIES:
+        if q in truth:
+            arrays[f"truth_{q}"], arrays[f"model_{q}_median"] = truth[q], model[q]["median"]
+    record = {"z_source": float(recovery["z_source"]), "grf_included": bool(recovery["grf_included"]), "n_draws": int(n_draws),
+              "shape": [int(n) for n in recovery["shape"]], "mass_per_kappa_pixel_msun": float(recovery["mass_per_kappa_pixel_msun"]),
+              "center": recovery["center"], "truth_quantities": list(truth),
+              **{key: recovery[key] is not None for key in LITERATURE_TABLES}}
+    with store.batch(stage):
+        store.write_record(stage, "truth_recovery", record)
+        store.write_arrays(stage, "truth_recovery_residuals", arrays)
+        for key, name in LITERATURE_TABLES.items():
+            if recovery[key] is not None:
+                store.write_table(stage, name, recovery[key])
+
+
+def load_truth_recovery(stage) -> dict[str, Any]:
+    """What :func:`save_truth_recovery` and :func:`compute_truth_recovery` saved in ``stage``, in the layout of the
+    result of :func:`compute_truth_recovery` that the figures read: ``x``, ``y``, ``truth`` and ``model`` (``{q:
+    {"median": map}}``) for the quantities of :data:`RESIDUAL_QUANTITIES`, ``profile`` and ``kappa_profile`` (None
+    without a centre), ``center``, ``z_source``, ``grf_included``, ``mass_per_kappa_pixel_msun``, ``literature_m2d`` and
+    ``literature_kappa`` (None when there were none).  No WCS and no per-draw maps."""
+    record = store.read_record(stage, "truth_recovery")
+    arrays = store.read_arrays(stage, "truth_recovery_residuals")
+    present = [q for q in RESIDUAL_QUANTITIES if f"truth_{q}" in arrays]
+    out = {"x": arrays["x"], "y": arrays["y"], "truth": {q: arrays[f"truth_{q}"] for q in present},
+           "model": {q: {"median": arrays[f"model_{q}_median"]} for q in present}, "center": record["center"],
+           **{key: record[key] for key in ("z_source", "grf_included", "mass_per_kappa_pixel_msun")}}
+    has_profile = record["center"] is not None
+    out["profile"] = store.read_table(stage, "truth_recovery_m2d_aperture_profile") if has_profile else None
+    out["kappa_profile"] = store.read_table(stage, "truth_recovery_kappa_annulus_profile") if has_profile else None
+    for key, name in LITERATURE_TABLES.items():
+        out[key] = store.read_table(stage, name) if record[key] else None
+    return out

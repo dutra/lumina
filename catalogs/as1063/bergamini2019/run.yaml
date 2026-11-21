@@ -32,13 +32,20 @@ sampling: {warmup: 500, samples: 250, max_tree_depth: 7, target_accept: 0.8}
 # log-uniform cut radius is 90 kpc (198 of 222 exact).
 members: {centering: auto, classification_prior_quantile: null}
 
-reporting: {draws: 64, image_draws: 64, extra_images: true}
-
-# BUFFALO HST mosaics with the library's Lupton display.
-image_catalog:
-  image_dir: ../../../data/imaging/as1063/buffalo
-  image_scale: auto
-  bands: [F435W, F606W, F814W, F105W, F125W, F140W, F160W]
+# What the run reports, never part of the fit; an observed cluster has no true lens maps.
+outputs:
+  draws: 64
+  image_draws: 64
+  fit: {enabled: true}
+  images: {enabled: true, extra_images: true}
+  mass: {enabled: true}
+  truth: {enabled: false}
+  # BUFFALO HST mosaics with the library's Lupton display.
+  rgb:
+    enabled: true
+    image_dir: ../../../data/imaging/as1063/buffalo
+    image_scale: auto
+    bands: [F435W, F606W, F814W, F105W, F125W, F140W, F160W]
 
 profiles:
   # Cosmography: Om0 and w0 of flat wCDM sampled with the lens (priors_cosmography.yaml).
@@ -49,13 +56,13 @@ profiles:
     sampling: {max_tree_depth: 8}
     members: {far_field_cut_radii: 2.0, classification_prior_quantile: null, min_deflection_arcsec: null, cut_radius_inflation: 3.0}
     scaling: {member_shape_scatter: null}
-    image_diagnostics: {fold_pair_max_separation_arcsec: 3.0}
-    reporting: {draws: 8, image_draws: 8, extra_images: false}
+    outputs: {draws: 8, image_draws: 8, images: {extra_images: false}, rgb: {fold_pair_max_separation_arcsec: 3.0}}
   # Figures on the DJA NIRCam mosaics (F115W+F150W blue, F150W+F200W green, F444W red), brighter to show the faint
   # members and arcs.
   jwst:
-    image_catalog:
-      image_dir: ../../../data/imaging/as1063/dja_v7.5
-      bands: [F115W, F150W, F200W, F444W]
-      rgb: {q: 80.0, stretch: 20.0}
-      figure_suffix: _jwst
+    outputs:
+      rgb:
+        image_dir: ../../../data/imaging/as1063/dja_v7.5
+        bands: [F115W, F150W, F200W, F444W]
+        display: {q: 80.0, stretch: 20.0}
+        figure_suffix: _jwst

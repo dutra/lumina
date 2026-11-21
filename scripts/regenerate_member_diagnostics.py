@@ -24,7 +24,7 @@ def main():
     from kappaccino.io import artifacts
     from kappaccino.likelihood.evaluator import Evaluator
     from kappaccino.core.state import build_state, with_member_classes
-    from kappaccino.plotting.members import write_member_diagnostic_plots
+    from kappaccino.plotting.members import render_member_diagnostics, save_member_diagnostics
 
     run = args.run_directory.resolve()
     init = run / 'init/artifacts'
@@ -32,7 +32,7 @@ def main():
     config = artifacts.load_config(final / 'artifacts')
     saved = json.loads((init / artifacts.STATE_FILE).read_text())
     if args.draws is not None:
-        config = replace(config, reporting=replace(config.reporting, draws=args.draws))
+        config = replace(config, outputs=replace(config.outputs, draws=args.draws))
     state = build_state(config)
     classes = json.loads((init / artifacts.CLASSIFICATION_FILE).read_text())
     centered = set(classes.get('centered_members', []))
@@ -47,8 +47,9 @@ def main():
     evaluator = Evaluator(state, config.likelihood.likelihood_mode)
     destination = args.output_dir or final
     paths = SimpleNamespace(figures=destination / 'figures', tables=destination / 'tables')
-    for path in write_member_diagnostic_plots(config, state, evaluator, posterior, paths):
-        print(path)
+    if save_member_diagnostics(config, state, evaluator, posterior, paths) is not None:
+        for path in render_member_diagnostics(config, paths):
+            print(path)
 
 
 if __name__ == '__main__':

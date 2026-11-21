@@ -28,7 +28,8 @@ from .rgb import (
     CalibratedRGBDisplayConfig, RGBDisplayConfig, compute_fnu_band_fluxscales, make_natural_rgb,
 )
 
-IMAGE_SCALE_CHOICES = ("auto", "20mas", "30mas", "40mas", "60mas")
+from ..config import RGB_IMAGE_SCALES as IMAGE_SCALE_CHOICES      # the choices of outputs.rgb.image_scale
+
 CLUSTER_IMAGE_TOKENS = {
     "a2744": ("a2744", "abell2744"), "a370": ("a370", "abell370"), "ares": ("ares",),
     "as1063": ("as1063", "abells1063", "rxcj2248", "rxj2248"), "hera": ("hera",), "m0416": ("m0416", "macs0416"),
@@ -78,8 +79,8 @@ def arcsec_to_radec(x_arcsec: Any, y_arcsec: Any, reference: tuple[int, float, f
 
 def cluster_from_config(model_config: Any, run_name: str = "") -> str:
     """Identify the imaging cluster from the catalog paths of the model configuration."""
-    paths = [str(getattr(getattr(model_config, "image_constraints", None), "catalog_path", "") or "")]
-    paths.extend(str(getattr(p, "catalog_path", "") or "") for p in getattr(model_config, "member_populations", ()) or ())
+    paths = [str(model_config.image_constraints.catalog_path)]
+    paths.extend(str(p.catalog_path) for p in model_config.member_populations)
     for text in (" ".join(paths).lower(), str(run_name).lower()):
         for cluster, tokens in CLUSTER_IMAGE_TOKENS.items():
             if any(token in text for token in tokens):
@@ -88,26 +89,33 @@ def cluster_from_config(model_config: Any, run_name: str = "") -> str:
 
 
 def imaging_variants(config, *, overview_only=False):
-    """Saved imaging plus JWST; CANUCS mass/fold overviews use only JWST."""
+    """The imaging variants of the ``rgb`` output module, each a ``config.outputs.rgb`` section: the configured imaging
+    plus JWST; CANUCS mass/fold overviews use only JWST."""
     from dataclasses import replace
     from ..config import RGBDisplayConfig as DisplayConfig
 
-    primary = config.image_catalog
+    primary = config.outputs.rgb
     variants = [primary]
     cluster = cluster_from_config(config.model, config.paths.run_name)
     if cluster in {"m0416", "as1063"} and not any(
         str(band).upper() in DEFAULT_JWST_RGB_BANDS for band in (primary.bands or ())
     ):
         variants.append(replace(primary, image_dir=f"data/imaging/{cluster}/{'canucs_dr1' if cluster == 'm0416' else 'dja_v7.5'}", image_scale="auto",
-                                bands=tuple(DEFAULT_JWST_RGB_BANDS), rgb=DisplayConfig(),
+                                bands=tuple(DEFAULT_JWST_RGB_BANDS), display=DisplayConfig(),
                                 figure_suffix="_jwst"))
     if overview_only:
-        catalog = str(getattr(getattr(config.model, "image_constraints", None), "catalog_path", "")).lower()
+        catalog = str(config.model.image_constraints.catalog_path).lower()
         identity = f"{catalog} {config.paths.run_name} {config.paths.figure_prefix}".lower()
         if "canucs" in identity and cluster == "m0416":
             return [replace(view, figure_suffix="_jwst") for view in variants
                     if any(str(band).upper() in DEFAULT_JWST_RGB_BANDS for band in (view.bands or ()))]
     return variants
+
+
+def variant_config(config, image_config):
+    """``config`` with the imaging variant ``image_config`` (one of :func:`imaging_variants`) as its ``outputs.rgb``."""
+    from dataclasses import replace
+    return replace(config, outputs=replace(config.outputs, rgb=image_config))
 
 
 def _fits_like(path: Path) -> bool:
@@ -366,12 +374,12 @@ def downsample_rgb(rgb: np.ndarray, max_side_pixels: int | None) -> np.ndarray:
 
 
 def load_cluster_imaging(config, model_config: Any, run_name: str) -> tuple[dict[str, BandImage], tuple[str, ...], RGBDisplayConfig, str]:
-    """Band images, bands, RGB display and cluster name from an ImageCatalogCutoutConfig."""
+    """Band images, bands, RGB display and cluster name from an ``outputs.rgb`` section (``config.RGBOutputConfig``)."""
     cluster = cluster_from_config(model_config, run_name)
     bands = tuple(config.bands) if config.bands else tuple(DEFAULT_HFF_RGB_BANDS)
     paths = find_rgb_band_paths(Path(str(config.image_dir)), cluster=cluster, bands=bands, image_scale=str(config.image_scale))
     images = load_band_images(paths, bands)
-    rgb = config.rgb
+    rgb = config.display
     gains = {role: getattr(rgb, f"{role}_gain") for role in ("red", "green", "blue")}
     display = build_rgb_display(images, bands=bands, q=rgb.q, stretch=rgb.stretch, minimum=rgb.minimum,
                                 channel_gains=gains if all(v is not None for v in gains.values()) else None)

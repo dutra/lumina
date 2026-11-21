@@ -5,14 +5,19 @@ from ..io import store
 from ..likelihood.grf_fields import shared_grf_label
 
 
+def cutout_grids(centers, fovs, resolution=96):
+    """The ``resolution``-square grids (cutout, row, column, 2) in arcsec of the cutouts of :func:`median_cutout_determinants`."""
+    axis = np.linspace(-.5, .5, resolution)
+    return np.array([np.stack(np.meshgrid(c[0] + axis * f, c[1] + axis * f), axis=-1) for c, f in zip(centers, fovs)])
+
+
 def median_cutout_determinants(draws, centers, fovs, redshifts, path, *, resolution=96, log=print):
     """Per-pixel 16th, 50th and 84th percentiles over the reporting draws (``reporting.draws.ReportingDraws``) of
     det A on a ``resolution``-square grid per cutout (centre, field of view in arcsec, source redshift), each draw with
     its own GRF realization.  Returns ``(grids, median, lower, upper)``; also stored, as arrays and a record named
     after the stem of ``path`` (``<stage>/tables/<name>.h5`` names the entry ``<name>`` of that stage's results)."""
     centers, fovs, redshifts = map(np.asarray, (centers, fovs, redshifts))
-    axis = np.linspace(-.5, .5, resolution)
-    grids = np.array([np.stack(np.meshgrid(c[0] + axis * f, c[1] + axis * f), axis=-1) for c, f in zip(centers, fovs)])
+    grids = cutout_grids(centers, fovs, resolution)
     determinants = np.stack([draws.grid_maps(f'cutout {i}', grid[..., 0], grid[..., 1], float(z), quantities=('detA',),
                                              from_reference=True, log=log)['detA']
                              for i, (grid, z) in enumerate(zip(grids, redshifts))], axis=1)

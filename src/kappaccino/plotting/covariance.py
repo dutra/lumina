@@ -15,9 +15,18 @@ from .style import PAPER_STYLE
 STYLE = Path(__file__).with_name('style.mplstyle')
 
 
-def plot_covariance_errors(config, state, draws, paths, *, plane='both'):
+COVARIANCE_NAMES = ['Measurement', 'Selection', 'Model', 'Total']
+
+
+def covariance_stem(plane):
+    """The name of the table, record and figure (without prefix) of the covariance errors in ``plane``."""
+    return 'covariance_errors' + {'image': '_image_plane', 'source': '', 'both': '_both_planes'}[plane]
+
+
+def save_covariance_errors(config, state, draws, paths, *, plane='both'):
     """Exact covariance components over the reporting draws: per image, the median over draws of each component width
-    and of the singular values, and the 16-84% range of the total."""
+    and of the singular values, and the 16-84% range of each component and of the total, saved as the table and record
+    ``covariance_errors<_plane>`` (what :func:`render_covariance_errors` draws).  Returns the name."""
     if plane not in {'source', 'image', 'both'}:
         raise ValueError('Unknown covariance display plane')
     plane_mode = plane
@@ -55,20 +64,57 @@ def plot_covariance_errors(config, state, draws, paths, *, plane='both'):
     plane_data = {plane: (np.median(stack, axis=0), stack) for plane, stack in
                   (('source', np.stack(source_draws)), ('image', np.stack(image_draws)))}
     planes = ['image', 'source'] if plane == 'both' else [plane]
+    stem = covariance_stem(plane)
+    names = COVARIANCE_NAMES
+    table = []
+    for plane in planes:
+        widths, stacked = plane_data[plane]
+        component_lo, component_median, component_hi = np.percentile(stacked, [16, 50, 84], axis=0)
+        lo, median, hi = np.percentile(stacked[:, -1], [16, 50, 84], axis=0)
+        for k in range(2):
+            for i, label in enumerate(state.images.image_labels):
+                table.append(dict(plane=plane, image_label=label, direction='arc' if k == 0 else 'perpendicular',
+                                  singular_value_median=s[i, k], **{name.lower()+'_arcsec': widths[j, i, k] for j, name in enumerate(names)},
+                                  **{f'{name.lower()}_{q}_arcsec': values[j, i, k]
+                                     for j, name in enumerate(names[:3])
+                                     for q, values in [('p16', component_lo), ('median', component_median), ('p84', component_hi)]},
+                                  total_p16_arcsec=lo[i,k], total_median_arcsec=median[i,k], total_p84_arcsec=hi[i,k]))
+    with store.batch(paths.tables):
+        store.write_table(paths.tables, stem, pd.DataFrame(table))
+        store.write_record(paths.tables, stem, dict(posterior_draw_indices=np.asarray(draws.indices).tolist(),
+            plane=plane_mode, transformation={p: 'A^-1 C A^-T' if p == 'image' else 'C' for p in planes},
+            kernels='exact', positions='observed images at their family redshifts',
+            x_axis='median over draws of each singular value',
+            lines='median over draws of each component width',
+            intervals='16th–84th percentiles of component and total widths in each draw\u0027s singular basis',
+            units='arcsec; standard deviations, not covariance eigenvalues'))
+    return stem
+
+
+def render_covariance_errors(config, paths, *, plane='both'):
+    """Draw the covariance errors saved by :func:`save_covariance_errors` (its table alone)."""
+    if plane not in {'source', 'image', 'both'}:
+        raise ValueError('Unknown covariance display plane')
+    stem = covariance_stem(plane)
+    saved = store.read_table(paths.tables, stem)
+    names = COVARIANCE_NAMES
+    planes = ['image', 'source'] if plane == 'both' else [plane]
+    plane_data = {}
+    for plane in planes:
+        rows = [saved[(saved.plane == plane) & (saved.direction == direction)] for direction in ('arc', 'perpendicular')]
+        s = np.stack([r.singular_value_median.to_numpy() for r in rows], axis=-1)
+        widths = np.stack([np.stack([r[name.lower()+'_arcsec'].to_numpy() for r in rows], axis=-1) for name in names])
+        lo, median, hi = (np.stack([r[f'total_{q}_arcsec'].to_numpy() for r in rows], axis=-1) for q in ('p16', 'median', 'p84'))
+        plane_data[plane] = widths, lo, median, hi
     prefix = config.paths.figure_prefix or 'cluster'
-    stem = 'covariance_errors' + {'image': '_image_plane', 'source': '', 'both': '_both_planes'}[plane]
     output = paths.figures / f'{prefix}_{stem}.pdf'
     output.parent.mkdir(parents=True, exist_ok=True)
-    names = ['Measurement', 'Selection', 'Model', 'Total']
     colors = ['tab:blue', 'tab:green', 'tab:red', 'black']
-    table = []
     with plt.rc_context(fname=STYLE, rc=PAPER_STYLE):
         fig, axes = plt.subplots(len(planes), 2, figsize=(7.1, 5.5 if len(planes) == 2 else 3.25),
                                  sharey='row', sharex='col', squeeze=False)
         for row, plane in enumerate(planes):
-            widths, stacked = plane_data[plane]
-            component_lo, component_median, component_hi = np.percentile(stacked, [16, 50, 84], axis=0)
-            lo, median, hi = np.percentile(stacked[:, -1], [16, 50, 84], axis=0)
+            widths, lo, median, hi = plane_data[plane]
             for k, ax in enumerate(axes[row]):
                 order = np.argsort(s[:, k])
                 for j in range(3):
@@ -87,13 +133,6 @@ def plot_covariance_errors(config, state, draws, paths, *, plane='both'):
                     ax.set_xlabel(r'$|\lambda_{\rm arc}|$' if k == 0 else r'$|\lambda_{\perp}|$')
                 ax.text(.04, .96, 'Along image stretch' if k == 0 else 'Perpendicular', transform=ax.transAxes,
                         va='top', fontsize=9)
-                for i, label in enumerate(state.images.image_labels):
-                    table.append(dict(plane=plane, image_label=label, direction='arc' if k == 0 else 'perpendicular',
-                                      singular_value_median=s[i, k], **{name.lower()+'_arcsec': widths[j, i, k] for j, name in enumerate(names)},
-                                      **{f'{name.lower()}_{q}_arcsec': values[j, i, k]
-                                         for j, name in enumerate(names[:3])
-                                         for q, values in [('p16', component_lo), ('median', component_median), ('p84', component_hi)]},
-                                      total_p16_arcsec=lo[i,k], total_median_arcsec=median[i,k], total_p84_arcsec=hi[i,k]))
             axes[row, 0].set_ylabel(f'{plane.capitalize()} plane\nUncertainty (arcsec)')
         handles, labels = axes[0, 0].get_legend_handles_labels()
         fig.legend(handles, labels, loc='upper center', ncol=3, frameon=False, bbox_to_anchor=(.52, 1.01))
@@ -101,14 +140,6 @@ def plot_covariance_errors(config, state, draws, paths, *, plane='both'):
                             top=.86 if len(planes) == 2 else .77, wspace=0, hspace=0)
         fig.savefig(output, bbox_inches='tight', pad_inches=.04)
         plt.close(fig)
-    store.write_table(paths.tables, stem, pd.DataFrame(table))
-    store.write_record(paths.tables, stem, dict(posterior_draw_indices=np.asarray(draws.indices).tolist(),
-        plane=plane_mode, transformation={p: 'A^-1 C A^-T' if p == 'image' else 'C' for p in planes},
-        kernels='exact', positions='observed images at their family redshifts',
-        x_axis='median over draws of each singular value',
-        lines='median over draws of each component width',
-        intervals='16th–84th percentiles of component and total widths in each draw\u0027s singular basis',
-        units='arcsec; standard deviations, not covariance eigenvalues'))
     return output
 
 
@@ -133,14 +164,15 @@ def plot_covariance_corner(config, state, posterior, paths):
     return result
 
 
-def write_covariance_plots(config, state, draws, posterior, paths, *, log=print):
+def render_covariance_plots(config, state, posterior, paths, *, log=print):
+    """The covariance corner (from the posterior) and the covariance errors (from the store)."""
     outputs = []
     corner = plot_covariance_corner(config, state, posterior, paths)
     if corner is not None:
         outputs.append(corner)
     else:
         log('[outputs] covariance corner skipped: insufficient draws or no sampled covariance parameters')
-    outputs.append(plot_covariance_errors(config, state, draws, paths))
+    outputs.append(render_covariance_errors(config, paths))
     for path in outputs:
         log(f'[outputs] covariance plot: {path}')
     return outputs

@@ -147,7 +147,7 @@ def _sheared(synthetic_config, *, nfw=False):
     config = replace(synthetic_config, model=replace(synthetic_config.model, large_halos=halos))
     state = build_state(config)
     evaluator = Evaluator(state)
-    diagnostics = replace(config.image_diagnostics, exact_image_finder="global-jax", exact_image_window_margin_arcsec=12.0)
+    diagnostics = replace(config.outputs.image_solver, exact_image_finder="global-jax", exact_image_window_margin_arcsec=12.0)
     solver = ExactImageSolver(evaluator, diagnostics)
     theta = jnp.asarray(state.initial_theta)
     physical, sources = np.asarray(evaluator.physical(theta)), np.asarray(evaluator.source_positions(theta))

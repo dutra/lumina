@@ -283,7 +283,7 @@ def test_fold_pair_in_a_two_knot_system_survives_a_displaced_source(tmp_path):
                          lambda_b_prior=priors.truncated_lognormal(6.0, 0.5, high=20.0), lambda_b_start_arcsec=6.0)
     state = build_state(config)
     evaluator = Evaluator(state, "gp_image_plane")
-    solver = ExactImageSolver(evaluator, config.image_diagnostics)
+    solver = ExactImageSolver(evaluator, config.outputs.image_solver)
     names = [p.name for p in state.parameter_specs]
     pair = list(state.images.family_ids).index("1A")
     # The solver corrects the mass field's mean deflection only; an image-plane displacement d is not applied to the

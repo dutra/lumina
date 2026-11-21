@@ -69,29 +69,24 @@ def test_a_map_inside_a_worker_runs_serially_and_workers_must_be_positive():
 
 
 # ----------------------------------------------------------------------------- the setting, the hash and a resume
-def test_output_workers_is_left_out_of_the_hash_and_of_the_resume_comparison(synthetic_config, tmp_path):
+def test_outputs_workers_is_left_out_of_the_hash_and_of_the_resume_comparison(synthetic_config, tmp_path):
     from kappaccino import cli
     from kappaccino.config import LensClusterSolverConfig
-    from kappaccino.io import artifacts
     from kappaccino.pipeline import resume_payload
+    from kappaccino.reporting.draws import reporting_draws
     base = synthetic_config
-    assert base.runtime.output_workers == 4
-    eight = replace(base, runtime=replace(base.runtime, output_workers=8)).validate()
+    assert base.outputs.workers == 4
+    eight = replace(base, outputs=replace(base.outputs, workers=8)).validate()
     assert cli.config_hash(eight) == cli.config_hash(base)
+    assert resume_payload(eight.to_json_dict()) == resume_payload(base.to_json_dict())
     assert cli.config_hash(replace(base, runtime=replace(base.runtime, seed=1))) != cli.config_hash(base)
-    # A run saved before the setting existed: its config.json has no such field.
-    payload = base.to_json_dict()
-    del payload["runtime"]["output_workers"]
-    (tmp_path / artifacts.CONFIG_FILE).write_text(json.dumps(payload))
-    saved = artifacts.load_config(tmp_path)
-    for current in (base, eight, replace(base, runtime=replace(base.runtime, output_workers=1))):
-        assert resume_payload(saved.to_json_dict()) == resume_payload(current.to_json_dict())
-        assert (saved.to_json_dict() == current.to_json_dict()) == (current.runtime.output_workers == 4)   # the default fills in
-    assert resume_payload(saved.to_json_dict()) != resume_payload(replace(base, runtime=replace(base.runtime, seed=1)).to_json_dict())
     for bad in (0, -2, 1.5, True):
-        with pytest.raises(ValueError, match="output_workers"):
-            replace(base, runtime=replace(base.runtime, output_workers=bad)).validate()
-    assert LensClusterSolverConfig.from_json_dict(eight.to_json_dict()).runtime.output_workers == 8
+        with pytest.raises(ValueError, match=r"outputs\.workers"):
+            replace(base, outputs=replace(base.outputs, workers=bad)).validate()
+    assert LensClusterSolverConfig.from_json_dict(eight.to_json_dict()).outputs.workers == 8
+    # The reporting draws evaluate in that many threads.
+    posterior = SimpleNamespace(samples=np.zeros((6, 1)), physical=np.zeros((6, 1)))
+    assert reporting_draws(eight, None, posterior).workers == 8
 
 
 # ----------------------------------------------------------------------------- identical products with 1 and 3 threads
@@ -132,7 +127,7 @@ def test_image_recovery_is_identical_with_one_and_three_workers(knee_run):
     tables, logs = {}, []
     for workers in (1, 3):
         draws = ReportingDraws(evaluator, posterior, 3, 11, image_count=5, workers=workers)
-        tables[workers] = image_recovery_tables(state, evaluator, draws, config.image_diagnostics, extra_images=True, log=logs.append)
+        tables[workers] = image_recovery_tables(state, evaluator, draws, config.outputs.image_solver, extra_images=True, log=logs.append)
     assert tables[1].keys() == tables[3].keys() and "posterior_image_residual_draws_lens_only" in tables[1]
     for name, frame in tables[1].items():
         pd.testing.assert_frame_equal(tables[3][name], frame, check_exact=True, obj=name)

@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 import json
+from kappaccino.config import ImagesOutputConfig, OutputsConfig
 from kappaccino.io import store
 
 import matplotlib.pyplot as plt
@@ -9,7 +10,9 @@ import pytest
 
 import numpyro.distributions as dist
 
-from kappaccino.reporting import outputs
+from kappaccino.outputs import fit as posterior_module
+from kappaccino.plotting import plots
+from kappaccino.reporting import outputs, results_tex
 from kappaccino.plotting import potfile
 from kappaccino.core.model import ParameterSpec
 
@@ -31,21 +34,17 @@ def test_run_outputs_create_potfile_corner(tmp_path, monkeypatch):
     samples, specs = fixture_draws()
     posterior = SimpleNamespace(samples=samples, physical=samples, log_prob=np.zeros(len(samples)))
     state = SimpleNamespace(parameter_specs=specs)
-    config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="hera"), image_diagnostics=None, reporting=SimpleNamespace(draws=2, extra_images=False), runtime=SimpleNamespace(seed=0))
-    paths = SimpleNamespace(tables=tmp_path / "tables", figures=tmp_path / "figures")
-    monkeypatch.setattr(outputs, "posterior_summary_table", lambda *args: pd.DataFrame())
-    monkeypatch.setattr(outputs, "classification_table", lambda *args: pd.DataFrame())
-    monkeypatch.setattr(outputs.plots, "member_scaling_table", lambda *args: pd.DataFrame())
-    monkeypatch.setattr(outputs, "write_covariance_plots", lambda *args, **kwargs: [])
-    monkeypatch.setattr(outputs, "write_member_diagnostic_plots", lambda *args, **kwargs: [])
-    # Stop after the actual potfile output hook, before unrelated image diagnostics.
-    class ReachedImageDiagnostics(Exception):
-        pass
-    def stop(*args, **kwargs):
-        raise ReachedImageDiagnostics
-    monkeypatch.setattr(outputs, "image_recovery_tables", stop)
-    with pytest.raises(ReachedImageDiagnostics):
-        outputs.write_outputs(config, state, SimpleNamespace(physical=lambda p: p), posterior, {}, paths)
+    config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="hera"), runtime=SimpleNamespace(seed=0),
+                             outputs=OutputsConfig(draws=2, image_draws=2, workers=1,
+                                                   images=ImagesOutputConfig(extra_images=False)))
+    paths = SimpleNamespace(tables=tmp_path / "tables", figures=tmp_path / "figures", root=tmp_path)
+    monkeypatch.setattr(posterior_module, "posterior_summary_table", lambda *args: pd.DataFrame())
+    monkeypatch.setattr(posterior_module, "classification_table", lambda *args: pd.DataFrame())
+    monkeypatch.setattr(plots, "member_scaling_table", lambda *args: pd.DataFrame())
+    monkeypatch.setattr(results_tex, "write_run_results", lambda *args, **kwargs: None)
+    summary = outputs.write_outputs(config, state, SimpleNamespace(physical=lambda p: p), posterior, {}, paths,
+                                    only=("fit",), skip=(), fail_fast=False, log=lambda _: None)
+    assert summary["modules"]["fit"]["render_steps"]["potfiles"]["status"] == "done"
     for kind in ("corner",):
         path = paths.figures / f"hera_potfile_members_{kind}.pdf"
         assert path.read_bytes().startswith(b"%PDF")

@@ -32,7 +32,7 @@ def test_quadratic_contour_linear_limit_and_curved_map():
 def test_exact_geometry_and_derivatives(synthetic_config):
     state = build_state(synthetic_config); evaluator = Evaluator(state)
     g = cc.draw_geometry(state, evaluator, state.initial_theta)
-    solver = ExactImageSolver(evaluator, synthetic_config.image_diagnostics)
+    solver = ExactImageSolver(evaluator, synthetic_config.outputs.image_solver)
     for i in [0, 2]:  # different source redshifts
         family = state.family_data[int(state.images.family_index_per_image[i])]
         packed = evaluator.packed_state_for_z(g['physical'], family.z_source)
@@ -58,7 +58,9 @@ def test_small_catalog_pdf_and_style(synthetic_config, tmp_path, monkeypatch):
     band=SimpleNamespace(wcs=wcs,shape=(2000,2000),pixel_scale_arcsec=.05,path=tmp_path/'synthetic.fits')
     monkeypatch.setattr(cc,'rgb_cutout',lambda *args: np.full((120,120,3),.2))
     style=dict(plt.rcParams)
-    path=cc.write_covariance_cutouts(synthetic_config,state,draws,paths,({'F814W':band},('F814W',),None,'toy'))
+    imaging=({'F814W':band},('F814W',),None,'toy')
+    assert cc.save_covariance_cutouts(synthetic_config,state,draws,paths,imaging) is not None
+    path=cc.render_covariance_cutouts(synthetic_config,state,paths,imaging)
     assert path.read_bytes().startswith(b'%PDF')
     assert dict(plt.rcParams)==style
     metadata=store.read_record(paths.tables, 'small_lambda_covariance_cutouts')
@@ -73,71 +75,76 @@ def test_small_catalog_pdf_and_style(synthetic_config, tmp_path, monkeypatch):
 @pytest.mark.parametrize("cluster,missing_hst,expected", [("toy",False,1),("m0416",False,2),("as1063",True,1),("hera",False,1),("ares",False,1)])
 def test_output_reuses_loaded_imaging(monkeypatch, synthetic_config, tmp_path, cluster, missing_hst, expected):
     from dataclasses import replace
-    from kappaccino.reporting import outputs
+    from kappaccino.reporting import outputs, results_tex
     from kappaccino.imaging import cutouts
-    from kappaccino.plotting import mass_figure, chain_traces
-    config=replace(synthetic_config,paths=replace(synthetic_config.paths,run_name=cluster),image_catalog=replace(synthetic_config.image_catalog,image_dir='already-loaded'))
+    from kappaccino.diagnostics import image_recovery
+    from kappaccino.plotting import mass_figure, plots, covariance_cutouts, fold_pairs
+    config=replace(synthetic_config,paths=replace(synthetic_config.paths,run_name=cluster),outputs=replace(synthetic_config.outputs,rgb=replace(synthetic_config.outputs.rgb,image_dir='already-loaded')))
     state=SimpleNamespace(parameter_specs=[],reference=(3,0,0),z_lens=.3,z_source_values=[2.])
     posterior=SimpleNamespace(samples=np.zeros((1,1)),physical=np.zeros((1,1)),log_prob=np.zeros(1))
     evaluator=SimpleNamespace(physical=lambda p:p,source_positions=lambda p:np.zeros((1,2)))
     paths=SimpleNamespace(tables=tmp_path/'tables',figures=tmp_path/'figures',fits=tmp_path/'fits',root=tmp_path)
-    for name in ['write_chain_traces','write_potfile_plots','write_covariance_plots','write_member_diagnostic_plots','write_run_results','write_posterior_block_corner','write_gp_plots','write_aperture_mass_histogram']:
-        monkeypatch.setattr(outputs,name,lambda *a,**k:None)
-    for name in ['posterior_summary_table','classification_table']:
-        monkeypatch.setattr(outputs,name,lambda *a:pd.DataFrame())
-    monkeypatch.setattr(outputs.plots,'member_scaling_table',lambda *a:pd.DataFrame())
-    for name in ['plot_image_residual_histogram','plot_image_recovery','plot_corner','plot_critical_curves']:
-        monkeypatch.setattr(outputs.plots,name,lambda *a,**k:None)
-    monkeypatch.setattr(chain_traces,'trace_data',lambda *a:None)
-    monkeypatch.setattr(outputs,'compute_truth_recovery',lambda *a,**k:None)
-    monkeypatch.setattr(outputs,'image_recovery_tables',lambda *a,**k:{'image_fit_quality':pd.DataFrame({'image':['a']}),'image_count_recovery':pd.DataFrame(),'image_recovery_extra_images':pd.DataFrame(),
+    monkeypatch.setattr(results_tex,'write_run_results',lambda *a,**k:None)
+    for name in ['plot_image_residual_histogram','plot_image_recovery']:
+        monkeypatch.setattr(plots,name,lambda *a,**k:None)
+    monkeypatch.setattr(image_recovery,'image_recovery_tables',lambda *a,**k:{'image_fit_quality':pd.DataFrame({'image':['a']}),'image_count_recovery':pd.DataFrame(),'image_recovery_extra_images':pd.DataFrame(),
         'posterior_image_residual_draws':pd.DataFrame(columns=['family_id','image_label','recovered','x_obs_arcsec','y_obs_arcsec','x_predicted_arcsec','y_predicted_arcsec'])})
-    monkeypatch.setattr(outputs,'fit_summary',lambda *a,**k:{'observed_image_count':1})
+    monkeypatch.setattr(image_recovery,'fit_summary',lambda *a,**k:{'observed_image_count':1})
     imaging=cluster if cluster in {"hera","ares"} else "test-imaging"
     def load(image_config, *args):
         if missing_hst and not image_config.figure_suffix:
             raise FileNotFoundError('HST unavailable')
         bands = ['F115W','F150W','F200W'] if image_config.figure_suffix == '_jwst' else ['F435W','F606W','F814W']
         return (None,bands,None,imaging)
-    monkeypatch.setattr(cutouts,'load_cluster_imaging',load)
-    monkeypatch.setattr(mass_figure,'render_cluster_mass_figure',lambda *a,**k:None)
-    calls=[];monkeypatch.setattr(outputs,'write_covariance_cutouts',lambda *a,**k:calls.append(a[4]))
+    monkeypatch.setattr(mass_figure,'save_cluster_mass_figure',lambda *a,**k:{})
+    monkeypatch.setattr(mass_figure,'draw_cluster_mass_figure',lambda *a,**k:None)
+    calls=[];monkeypatch.setattr(covariance_cutouts,'save_covariance_cutouts',lambda *a,**k:calls.append(a[4]) or 'saved')
+    renders=[];monkeypatch.setattr(covariance_cutouts,'render_covariance_cutouts',lambda *a,**k:renders.append(a[3]))
     from kappaccino.diagnostics import position_contours
-    monkeypatch.setattr(position_contours,"load_or_compute_contours",lambda *a,**k:None)
-    from kappaccino.plotting import small_lambda_jwst
+    monkeypatch.setattr(position_contours,"load_or_compute_contours",lambda *a,**k:{})
+    monkeypatch.setattr(position_contours,"load_position_contours",lambda *a,**k:{})
+    from kappaccino.plotting import small_lambda_jwst, paper_cutouts
     lambda_calls=[]
-    monkeypatch.setattr(small_lambda_jwst,'write_small_lambda_jwst',lambda *a,**k:lambda_calls.append(a))
+    monkeypatch.setattr(small_lambda_jwst,'save_small_lambda_jwst',lambda *a,**k:lambda_calls.append(a))
+    monkeypatch.setattr(paper_cutouts,'prepare_paper_cutouts',lambda *a,**k:None)
     from kappaccino.plotting import jwst_rgb
     rgb_calls=[]
-    monkeypatch.setattr(jwst_rgb,'render_rgb_critical',lambda *a,**k:rgb_calls.append(a))
+    monkeypatch.setattr(jwst_rgb,'save_rgb_critical',lambda *a,**k:'saved')
+    monkeypatch.setattr(jwst_rgb,'render_saved_rgb_critical',lambda *a,**k:rgb_calls.append(a))
     fold_calls=[]; fold_renders=[]
-    monkeypatch.setattr(outputs,"compute_fold_diagnostics",lambda *a,**k: fold_calls.append(1) or {"pairs":[],"systems":[]})
-    monkeypatch.setattr(outputs,"save_fold_data",lambda *a:None)
-    monkeypatch.setattr(outputs,"render_fold_diagnostics",lambda *a,**k:fold_renders.append(a[4]))
-    outputs.write_outputs(config,state,evaluator,posterior,{},paths,log=lambda _:None)
+    monkeypatch.setattr(fold_pairs,"compute_fold_diagnostics",lambda *a,**k: fold_calls.append(1) or {"pairs":[],"systems":[]})
+    monkeypatch.setattr(fold_pairs,"save_fold_data",lambda *a:None)
+    monkeypatch.setattr(fold_pairs,"load_fold_data",lambda *a:{"pairs":[],"systems":[]})
+    monkeypatch.setattr(fold_pairs,"render_fold_diagnostics",lambda *a,**k:fold_renders.append(a[4]))
+    loads=[];monkeypatch.setattr(cutouts,'load_cluster_imaging',lambda *a:loads.append(a[0].figure_suffix) or load(*a))
+    summary=outputs.write_outputs(config,state,evaluator,posterior,{},paths,log=lambda _:None,only=('rgb',),fail_fast=True)
+    assert list(summary['modules'])==['images','rgb'] and summary['modules']['rgb']['status']=='done'
+    # Each variant's imaging is loaded once in the pass.
+    assert len(loads)==len(set(loads))
     # One RGB critical overview per loaded imaging variant, named by its instrument.
     assert len(rgb_calls)==expected
-    assert sorted(call[6].name for call in rgb_calls)==sorted(
-        ("jwst" if call[0].image_catalog.figure_suffix=="_jwst" else "hst")+"_rgb_critical_z9.pdf" for call in rgb_calls)
-    assert any(call[6].name=="jwst_rgb_critical_z9.pdf" for call in rgb_calls)==(cluster in {"m0416","as1063"})
+    assert sorted(call[5].name for call in rgb_calls)==sorted(
+        ("jwst" if call[0].outputs.rgb.figure_suffix=="_jwst" else "hst")+"_rgb_critical_z9.pdf" for call in rgb_calls)
+    assert any(call[5].name=="jwst_rgb_critical_z9.pdf" for call in rgb_calls)==(cluster in {"m0416","as1063"})
     assert len(lambda_calls)==(1 if cluster in {"m0416","as1063"} else 0)
     assert all(call[4][3] is imaging for call in lambda_calls)
     assert len(fold_calls)==1 and len(fold_renders)==expected
     assert len(calls)==expected and all(call[3] is imaging for call in calls)
+    assert len(renders)==expected and all(call[3] is imaging for call in renders)
 
 
 def test_default_jwst_variants(synthetic_config):
     from dataclasses import replace
-    from kappaccino.imaging.cutouts import imaging_variants
+    from kappaccino.imaging.cutouts import imaging_variants, variant_config
     from kappaccino.imaging.rgb import DEFAULT_JWST_RGB_BANDS
     from kappaccino.config import RGBDisplayConfig
     for name in ['m0416_bergamini2023', 'as1063']:
         config = replace(synthetic_config, paths=replace(synthetic_config.paths, run_name=name))
         primary, jwst = imaging_variants(config)
-        assert primary is config.image_catalog
+        assert primary is config.outputs.rgb
         assert jwst.bands == tuple(DEFAULT_JWST_RGB_BANDS)
-        assert jwst.rgb == RGBDisplayConfig()
+        assert jwst.display == RGBDisplayConfig()
         assert jwst.figure_suffix == '_jwst'
         assert jwst.image_dir in ('data/imaging/m0416/canucs_dr1', 'data/imaging/as1063/dja_v7.5')
-        assert imaging_variants(replace(config, image_catalog=jwst)) == [jwst]
-    assert imaging_variants(synthetic_config) == [synthetic_config.image_catalog]
+        assert imaging_variants(variant_config(config, jwst)) == [jwst]
+    assert imaging_variants(synthetic_config) == [synthetic_config.outputs.rgb]

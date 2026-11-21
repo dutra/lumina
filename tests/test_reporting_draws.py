@@ -29,7 +29,7 @@ def _run(monkeypatch, *, field=True):
 
 def test_draws_are_chosen_once_and_shared(monkeypatch):
     evaluator, posterior, _ = _run(monkeypatch)
-    config = SimpleNamespace(reporting=SimpleNamespace(draws=3), runtime=SimpleNamespace(seed=7))
+    config = SimpleNamespace(outputs=SimpleNamespace(draws=3, image_draws=3, workers=1), runtime=SimpleNamespace(seed=7))
     first = reporting.reporting_draws(config, evaluator, posterior)
     assert len(first) == 3 and np.all(np.diff(first.indices) > 0)
     assert reporting.reporting_draws(config, evaluator, posterior) is first

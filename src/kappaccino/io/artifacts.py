@@ -30,6 +30,7 @@ here take that directory.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -82,8 +83,23 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def write_json_atomic(path: Path, payload: Any) -> None:
+    """:func:`write_json`, atomically: the JSON goes to a temporary file in the same folder, which then replaces
+    ``path`` (``os.replace``), so a crash mid-write leaves the old file whole, never a truncated one.  The temporary
+    file is removed when the write fails."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        write_json(temporary, payload)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def save_config(directory: Path, config: LensClusterSolverConfig) -> None:
-    """Write ``config.json`` of a run configuration (:meth:`LensClusterSolverConfig.to_json_dict`).
+    """Write ``config.json`` of a run configuration (:meth:`LensClusterSolverConfig.to_json_dict`), atomically
+    (:func:`write_json_atomic`).
 
     Parameters
     ----------
@@ -93,7 +109,7 @@ def save_config(directory: Path, config: LensClusterSolverConfig) -> None:
         The run configuration.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    write_json(directory / CONFIG_FILE, config.to_json_dict())
+    write_json_atomic(directory / CONFIG_FILE, config.to_json_dict())
 
 
 def load_config(directory: Path) -> LensClusterSolverConfig:
@@ -313,25 +329,16 @@ def init_signature(config: LensClusterSolverConfig) -> dict[str, Any]:
     Returns
     -------
     dict
-        ``config.to_json_dict()`` without the ``sampling``, ``image_diagnostics``, ``truth``, ``image_catalog``,
-        ``paths`` and ``partition`` sections (the uncertain images enter in the final stage only), and with ``runtime``
-        reduced to ``{"seed": ...}``.
+        ``config.to_json_dict()`` without the ``sampling``, ``outputs`` (``config.REPORT_ONLY_SECTIONS``), ``paths``
+        and ``partition`` sections (the uncertain images enter in the final stage only), and with ``runtime`` reduced to
+        ``{"seed": ...}``.
     """
+    from ..config import REPORT_ONLY_SECTIONS
     payload = config.to_json_dict()
-    for key in ("sampling", "image_diagnostics", "truth", "image_catalog", "paths", "partition"):
+    for key in ("sampling", *REPORT_ONLY_SECTIONS, "paths", "partition"):
         payload.pop(key, None)
     payload["runtime"] = {"seed": config.runtime.seed}
-    if payload.get("members", {}).get("membership") == "fixed":
-        # Inactive membership settings stay out, so init stages saved before they existed still resume.
-        for key in ("membership", "membership_default_probability", "membership_max_enumerated", "membership_calibration_prior"):
-            payload["members"].pop(key, None)
     return payload
-
-
-def without_partition(signature: dict[str, Any]) -> dict[str, Any]:
-    """A saved init signature without its ``partition`` section, which signatures saved before the uncertain images
-    left the init stage still hold."""
-    return {key: value for key, value in signature.items() if key != "partition"}
 
 
 def is_init_complete(directory: Path) -> bool:
