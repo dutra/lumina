@@ -193,7 +193,7 @@ of a full pass and of a later render-only pass come from the same code and the s
 | `fit` | `tables` (`posterior_summary`, `member_classification`), `chain_traces` (`chain_convergence`, record `chain_traces`), `audit` (the record), `scaling_table` (`member_scaling_relation`), `covariance` (`covariance_errors_both_planes`), `fields` (`gp_diagnostics`, `conditional_field_maps`), `members` (`member_diagnostics` and its companions) | `chain_traces`, `potfiles`, `block_corner` (`corner_combined.pdf`), `cosmology_corner`, `covariance` (covariance corner and errors), `fields` (GP and GRF plots), `members` (the member plots), `scaling_plot`, `globals_corner` | | always |
 | `images` | `recovery` (the image-recovery tables, record `image_recovery_fingerprint`, `position_coverage`, `fit` in `run_summary`), `true_lens` (with `truth.deflection_true_fits` and observed images: `true_lens_residuals`, record `true_lens_rms`) | `residual_histogram`, `recovery_figure` (both with observed images) | | always |
 | `mass` | `critical_curves` (arrays `critical_curves`), `aperture_masses` (`member_aperture_masses`, record `aperture_mass_histogram`), `zeta_masses` (`member_zeta_masses`, record `zeta_masses`, arrays `subhalo_mass_concentration`) | `critical_curves`, `zeta_masses` (the figure and the table `zeta_mass_function`) | `images` | always; the masses with a truth convergence map |
-| `truth` | `truth_maps` (FITS, profile tables, record `truth_recovery`, arrays `truth_recovery_residuals`, the published ratios), `magnification_recovery`, `cumulative_source_area`, `magnification_scatter` | `magnification_recovery`, `cumulative_source_area`, `truth_residuals`, `mass_profile`, `kappa_mass_residuals` | `images` | with `truth.kappa_true_fits` |
+| `truth` | `relative_displacement` (with `truth.deflection_true_fits`, the true-lens record and a shared field: table and record `relative_displacement`), `truth_maps` (FITS, profile tables, record `truth_recovery`, arrays `truth_recovery_residuals`, the published ratios; with `truth.kappa_true_fits`), `magnification_recovery`, `cumulative_source_area`, `magnification_scatter` | `relative_displacement`, `magnification_recovery`, `cumulative_source_area`, `truth_residuals`, `mass_profile`, `kappa_mass_residuals` | `images` | with `truth.kappa_true_fits` or `truth.deflection_true_fits` |
 | `rgb` | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and, once, `fold_data`; for the JWST overview also `position_contours` and `small_lambda` (before the mass figure) and `paper_cutouts` (see [The rgb module](#the-rgb-module)) | per imaging variant `imaging`, `covariance_cutouts`, `rgb_critical`; for the overview variants `cluster_mass` and `fold_cutouts`; for the JWST overview also `small_lambda`, `apj_fold_cutouts` and `paper_cutouts` | `images` | with `image_catalog.image_dir` and observed images |
 
 The product of `images` is read from the store, so `mass`, `truth` and `rgb` get the same tables in every pass mode:
@@ -634,6 +634,22 @@ convergence per pixel) and the published ratios saved as `truth_literature_m2d_r
   pixels inside the image hull whose true magnification is within 10% of 3 or 10, over all reporting draws, for the
   parametric model and the parametric + GRF model (after Raney et al. 2020). `scripts/make_scatter_summary.py` draws
   these for several clusters as `scatter_summary.pdf`;
+- `relative_displacement.pdf` (with `truth.deflection_true_fits` and a shared field): the rms difference of a
+  displacement between two points against their separation, along the separation (blue) and across it (orange).
+  Dashed is the true map minus each draw's parametric lens, solid the draw's mass-field realization, both at the
+  field's reference redshift with the modes the likelihood projects out (`gp_project_modes`) removed by least squares;
+  green is the image-plane GP (each draw's true minus lens position on the left, its analytic curve on the right).
+  The left panel uses every pair of catalog images, the right panel random pairs of a regular grid over the whole true
+  map (its step the smallest that keeps it within 60,000 points: 1" on Hera, 1.5" on Ares). The open circles are the
+  image position scatter of the true lens (its residuals on the catalog); they are measured over image pairs in both
+  panels. Lines are the median over the reporting draws, bands (mass field and GP) the 16–84% range. The compute step
+  `relative_displacement` of `truth` writes the table and record `relative_displacement` (every curve per draw and
+  bin, and the grid, bins and draws used) from the `images` tables `posterior_image_residual_draws` and
+  `true_lens_residuals` and the record `true_lens_rms` of the same pass; the render step draws the figure from the
+  table alone. The step writes nothing, and the figure is left out, when the run has no deflection map, the `images`
+  compute wrote no true-lens record, the run has no shared field or no image was observed; the log then says
+  `[outputs] relative displacement skipped: <reason>`. With a deflection map and no `truth.kappa_true_fits`, `truth`
+  runs this step alone;
 - `subhalo_mass_concentration.pdf`: one row of four panels for the members on the true map and the parametric + GRF
   model map (evaluated on the truth-map pixels). Mass is the zeta statistic (Fahlman et al. 1994) in 10 kpc, the mass
   inside 10 kpc above the mean of the 10–20 kpc annulus; concentration is κ̄(<R_e)/κ̄(R_e–2R_e) − 1. Panels: number of
