@@ -159,22 +159,27 @@ class OutputContext:
             self._draws = draws
         return self._draws
 
-    def imaging(self, image_config):
+    def imaging(self, image_config, *, required: bool = False):
         """The imaging (``imaging.cutouts.load_cluster_imaging``) of the variant ``image_config``, loaded once per pass;
-        variants that differ only in ``figure_suffix`` share it.  None when the imaging folder is missing, which is
-        logged once and leaves the other variants and outputs alone."""
+        variants that differ only in ``figure_suffix`` share it.  When the imaging folder is missing: None, logged once,
+        which leaves the other variants and outputs alone (a compute leaves the variant out); with ``required`` (a
+        render of a variant its compute drew) a FileNotFoundError that names the folder and suggests ``--remap``."""
         key = replace(image_config, figure_suffix="")
-        for known, imaging in self._imaging:
-            if known == key:
-                return imaging
-        from ..imaging.cutouts import load_cluster_imaging
-        try:
-            imaging = load_cluster_imaging(image_config, self.config.model, self.config.paths.run_name)
-        except FileNotFoundError as error:
-            # Missing external imaging must not prevent the other outputs.
-            self.log(f"[outputs] cluster mass figure and covariance RGB cutouts skipped: {error}")
-            imaging = None
-        self._imaging.append((key, imaging))
+        known = next((entry for entry in self._imaging if entry[0] == key), None)
+        if known is None:
+            from ..imaging.cutouts import load_cluster_imaging
+            try:
+                known = (key, load_cluster_imaging(image_config, self.config.model, self.config.paths.run_name), None)
+            except FileNotFoundError as error:
+                known = (key, None, error)
+                if not required:            # missing external imaging must not prevent the other outputs
+                    self.log(f"[outputs] cluster mass figure and covariance RGB cutouts skipped: {error}")
+            self._imaging.append(known)
+        _, imaging, error = known
+        if imaging is None and required:
+            from .saved_run import REMAP_HINT
+            raise FileNotFoundError(f"the last compute drew this imaging variant, but its imaging cannot be loaded from "
+                                    f"image_catalog.image_dir = {image_config.image_dir} ({error}); {REMAP_HINT}")
         return imaging
 
     def _records(self) -> dict[str, dict]:
@@ -222,6 +227,8 @@ class OutputContext:
         records[name] = {"status": "done", "seconds": seconds}
         if self._phase == "compute":
             records[name]["wrote"] = result is not None
+        elif name.split(":")[0] in module.input_steps:
+            records[name]["input"] = True         # loaded what the figures read, drew nothing (rendered_anything)
         self.log(f"[outputs] {label}: done in {seconds:.1f}s")
         return result
 
@@ -298,10 +305,11 @@ class OutputModule:
     when both run, for example because it reads a table they write).  ``checkpoint`` marks the imaging module: the run
     summary and the results macros are written before it runs, because it is the slowest and most failure-prone part
     of the stage.  ``description`` is the one line of ``kappaccino outputs --list``; ``compute_steps`` and
-    ``render_steps`` name the steps of each phase (a step's name before any ``:``, for steps named per variant).
-    ``summary_keys`` are the top-level keys of ``run_summary`` the module writes, from its compute: a later full or
-    compute pass that runs the module drops them before merging, so a failed module leaves no old numbers behind, and
-    a render pass keeps them.  ``path_fields`` are the configuration fields (``section.field``) of the files the
+    ``render_steps`` name the steps of each phase (a step's name before any ``:``, for steps named per variant), and
+    ``input_steps`` those render steps that only load what the figures read (the imaging), which do not count as
+    having drawn something (:func:`rendered_anything`).  ``summary_keys`` are the top-level keys of ``run_summary``
+    the module writes, from its compute: a later full or compute pass that runs the module drops them before merging,
+    so a failed module leaves no old numbers behind, and a render pass keeps them.  ``path_fields`` are the configuration fields (``section.field``) of the files the
     compute reads, checked before a rerun (``outputs.command``)."""
 
     name: str = ""
@@ -311,6 +319,7 @@ class OutputModule:
     description: str = ""
     compute_steps: tuple[str, ...] = ()
     render_steps: tuple[str, ...] = ()
+    input_steps: tuple[str, ...] = ()
     summary_keys: tuple[str, ...] = ()
     path_fields: tuple[str, ...] = ()
 
@@ -486,8 +495,8 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
         log(f"[outputs] {name}: {'FAILED (' + error_text + ')' if error_text else 'done'} in {seconds:.1f}s")
     check_draws(ctx, modules)
     if ctx.mode == "render" and not rendered_anything(records):
-        log("[outputs] WARNING: this render pass drew nothing: no selected module has a completed compute to render "
-            "(run a full or --compute pass first)")
+        log("[outputs] WARNING: this render pass drew nothing: no selected module with a completed compute drew a "
+            "figure (run a full or --compute pass first)")
     failed = [name for name, record in records.items() if record["status"] == "failed"]
     if failed:
         log(f"[outputs] failed modules: {', '.join(failed)} (tracebacks above)")
@@ -495,8 +504,9 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
 
 
 def rendered_anything(records: dict[str, dict]) -> bool:
-    """Whether any module of a pass's ``records`` ran a render step without failing."""
-    return any(step.get("status") == "done" for record in records.values()
+    """Whether any module of a pass's ``records`` ran a render step that draws (not one of its ``input_steps``,
+    which only load what the figures read) without failing."""
+    return any(step.get("status") == "done" and not step.get("input") for record in records.values()
                for step in (record.get("render_steps") or {}).values())
 
 

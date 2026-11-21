@@ -58,7 +58,9 @@ def test_small_catalog_pdf_and_style(synthetic_config, tmp_path, monkeypatch):
     band=SimpleNamespace(wcs=wcs,shape=(2000,2000),pixel_scale_arcsec=.05,path=tmp_path/'synthetic.fits')
     monkeypatch.setattr(cc,'rgb_cutout',lambda *args: np.full((120,120,3),.2))
     style=dict(plt.rcParams)
-    path=cc.write_covariance_cutouts(synthetic_config,state,draws,paths,({'F814W':band},('F814W',),None,'toy'))
+    imaging=({'F814W':band},('F814W',),None,'toy')
+    assert cc.save_covariance_cutouts(synthetic_config,state,draws,paths,imaging) is not None
+    path=cc.render_covariance_cutouts(synthetic_config,state,paths,imaging)
     assert path.read_bytes().startswith(b'%PDF')
     assert dict(plt.rcParams)==style
     metadata=store.read_record(paths.tables, 'small_lambda_covariance_cutouts')

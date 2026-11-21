@@ -300,10 +300,3 @@ def render_member_diagnostics(config, paths, *, log=print):
             products.append(path)
     log(f'[diagnostics] wrote {len(products)} PDFs; {len(data.variables)} member comparisons')
     return products
-
-
-def write_member_diagnostic_plots(config, state, evaluator, posterior, paths, *, log=print):
-    """Normal-run and saved-run entry point: :func:`save_member_diagnostics`, then :func:`render_member_diagnostics`."""
-    if save_member_diagnostics(config, state, evaluator, posterior, paths, log=log) is None:
-        return []
-    return render_member_diagnostics(config, paths, log=log)

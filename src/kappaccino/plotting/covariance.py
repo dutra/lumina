@@ -143,12 +143,6 @@ def render_covariance_errors(config, paths, *, plane='both'):
     return output
 
 
-def plot_covariance_errors(config, state, draws, paths, *, plane='both'):
-    """:func:`save_covariance_errors`, then :func:`render_covariance_errors`; returns the figure."""
-    save_covariance_errors(config, state, draws, paths, plane=plane)
-    return render_covariance_errors(config, paths, plane=plane)
-
-
 def plot_covariance_corner(config, state, posterior, paths):
     """Covariance hyperparameters in the common prior-overlaid corner style."""
     from .corner import plot_parameter_corner
@@ -182,9 +176,3 @@ def render_covariance_plots(config, state, posterior, paths, *, log=print):
     for path in outputs:
         log(f'[outputs] covariance plot: {path}')
     return outputs
-
-
-def write_covariance_plots(config, state, draws, posterior, paths, *, log=print):
-    """:func:`save_covariance_errors`, then :func:`render_covariance_plots`."""
-    save_covariance_errors(config, state, draws, paths)
-    return render_covariance_plots(config, state, posterior, paths, log=log)

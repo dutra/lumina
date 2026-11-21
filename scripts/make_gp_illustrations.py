@@ -3,7 +3,7 @@ import argparse
 
 import _covariance_plot_cli  # noqa: F401  (puts src/ on sys.path)
 from kappaccino.outputs.saved_run import load_run
-from kappaccino.plotting.gp import write_gp_plots
+from kappaccino.plotting.gp import render_gp_diagnostics, save_gp_diagnostics
 
 
 def main():
@@ -13,7 +13,8 @@ def main():
     config, state, evaluator, posterior, paths = load_run(args.gp_run)
     if not evaluator.gp_mode:
         parser.error('the run must use likelihood_mode gp_image_plane')
-    write_gp_plots(config, state, evaluator, posterior, paths)
+    if save_gp_diagnostics(config, state, evaluator, posterior, paths) is not None:
+        render_gp_diagnostics(config, state, posterior, paths)
 
 
 if __name__ == '__main__':

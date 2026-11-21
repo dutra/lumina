@@ -58,7 +58,9 @@ def test_render_from_the_reporting_draws(tmp_path, monkeypatch):
     monkeypatch.setattr(module,'cutout_window',lambda *a:NS(x0=0,y0=0))
     monkeypatch.setattr(module,'rgb_cutout',lambda *a:np.zeros((100,100,3)))
     before=plt.rcParams.copy()
-    output=module.write_small_lambda_jwst(config,state,draws,paths,imaging,contours,minimum_major_sigma=0,minimum_axis_ratio=1,log=lambda _:None)
+    assert module.save_small_lambda_jwst(config,state,draws,paths,imaging,contours,minimum_major_sigma=0,minimum_axis_ratio=1,
+                                         log=lambda _:None) is not None
+    output=module.render_small_lambda_jwst(config,state,paths,imaging,log=lambda _:None)
     assert output.exists()
     assert calls and calls[0]==dict(force_exact=True,derivative=False)
     assert plt.rcParams['font.size']==before['font.size']
@@ -68,8 +70,8 @@ def test_render_from_the_reporting_draws(tmp_path, monkeypatch):
     saved = store.read_arrays(tmp_path, 'test_small_lambda_a_image_posteriors_jwst')
     assert saved['posterior_axis_statistics'].shape==(1,3)
     assert saved['posterior_axis_statistics'][0,2]>=1
-    assert module.write_small_lambda_jwst(config,state,draws,paths,imaging,contours,
-                                         minimum_major_sigma=100,log=lambda _:None) is None
+    assert module.save_small_lambda_jwst(config,state,draws,paths,imaging,contours,
+                                        minimum_major_sigma=100,log=lambda _:None) is None
     import pandas as pd
     rejected=store.read_table(tmp_path, 'test_small_lambda_a_image_posteriors_jwst')
     assert not rejected.shown.any()

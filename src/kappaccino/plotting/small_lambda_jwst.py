@@ -53,16 +53,6 @@ def small_lambda_stem(config):
     return f'{config.paths.figure_prefix}_small_lambda_a_image_posteriors_jwst'
 
 
-def write_small_lambda_jwst(config, state, draws, paths, imaging, position_contours,
-                           *, count=24, minimum_fov=3., minimum_major_sigma=.1, minimum_axis_ratio=2., log=print):
-    """:func:`save_small_lambda_jwst` then :func:`render_small_lambda_jwst`; the figure path, or None when no
-    image was selected."""
-    if save_small_lambda_jwst(config, state, draws, paths, imaging, position_contours, count=count, minimum_fov=minimum_fov,
-                              minimum_major_sigma=minimum_major_sigma, minimum_axis_ratio=minimum_axis_ratio, log=log) is None:
-        return None
-    return render_small_lambda_jwst(config, state, paths, imaging, log=log)
-
-
 def save_small_lambda_jwst(config, state, draws, paths, imaging, position_contours,
                            *, count=24, minimum_fov=3., minimum_major_sigma=.1, minimum_axis_ratio=2., log=print):
     """The images with the widest predicted observed positions, from the reporting draws' image recovery (no new image

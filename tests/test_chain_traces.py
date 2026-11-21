@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from numpyro.diagnostics import effective_sample_size, split_gelman_rubin
 
-from kappaccino.plotting.chain_traces import trace_data, write_chain_traces
+from kappaccino.plotting.chain_traces import render_chain_traces, save_chain_traces, trace_data
 
 
 def fixture(chains=2, draws=30):
@@ -48,14 +48,15 @@ def test_constant_parameter_and_missing_chains(tmp_path):
     d = trace_data(p, specs)
     assert np.isnan(d['rhat'][1])
     p.grouped_samples = None
-    assert write_chain_traces(p, specs, tmp_path/'fig', tmp_path/'tables', log=lambda _: None) is None
+    assert save_chain_traces(p, specs, tmp_path/'tables', log=lambda _: None) is None
     assert not (tmp_path/'fig').exists()
 
 
 def test_pdf_provenance_and_style_isolation(tmp_path):
     p, specs = fixture()
     style = plt.rcParams.copy()
-    path = write_chain_traces(p, specs, tmp_path/'figures', tmp_path/'tables', 'hera', log=lambda _: None)
+    assert save_chain_traces(p, specs, tmp_path/'tables', log=lambda _: None) is not None
+    path = render_chain_traces(p, specs, tmp_path/'figures', 'hera', log=lambda _: None)
     assert path.name == 'hera_chain_traces.pdf'
     assert path.read_bytes().startswith(b'%PDF')
     meta = store.read_record(tmp_path/'tables', 'chain_traces')

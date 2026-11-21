@@ -209,9 +209,9 @@ The product of `images` is read from the store, so `mass`, `truth` and `rgb` get
 
 The tables come back as they were written, with their column order and dtypes, and with a fresh `RangeIndex`.
 
-`mass` and `rgb` also run after `fit` without needing its product (it has none), because they read tables its
-compute writes: `member_diagnostics` (aperture and zeta masses) and `covariance_errors_both_planes` (covariance
-cutouts). The steps of `rgb` are named per variant, for example `fold_cutouts:jwst`. `kappaccino outputs --list`
+`mass` and `rgb` also run after `fit` without needing its product (it has none), because their computes read tables
+the compute of `fit` writes: `member_diagnostics` (aperture and zeta masses) and `covariance_errors_both_planes`
+(covariance cutouts, which save what they draw of it in their own table). The steps of `rgb` are named per variant, for example `fold_cutouts:jwst`. `kappaccino outputs --list`
 prints the modules with these relations and their compute and render steps.
 
 ### The `fit` module
@@ -242,8 +242,7 @@ corner read only the posterior (`chain_traces` recomputes its diagnostics from t
 did). The covariance errors are drawn from their table, the GP figures from `gp_diagnostics` and the posterior, the
 field figures from `conditional_field_maps` (only when `gp_diagnostics` says this compute wrote them), the member
 figures from the member entries above and the scaling relation from `member_scaling_relation` and the posterior. A
-render pass of `fit` alone on Hera took 46 s, 21 s of them for the global corner; the full pass that computed it took
-1 min 41 s.
+render pass of `fit` on Hera took 34 s; the full pass that computed it took 63 s (see [Pass modes](#pass-modes)).
 
 ### The rgb module
 
@@ -259,22 +258,29 @@ Compute needs the imaging FITS files, but only their headers and paths: the refe
 scale set the overview grid, the cutout fields and the imaging footprint, and the band paths go into the record of the
 covariance cutouts. Loading a variant also reads a subsample of each band for its sky level, which only the display
 uses. The command checks that `image_catalog.image_dir` exists before a full or compute pass, so on a machine without
-the imaging run `--compute --skip rgb`. A variant whose band files are missing (the extra JWST variant of M0416 and
-AS1063, for example) is logged once and left out in either phase, and the other variants go on; a variant the compute
-left out is left out of the render too.
+the imaging run `--compute --skip rgb`. In a compute, a variant whose band files are missing (the extra JWST variant of
+M0416 and AS1063, for example) is logged once and left out, its `imaging:<variant>` step records that it wrote
+nothing, and the other variants go on; the render leaves that variant out too. In a render, a variant the compute drew
+needs its imaging again: when it cannot be loaded, the render step `imaging:<variant>` fails with a message that names
+the folder (`image_catalog.image_dir`) and suggests `--remap`, the variant's figures are not drawn, the other variants
+go on, `rgb` ends as failed and the command exits with 1. Loading the imaging does not count as drawing a figure
+(`input_steps` of the module).
 
 | step | compute saves | render reads |
 |---|---|---|
-| `covariance_cutouts:<variant>` | table and record `small_lambda_covariance_cutouts<suffix>`, arrays `..._contours` and, new, `..._ellipses` (the selected images' indices, directions and widths of the linear ellipse) | those, the table `covariance_errors_both_planes` |
-| `rgb_critical:<variant>` | arrays `<stem>` and record `<stem>_band` (`hst_rgb_critical_z9` or `jwst_rgb_critical_z9`), new record `<stem>_model` (whether the run has a shared GRF and its label), the position contours | those; writes the figure records and the marker tables |
+| `covariance_cutouts:<variant>` | table and record `small_lambda_covariance_cutouts<suffix>`, arrays `..._contours` and `..._ellipses` (the selected images' indices, directions and widths of the linear ellipse), table `..._intervals` (the posterior 16th and 84th percentiles along the stretch of the selected images, from the table `covariance_errors_both_planes` when the last compute of `fit` wrote it, else empty) | those |
+| `rgb_critical:<variant>` | arrays `<stem>` and record `<stem>_band` (`hst_rgb_critical_z9` or `jwst_rgb_critical_z9`), record `<stem>_model` (whether the run has a shared GRF and its label), for M0416 the record `<stem>_candidate_catalog` (the path and the candidates of `image_catalog.candidate_catalog_path`, default the packaged `m0416_candidates.json`, that the `_candidates` overview draws), the position contours | those; writes the figure records and the marker tables |
 | `position_contours:<variant>` | arrays and record `posterior_overview_positions`, new arrays and record `posterior_overview_contours` (the 68.3% and 95.4% curves, `curve_<c>_segment_<k>`) | (no figure) |
 | `small_lambda:<variant>` | table and arrays `<prefix>_small_lambda_a_image_posteriors_jwst` (the ranking, with the panels shown and their fields), arrays and record `..._critical`, new record `..._selection` (the figure's settings) | those, `posterior_overview_positions`; writes the record `<prefix>_small_lambda_a_image_posteriors_jwst` |
 | `cluster_mass:<variant>` | tables `image_catalog_arc_directions<suffix>`, `..._extra_arc_directions`, `image_catalog_mass_profile<suffix>` and `..._y`, the covariance ellipses table, record `image_catalog_mass_provenance<suffix>`, the FITS, new arrays `image_catalog_family_cluster_mass<suffix>` (the median maps `model`, `model_grf`, `grf`, the resampled `truth` and the covariance curves) | those and, for the JWST overview, the position contours |
 | `fold_data` | arrays and record `fold_pairs_source_caustics` | `fold_cutouts`, `apj_fold_cutouts` read them |
-| `paper_cutouts:<variant>` | arrays and record `<prefix>_rgb_inset_critical_<figure>` (`<figure>` is `small_lambda_posteriors` or `fold_cutouts`) when a selected image panel of that figure is not in the small-lambda figure | those, the small-lambda ranking, the positions and the fold data |
+| `paper_cutouts:<variant>` | arrays and record `<prefix>_rgb_inset_critical_<figure>` (`<figure>` is `small_lambda_posteriors` or `fold_cutouts`) when a selected image panel of that figure is not in the small-lambda figure of this compute; record `<prefix>_paper_cutouts` (`figures`: per figure prepared, its selectors and the entry and rows that hold the critical fields of its image panels) | that record, the entries it names, the small-lambda ranking, the positions and the fold data |
 
-Each paper-cutout figure saves its own inset critical fields, and its render takes them only when the saved entry
-holds exactly the panels of the figure (same centres, fields and redshifts), and fails the step otherwise.
+The image panels of a paper-cutout figure take their critical fields from the small-lambda figure's
+`..._critical` only when the small-lambda step of the same compute wrote it and it holds every image panel; otherwise
+the figure saves its own inset entry. The render draws only the figures the record names, from the entry and rows it
+names, and fails the step when those rows do not hold the figure's panels (same centres, fields and redshifts) or a
+recorded figure cannot be drawn.
 
 ### Pass modes
 
@@ -290,11 +296,15 @@ holds exactly the panels of the figure (same centres, fields and redshifts), and
   what the last compute saved. The run is loaded without its evaluator (`saved_run.load_saved_run`: configuration,
   state and posterior; on Hera 3 s, of which 0.8 s go to about 40 one-operation JAX kernels the state's arrays need,
   and no model function is compiled), the reporting draws are never built, and the files the computes read (truth
-  maps, imaging) are not checked. A render pass of `mass` and `truth` on Hera took about 16 s of wall time, including
-  loading the run, against 3 min 40 s for the full pass that computed them; `fit` alone renders in 46 s. `rgb` renders
-  in 6 s on Hera (26 s in a full pass) and in 49 s on M0416 (2 min in a full pass), most of it building the RGB
-  cutouts from the JWST mosaics. A render pass in which no selected module draws anything (none has a completed
-  compute) says so in the log and the command exits with 1.
+  maps, imaging) are not checked. Measured on 2026-11-20: on Hera (`results/hera/w1000s500t8_allblocks_fast-af374a`,
+  8 draws) the render pass of all five modules took 43 s of wall time, including loading the run (`fit` 34 s, `images`
+  0.2 s, `mass` 0.4 s, `truth` 1.3 s, `rgb` 4 s), against 232 s for the full pass (`fit` 63 s, `mass` 68 s, `truth`
+  56 s, `rgb` 20 s); on M0416 (`results/m0416_canucs2025/w1000s500t8_allblocks_fast-59dfa1`) `--render --only rgb`
+  took 54 s (`rgb` 50 s, most of it building the RGB cutouts from the JWST mosaics) against 240 s for
+  `--only rgb --draws 16` (`rgb` 199 s). A render pass in which no selected module draws anything (none
+  has a completed compute, or a module only loaded its inputs, such as the imaging of `rgb`) says so in the log and
+  the command exits with 1; so does any render pass in which a module failed, for example `rgb` when the imaging of a
+  variant its compute drew cannot be loaded.
 
 In a render pass (and in the product and render phases of any pass) `ctx.draws` and `ctx.evaluator` raise
 `ComputeOnly`, which names the module and step that asked, so a figure that still needs the lens fails its step
@@ -391,9 +401,14 @@ deflection maps included, and logs each field it changes. Only path-valued field
 (the fields whose type is a path), never a name such as `paths.run_name` or `paths.figure_prefix`. `OLD` must be an
 absolute path other than `/`; a relative saved path is compared as the absolute path it names from the folder the
 command runs in, so `--remap $PWD/data/imaging/m0416/buffalo=/elsewhere` also moves a saved
-`data/imaging/m0416/buffalo`. Before a full or compute pass, the command checks that the
-files the selected modules read exist; a missing one is named by its field, with the hint to use `--remap`. A render
-pass needs only the catalogs (the state is built from them).
+`data/imaging/m0416/buffalo`. The extra JWST variant of M0416 and AS1063 (`imaging.cutouts.imaging_variants`) is not
+a configuration field: its folder is built as `data/imaging/<cluster>/canucs_dr1` (M0416) or
+`data/imaging/<cluster>/dja_v7.5` (AS1063) relative to the folder the command runs in, and `--remap` does not move
+it, so run the command from the repository root for that variant. Before a full or compute pass, the command checks
+that the files the selected modules read exist; a missing one is named by its field, with the hint to use `--remap`.
+A render pass needs the catalogs (the state is built from them) and, for `rgb`, the imaging pixels of every variant
+its last compute drew; the imaging is not checked before the pass, and a variant whose imaging is missing fails its
+render step (see [The rgb module](#the-rgb-module)).
 
 `--render` and `--compute` choose the pass mode (see [Pass modes](#pass-modes)); they exclude each other, and
 `--draws` cannot go with `--render`. `--only` and `--skip` replace the run's saved `outputs.only` and `outputs.skip`
@@ -410,7 +425,10 @@ whether each applies to it, judged from the configuration alone. At the end the 
 saved `run_summary`. The exit code is 1 when a module failed, `--fail-fast`
 stopped the pass (one line names the error; the step logged its traceback), the pass failed outside the modules
 (writing the run summary, for example; the traceback is printed) or a render pass drew nothing, and 2 for a usage
-error, a missing file or a refused `--set` or `--remap`.
+error, a missing file or a refused `--set` or `--remap`. A `--set` value is checked before the pass
+(`config.validate_report_settings`): `outputs.only` and `outputs.skip` must be lists of module names,
+`outputs.fail_fast` true or false, `truth.deflection_true_fits` a path or null and `runtime.output_workers` a positive
+integer; anything else is a usage error that names the field.
 
 ### Comparing the outputs of two runs
 
@@ -527,7 +545,8 @@ on `self` between compute and render (or between passes); what render needs goes
    its figures, run `--render` on the copy and compare again: the figures must come back pixel-identical. Do the
    render pass with `Evaluator.__init__`, `reporting.draws.reporting_draws`, `ReportingDraws.__init__` and
    `saved_run.load_run` patched to raise, to prove it evaluates nothing. `tests/test_pipeline.py` does the same on
-   the toy run (where `truth` and `rgb` are inactive).
+   the toy run (where `truth` and `rgb` are inactive), and `tests/test_outputs_rgb.py` and
+   `tests/test_outputs_truth.py` do it for `rgb` (synthetic HST imaging) and `truth` (synthetic truth maps).
 
 Pitfalls:
 
@@ -540,8 +559,13 @@ Pitfalls:
   figure out, and a stale entry from an older compute must never be drawn.
 - A table that a render step writes (`zeta_mass_function`, the counts behind the subhalo figure) is presentational and
   is written again by every render pass; a table a later module or the macros read belongs to compute.
-- Entries are never deleted from the store, so a render step must not decide from `store.has_*` whether to draw;
-  use `ctx.computed`, `render_step` and the module's own records.
+- Entries are never deleted from the store, so a render step must not decide from `store.has_*` (or from a
+  `store.MissingEntry` caught) whether to draw; use `ctx.computed`, `render_step` and the module's own records.
+- A render step draws only what the last compute of its own module wrote. A table of another module (`fit`'s
+  `covariance_errors_both_planes` in the covariance cutouts) is read in compute and what the figure draws of it is
+  saved under the module's own name; an entry that one step reuses from another (the small-lambda critical fields in
+  the paper cutouts) is named in a record that the same compute writes, and render reads that record.
+- Render reads no external file: inputs such as the M0416 candidate catalog are saved in compute.
 
 ## First checks
 
@@ -632,8 +656,9 @@ When imaging is configured and present under `data/imaging/`:
 - for M0416 and AS1063, JWST versions with an `_jwst` suffix, including contours of the predicted observed image positions (68.3% solid,
   95.4% dashed).
 
-Missing imaging is reported and skipped. `kappaccino outputs RUN --render --only rgb` draws all of these again from
-the store and the imaging (see [The rgb module](#the-rgb-module)).
+A compute reports missing imaging and leaves that variant out. `kappaccino outputs RUN --render --only rgb` draws all
+of these again from the store and the imaging, and fails for a variant whose imaging the compute had but the render
+cannot load (see [The rgb module](#the-rgb-module)).
 
 The det A maps of the fold pairs, fold systems and small cutouts are not evaluated over the whole lens on their own
 grids. Each draw's parametric lens on those grids is the overview's (512 x 512 over the cluster, evaluated anyway)
@@ -659,8 +684,9 @@ from `inputs/command.json`. It refuses when the imaging settings, the image cata
 configuration differ from `final/artifacts/config.json`, and, before writing anything, when the run has no completed
 image recovery or a draw of `<stem>` is missing from `posterior_image_residual_draws`. The model description in the
 figure record comes from `final/artifacts/config.json`, which also records how many images got a contour
-(`recovered_position_contours`). It rewrites the figures, their records, the marker tables and
-`posterior_overview_positions` in `final/results.h5`, never the arrays `<stem>`.
+(`recovered_position_contours`). For M0416 it draws the candidates saved in the record `<stem>_candidate_catalog`.
+It rewrites the figures, their records, the marker tables, `posterior_overview_positions` and
+`posterior_overview_contours` (arrays and records) in `final/results.h5`, never the arrays `<stem>`.
 
 ## Reading results in Python
 

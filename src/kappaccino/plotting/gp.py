@@ -286,10 +286,3 @@ def render_gp_diagnostics(config, state, posterior, paths, *, log=print):
     for output in outputs:
         log(f"[outputs] {output}")
     return outputs
-
-
-def write_gp_plots(config, state, evaluator, posterior, paths, *, log=print):
-    """:func:`save_gp_diagnostics`, then :func:`render_gp_diagnostics`, for GP runs only."""
-    if save_gp_diagnostics(config, state, evaluator, posterior, paths, log=log) is None:
-        return []
-    return render_gp_diagnostics(config, state, posterior, paths, log=log)

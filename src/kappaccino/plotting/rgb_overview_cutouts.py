@@ -11,39 +11,32 @@ from ..io import store
 
 
 
-def overview_cutout_data(tables, prefix, *, image_labels=(), system_ids=(), draws=None, neighbors=False, group=None,
-                         log=print):
+def overview_cutout_data(tables, prefix, *, image_labels=(), system_ids=(), draws=None, small_lambda_critical=False,
+                         critical=None, neighbors=False, group=None, log=print):
     """Reuse saved image draws and fold geometry, never run an image search.  ``neighbors`` adds to each image panel
     the other catalog images inside its field (``item['neighbors']``: label, family, observed position, density grid
-    or None), which :func:`render_overview_cutouts` then draws and labels.  An image panel whose median det A the
-    small-lambda figure did not save gets it from the reporting ``draws`` (saved as ``<prefix>_rgb_inset_critical``,
-    with ``_<group>`` appended for a named group of panels so that each group keeps its own), or without draws from
-    that saved entry, which must hold exactly these panels."""
+    or None), which :func:`render_overview_cutouts` then draws and labels.
+
+    The median det A of the image panels comes from one saved entry, named with its rows in ``critical_source`` of the
+    result (``entry`` and ``index``; ``entry`` None without image panels).  With the reporting ``draws`` (a compute):
+    the small-lambda figure's ``<ranking>_critical`` when ``small_lambda_critical`` (this compute wrote it) and it
+    holds every image panel, else computed from the draws for all of them and saved as ``<prefix>_rgb_inset_critical``
+    (with ``_<group>`` appended for a named group of panels, so that each group keeps its own).  Without draws (a
+    render): the entry and rows ``critical`` (a ``critical_source`` the compute recorded), which must hold exactly these
+    panels; a ValueError otherwise."""
     image_labels,system_ids=tuple(image_labels),tuple(system_ids)
     if not image_labels and not system_ids:
         return None
     tables=Path(tables)
     ranking_name=f'{prefix}_small_lambda_a_image_posteriors_jwst'
-    available=(store.has_arrays(tables,'posterior_overview_positions') and store.has_table(tables,ranking_name)
-               and store.has_arrays(tables,'fold_pairs_source_caustics') and store.has_record(tables,'fold_pairs_source_caustics'))
-    if not available:
-        log('[outputs] RGB inset panels unavailable: generate posterior-position and fold diagnostics first')
-        return None
     ranking=store.read_table(tables,ranking_name).set_index('image_label')
-    critical_name=f'{ranking_name}_critical'
-    critical=None
-    if store.has_arrays(tables,critical_name):
-        saved = store.read_arrays(tables,critical_name)
-        if 'lower' in saved and 'upper' in saved:
-            critical={key:saved[key].copy() for key in ('centers','fovs','redshifts','median_determinant','lower','upper')}
     data = store.read_arrays(tables,'posterior_overview_positions')
     labels=data['image_labels'].astype(str).tolist()
     positions=data['recovered'].copy()
-    draw_indices=data['draw_indices'].copy()
     folds=load_fold_data(tables)
     systems=[]
     for identity in system_ids:
-        matches=[s for s in folds['systems']+folds.get('partial_systems',[]) if s['system_id']==identity]
+        matches=[s for s in folds['systems']+folds['partial_systems'] if s['system_id']==identity]
         if len(matches)!=1:
             log(f'[outputs] RGB inset panels unavailable: expected one fold system {identity}, found {len(matches)}')
             return None
@@ -74,32 +67,45 @@ def overview_cutout_data(tables, prefix, *, image_labels=(), system_ids=(), draw
             item['neighbors']=[dict(label=other,family=str(r.family_id),center=np.array([r.x_arcsec,r.y_arcsec]),
                                     grid=_credible_density_grid(positions[:,labels.index(other)]))
                                for other,r in inside.iterrows()]
-        if critical is not None:
-            matches=np.flatnonzero(np.all(np.isclose(critical['centers'],center,rtol=0,atol=1e-10),axis=1)
-                                   &np.isclose(critical['redshifts'],row.z_source,rtol=0,atol=1e-10)
-                                   &np.isclose(critical['fovs'],fov,rtol=0,atol=1e-10))
-            if len(matches)==1:
-                item['critical']={key:critical[key][matches[0]] for key in ('median_determinant','lower','upper')}
         images.append(item)
-    if any('critical' not in item for item in images):
-        inset=f'{prefix}_rgb_inset_critical'+(f'_{group}' if group else '')
-        if draws is None:
-            # Without the draws: the fields an earlier call with them saved for exactly these panels.
-            saved=store.read_arrays(tables,inset) if store.has_arrays(tables,inset) else None
-            if saved is None or not all(np.array_equal(saved[key],[item[name] for item in images])
-                                        for key,name in (('centers','center'),('fovs','fov'),('redshifts','z'))):
-                raise ValueError(f'Selected RGB cutouts require source-redshift critical fields; {inset} holds none '
-                                 'for these panels (compute them with the reporting draws first)')
-            median,lower,upper=saved['median_determinant'],saved['lower'],saved['upper']
+    small_lambda=f'{ranking_name}_critical'
+    inset=f'{prefix}_rgb_inset_critical'+(f'_{group}' if group else '')
+    if not images:
+        source=dict(entry=None,index=[])
+    elif draws is None:
+        source=critical
+        if source is None or source['entry'] not in (small_lambda,inset) or len(source['index'])!=len(images):
+            raise ValueError(f'The compute recorded no critical fields for the RGB cutout panels '
+                             f'{[item["label"] for item in images]} ({source}); compute them with the reporting draws first')
+        saved=store.read_arrays(tables,source['entry'])
+        index=np.asarray(source['index'],dtype=int)
+        matched=all(np.allclose(saved[key][index],[item[name] for item in images],rtol=0,atol=1e-10)
+                    for key,name in (('centers','center'),('fovs','fov'),('redshifts','z')))
+        if not matched:
+            raise ValueError(f'{source["entry"]} does not hold the panels {[item["label"] for item in images]} at the rows '
+                             f'the compute recorded ({source["index"]}); compute them with the reporting draws again')
+        median,lower,upper=(saved[key][index] for key in ('median_determinant','lower','upper'))
+    else:
+        index=None
+        if small_lambda_critical:
+            saved=store.read_arrays(tables,small_lambda)
+            index=[np.flatnonzero(np.all(np.isclose(saved['centers'],item['center'],rtol=0,atol=1e-10),axis=1)
+                                  &np.isclose(saved['redshifts'],item['z'],rtol=0,atol=1e-10)
+                                  &np.isclose(saved['fovs'],item['fov'],rtol=0,atol=1e-10)) for item in images]
+            index=[int(match[0]) for match in index] if all(len(match)==1 for match in index) else None
+        if index is not None:
+            source=dict(entry=small_lambda,index=index)
+            median,lower,upper=(saved[key][index] for key in ('median_determinant','lower','upper'))
         else:
             # Explicit launcher selections are independent of the standalone uncertainty cuts.
             from .critical_fields import median_cutout_determinants
             _,median,lower,upper=median_cutout_determinants(draws,
                 [item['center'] for item in images],[item['fov'] for item in images],
                 [item['z'] for item in images],tables/f'{inset}.h5',log=log)
-        for i,item in enumerate(images):
-            item['critical']=dict(median_determinant=median[i],lower=lower[i],upper=upper[i])
-    return dict(images=images,systems=systems)
+            source=dict(entry=inset,index=list(range(len(images))))
+    for i,item in enumerate(images):
+        item['critical']=dict(median_determinant=median[i],lower=lower[i],upper=upper[i])
+    return dict(images=images,systems=systems,critical_source=source)
 
 
 def render_overview_cutouts(fig, data, imaging, frame, *, image_rects=None, system_rects=None):
@@ -175,7 +181,7 @@ def render_overview_cutouts(fig, data, imaging, frame, *, image_rects=None, syst
                         vertices=np.vstack((points[run]+band[run,:1]*normals[run],(points[run]+band[run,1:]*normals[run])[::-1]))
                         ax.add_patch(Polygon(np.column_stack(pixels(*vertices.T)),facecolor=CRITICAL_COLOR,alpha=.18,edgecolor='none'))
         else:
-            curves=s.get('critical_grf_local_draws',s.get('critical_grf_draws',s['critical']))
+            curves=s.get('critical_grf_local_draws',s['critical'])
             for low,median,high in critical_curve_quantiles(curves,s['seeds'],s['origin'],s['normal']):
                 vertices=np.vstack((low,high[::-1]))
                 ax.add_patch(Polygon(np.column_stack(pixels(*vertices.T)),facecolor=CRITICAL_COLOR,alpha=.18,edgecolor='none'))

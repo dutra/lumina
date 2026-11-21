@@ -161,10 +161,3 @@ def render_chain_traces(posterior, specs, figures, prefix=None, *, log=print):
             plt.close(fig)
     log(f"[outputs] chain traces: {path}")
     return path
-
-
-def write_chain_traces(posterior, specs, figures, tables, prefix=None, *, log=print):
-    """:func:`save_chain_traces`, then :func:`render_chain_traces`; None when there are no recorded chains."""
-    if save_chain_traces(posterior, specs, tables, log=log) is None:
-        return None
-    return render_chain_traces(posterior, specs, figures, prefix, log=log)

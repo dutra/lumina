@@ -135,8 +135,16 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
         catalog['family_id'] = ['K66','K67']
     state=NS(reference=(3,64.,-24.))
     output=tmp_path/f'{cluster}_hst_rgb_critical_z9.pdf'
-    assert rgb.render_rgb_critical(config,state,Draws(),catalog,extra,
-        ({'F814W':object()},('F814W',),None,cluster),output,tmp_path,log=lambda _:None) == output
+    imaging=({'F814W':object()},('F814W',),None,cluster)
+    rgb.save_rgb_critical(config,state,Draws(),catalog,extra,imaging,tmp_path,log=lambda _:None)
+    if cluster == 'm0416':
+        candidate_path.unlink()             # the render draws the candidates the compute saved, never the file
+    assert rgb.render_saved_rgb_critical(config,state,catalog,extra,imaging,output,tmp_path,log=lambda _:None)[0] == output
+    if cluster == 'm0416':
+        shown = store.read_figure_record(output.with_name(output.stem + '_candidates.pdf'))
+        assert shown['candidate_overlays'] == ['K66.c1', 'A.1'] and shown['candidate_catalog'] == str(candidate_path)
+    else:
+        assert not store.has_record(tmp_path, 'hst_rgb_critical_z9_candidate_catalog')
     import json
     info=store.read_figure_record(output)
     assert not output.with_suffix('.json').exists()
@@ -399,7 +407,8 @@ def test_pipeline_and_redraw_draw_the_same_picture(tmp_path, monkeypatch, field)
     catalog=store.read_table(tables,'image_fit_quality')
     extra=rgb.read_saved_extra_images(tables)
     output=figures/'hera_hst_rgb_critical_z9.pdf'
-    rgb.render_rgb_critical(config,NS(reference=(3,64.,-24.)),RunDraws(),catalog,extra,FAKE_IMAGING,output,tables,log=lambda _:None)
+    rgb.save_rgb_critical(config,NS(reference=(3,64.,-24.)),RunDraws(),catalog,extra,FAKE_IMAGING,tables,log=lambda _:None)
+    rgb.render_saved_rgb_critical(config,NS(reference=(3,64.,-24.)),catalog,extra,FAKE_IMAGING,output,tables,log=lambda _:None)
     pipeline_record=store.read_figure_record(output)
     pipeline_markers=store.read_table(tables,'hst_rgb_markers')
     rgb.redraw_rgb_critical(run,log=lambda _:None)

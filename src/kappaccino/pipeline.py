@@ -728,7 +728,7 @@ def _run_init(config: LensClusterSolverConfig) -> InitResult:
         signature = artifacts.init_signature(config)
         if config.runtime.resume and artifacts.is_init_complete(paths.artifacts):
             saved = json.loads((paths.artifacts / artifacts.INIT_SIGNATURE_FILE).read_text())
-            if artifacts.without_partition(saved) != artifacts._jsonable(signature):
+            if saved != artifacts._jsonable(signature):
                 raise ValueError("The saved init stage was made with a different model, likelihood, member or search configuration; use a new run name.")
             log("[init] complete init stage found; loading the saved start")
             saved_classes = json.loads((paths.artifacts / artifacts.CLASSIFICATION_FILE).read_text())

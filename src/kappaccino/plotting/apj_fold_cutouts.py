@@ -41,7 +41,7 @@ def render_apj_fold_cutouts(config, data, imaging, output, *, max_separation=3.,
         ax.imshow(rgb,origin='lower',interpolation='nearest')
         if 'critical_grf_median' in s:
             shared=True
-            band_sets=[(s.get('critical_grf_local_draws',s['critical_grf_draws']),critical_color)]
+            band_sets=[(s['critical_grf_local_draws'],critical_color)]
         else:
             band_sets=[(s['critical'],curve_color)]
         for curves,band_color in band_sets:

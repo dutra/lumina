@@ -131,7 +131,8 @@ def apply_overrides(config, overrides):
     Raises
     ------
     ValueError
-        For a malformed assignment, an unknown section or field, or a setting that is not a report setting.
+        For a malformed assignment, an unknown section or field, a setting that is not a report setting, or a value
+        the configuration refuses (``config.validate_report_settings``).
     """
     from .. import config as _config
     from ..run_files import _dotted, _merge, parse_value
@@ -158,9 +159,14 @@ def apply_overrides(config, overrides):
                              for section, names in allowed.items())
         raise ValueError(f"--set may change only report settings ({accepted}); refused: {', '.join(sorted(refused))}")
     try:
-        return _config.LensClusterSolverConfig.from_json_dict(_merge(config.to_json_dict(), _config._jsonable(parse_value(overlay))))
-    except TypeError as error:
+        changed = _config.LensClusterSolverConfig.from_json_dict(_merge(config.to_json_dict(), _config._jsonable(parse_value(overlay))))
+    except (TypeError, AttributeError) as error:
         raise ValueError(f"--set: {error}") from None
+    try:
+        _config.validate_report_settings(changed)
+    except ValueError as error:
+        raise ValueError(f"--set: {error}") from None
+    return changed
 
 
 def missing_paths(config, fields) -> list[str]:

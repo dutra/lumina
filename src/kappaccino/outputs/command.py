@@ -17,12 +17,14 @@ applies.  The products go to the run's ``final/`` folder, as after the fit.
 
 Pass mode: by default each module computes its results into the store and draws its figures from the store.
 ``--render`` only draws the figures again from what an earlier pass saved, without building the evaluator or the
-reporting draws (a module whose compute never completed fails, with the hint to compute it first, and a render pass
-that draws nothing at all exits with 1); ``--compute`` writes the results and no figures (on a machine without the
+reporting draws (a module whose compute never completed fails, with the hint to compute it first; ``rgb`` fails for an
+imaging variant its compute drew whose imaging cannot be loaded here; a render pass that draws nothing at all exits
+with 1); ``--compute`` writes the results and no figures (on a machine without the
 imaging: ``--compute --skip rgb``).
 
 ``--set`` changes only report settings: the ``outputs`` section, ``truth.deflection_true_fits`` and
-``runtime.output_workers`` (``saved_run.report_settings``).
+``runtime.output_workers`` (``saved_run.report_settings``), each checked (``config.validate_report_settings``) before
+the pass.
 """
 from __future__ import annotations
 
@@ -246,7 +248,8 @@ def main(argv=None) -> int:
     print(json.dumps(saved.get("fit", {}), indent=2, default=float), flush=True)
     from .base import rendered_anything
     if mode == "render" and not rendered_anything(summary.get("modules", {})):
-        print("kappaccino outputs: the render pass drew nothing (no selected module has a completed compute)", flush=True)
+        print("kappaccino outputs: the render pass drew nothing (no selected module with a completed compute drew a figure)",
+              flush=True)
         return 1
     failed = [name for name, record in summary.get("modules", {}).items() if record["status"] == "failed"]
     return 1 if failed else 0

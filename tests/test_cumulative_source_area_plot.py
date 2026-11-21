@@ -7,7 +7,7 @@ import pandas as pd
 from astropy.cosmology import FlatLambdaCDM
 
 from kappaccino.plotting.cumulative_source_area import (
-    area_table, cumulative_area, shell_volume_per_arcsec2, write_cumulative_source_area,
+    area_table, cumulative_area, render_cumulative_source_area, save_cumulative_source_area, shell_volume_per_arcsec2,
 )
 
 
@@ -46,8 +46,8 @@ def test_table_has_no_grf_columns_without_a_shared_field():
 
 def test_writer_skips_without_shear_truth(tmp_path):
     truth = dict(x=np.zeros((2, 2)), y=np.zeros((2, 2)), z_source=9., truth={'kappa': np.zeros((2, 2))})
-    assert write_cumulative_source_area(truth, None, None, tmp_path, tmp_path, 'toy') is None
-    assert write_cumulative_source_area(None, None, None, tmp_path, tmp_path, 'toy') is None
+    assert save_cumulative_source_area(truth, None, None, tmp_path) is None
+    assert save_cumulative_source_area(None, None, None, tmp_path) is None
     assert not list(tmp_path.iterdir())
 
 
@@ -61,7 +61,8 @@ def test_writer_draws_truth_parametric_and_grf(tmp_path):
     draws = Draws(dict(detA=total, detA_parametric=parametric))
     truth = dict(x=x, y=y, z_source=9., truth={'detA': det(20.)})
     before = plt.rcParams['font.size']
-    path = write_cumulative_source_area(truth, draws, FlatLambdaCDM(H0=70, Om0=.3), tmp_path, tmp_path, 'toy', log=lambda _: None)
+    assert save_cumulative_source_area(truth, draws, FlatLambdaCDM(H0=70, Om0=.3), tmp_path, log=lambda _: None) is not None
+    path = render_cumulative_source_area(tmp_path, tmp_path / 'toy_cumulative_source_area.pdf', log=lambda _: None)
     assert path.name == 'toy_cumulative_source_area.pdf' and path.read_bytes().startswith(b'%PDF')
     assert plt.rcParams['font.size'] == before and draws.calls == [('truth', 9.)]
     table = store.read_table(tmp_path, 'cumulative_source_area')

@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kappaccino.plotting.covariance import write_covariance_plots
+from kappaccino.plotting.covariance import render_covariance_plots, save_covariance_errors
 from kappaccino.likelihood.evaluator import Evaluator
 from kappaccino.core.state import build_state
 
@@ -29,7 +29,8 @@ def test_covariance_outputs_with_one_draw(synthetic_config, tmp_path, selection)
     paths = SimpleNamespace(figures=tmp_path / 'figures', tables=tmp_path / 'tables')
     style = dict(plt.rcParams)
     from kappaccino.reporting.draws import reporting_draws
-    outputs = write_covariance_plots(config, state, reporting_draws(config, evaluator, posterior), posterior, paths, log=lambda _: None)
+    save_covariance_errors(config, state, reporting_draws(config, evaluator, posterior), paths)
+    outputs = render_covariance_plots(config, state, posterior, paths, log=lambda _: None)
     assert len(outputs) == 2 and all(p.is_file() for p in outputs)
     assert dict(plt.rcParams) == style
     metadata = store.read_record(paths.tables, 'covariance_errors_both_planes')

@@ -9,7 +9,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 
 from kappaccino.plotting.magnification_recovery import (
-    binned_recovery, image_truth_magnification, render_recovery, write_magnification_recovery,
+    binned_recovery, image_truth_magnification, render_magnification_recovery, render_recovery, save_magnification_recovery,
 )
 
 
@@ -53,7 +53,7 @@ def test_bins_and_style_isolation(tmp_path):
 
 def test_missing_truth_skips(tmp_path):
     config=SimpleNamespace(kappa_true_fits=None,gammax_true_fits=None,gammay_true_fits=None)
-    assert write_magnification_recovery(None,pd.DataFrame(),None,None,None,config,tmp_path,tmp_path,'toy') is None
+    assert save_magnification_recovery(None,pd.DataFrame(),None,None,None,config,tmp_path) is None
     assert not list(tmp_path.iterdir())
 
 
@@ -70,7 +70,8 @@ def test_writer_preserves_family_redshifts_and_records_limits(tmp_path, monkeypa
         return np.array([2.,-3.,4.,200.]),[9.,9.,9.]
     monkeypatch.setattr(module,'image_truth_magnification',image_truth)
     config=SimpleNamespace(kappa_true_fits='k',gammax_true_fits='g1',gammay_true_fits='g2')
-    path=write_magnification_recovery(truth,images,None,None,None,config,tmp_path,tmp_path,'toy')
+    assert save_magnification_recovery(truth,images,None,None,None,config,tmp_path) is not None
+    path=render_magnification_recovery(tmp_path,tmp_path/'toy_magnification_recovery.pdf')
     assert path.name=='toy_magnification_recovery.pdf'
     assert seen==[1.,1.,2.,2.]
     points=store.read_table(tmp_path, 'magnification_recovery_images')

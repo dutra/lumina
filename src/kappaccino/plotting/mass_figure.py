@@ -327,19 +327,6 @@ def cluster_mass_arrays_name(artifact_suffix: str = "") -> str:
     return f"image_catalog_family_cluster_mass{artifact_suffix}"
 
 
-def render_cluster_mass_figure(draws, catalog: pd.DataFrame, extra: pd.DataFrame, imaging, *,
-                               z_source: float, kappa_true_fits: str | Path | None, figure_path: Path, tables_dir: Path, fits_dir: Path,
-                               artifact_suffix: str = "", position_contours=None, log=print) -> dict[str, Any]:
-    """Write the overview-plus-mass-panels figure, the strip profiles and the convergence FITS
-    (:func:`save_cluster_mass_figure` then :func:`draw_cluster_mass_figure`). Returns provenance."""
-    provenance = save_cluster_mass_figure(draws, catalog, extra, imaging, z_source=z_source, kappa_true_fits=kappa_true_fits,
-                                          tables_dir=tables_dir, fits_dir=fits_dir, artifact_suffix=artifact_suffix,
-                                          position_contours=position_contours, log=log)
-    draw_cluster_mass_figure(catalog, extra, imaging, reference=draws.evaluator.state.reference, figure_path=figure_path,
-                             tables_dir=tables_dir, artifact_suffix=artifact_suffix, position_contours=position_contours)
-    return provenance
-
-
 def save_cluster_mass_figure(draws, catalog: pd.DataFrame, extra: pd.DataFrame, imaging, *,
                              z_source: float, kappa_true_fits: str | Path | None, tables_dir: Path, fits_dir: Path,
                              artifact_suffix: str = "", position_contours=None, log=print) -> dict[str, Any]:

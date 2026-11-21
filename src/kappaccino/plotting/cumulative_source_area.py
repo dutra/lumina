@@ -169,12 +169,3 @@ def render_cumulative_source_area(stage, path, *, log=print):
                            metadata['comoving_mpc3_per_arcsec2'], path)
     log(f'[outputs] cumulative source area: {path}')
     return path
-
-
-def write_cumulative_source_area(truth, draws, cosmology, figures, tables, prefix, *, log=print):
-    """:func:`save_cumulative_source_area`, then :func:`render_cumulative_source_area` to
-    ``<prefix>_cumulative_source_area.pdf`` in ``figures``; returns the figure, or None when the truth has no
-    magnification."""
-    if save_cumulative_source_area(truth, draws, cosmology, tables, log=log) is None:
-        return None
-    return render_cumulative_source_area(tables, figures / f'{prefix + "_" if prefix else ""}cumulative_source_area.pdf', log=log)

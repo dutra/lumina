@@ -405,11 +405,3 @@ def render_zeta_masses(stage, path, *, log=print):
         table, {'full': {'zeta': arrays['model_zeta_msun']}}, {'full': {'contrast': arrays['model_contrast']}}, path))
     log(f'[zeta] wrote {path}')
     return path
-
-
-def write_zeta_masses(config, state, draws, paths, image_df, *, recompute=False, log=print):
-    """:func:`save_zeta_masses`, then :func:`render_zeta_masses` to ``<prefix>_subhalo_mass_concentration.pdf`` in
-    ``paths.figures``; returns the figure, or None when the run has no true map or no members."""
-    if save_zeta_masses(config, state, draws, paths, image_df, recompute=recompute, log=log) is None:
-        return None
-    return render_zeta_masses(paths.tables, paths.figures / f'{config.paths.figure_prefix or ""}_subhalo_mass_concentration.pdf', log=log)
