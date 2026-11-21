@@ -73,7 +73,11 @@ def _legend(monkeypatch, call):
     monkeypatch.setattr(plots, "save_page", lambda fig, path: figures.append(fig) or path)
     call()
     legend = figures[0].axes[0].get_legend()
-    return [t.get_text() for t in legend.get_texts()], figures[0].axes[0].get_xlim()
+    texts, limits = [t.get_text() for t in legend.get_texts()], figures[0].axes[0].get_xlim()
+    import matplotlib.pyplot as plt
+    for fig in figures:               # save_page closes them; the stand-in above does not
+        plt.close(fig)
+    return texts, limits
 
 
 def _draws():
