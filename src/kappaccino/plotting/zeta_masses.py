@@ -175,7 +175,7 @@ def save_cache(stage, results, key):
 
 
 def load_cache(stage, key):
-    """The results saved by ``save_cache`` (or, for an old run, its ``tables/zeta_masses_cache.h5``), or None when
+    """The results saved by ``save_cache``, or None when
     there is no cache or it was made with other draws."""
     try:
         arrays = store.read_cache_arrays(stage, CACHE_NAME)
@@ -338,7 +338,7 @@ def save_zeta_masses(config, state, draws, paths, image_df, *, recompute=False, 
     if not config.truth.kappa_true_fits or not len(state.members.member_ids):
         log('[zeta] skipped: no true convergence map or no cluster members')
         return None
-    members = store.read_table(paths.tables, 'member_diagnostics', legacy_csv=dict(dtype={'member_id': str, 'catalog_id': str}))
+    members = store.read_table(paths.tables, 'member_diagnostics')
     if members.member_id.tolist() != list(state.members.member_ids):
         raise ValueError('Zeta-mass catalog identities differ from saved model')
     cache = paths.tables

@@ -10,15 +10,10 @@ from kappaccino.diagnostics.exact_images import ExactImageSolver
 from kappaccino.io.hdf5 import load_arrays, save_arrays
 
 
-@pytest.mark.parametrize('layout',['store','legacy'])
-def test_contour_positions_are_predicted_observed_for_catalog_images_and_true_for_extras(tmp_path, layout):
+def test_contour_positions_are_predicted_observed_for_catalog_images_and_true_for_extras(tmp_path):
     tables=tmp_path/'tables'
     def put(name, frame):
-        if layout=='store':
-            store.write_table(tables, name, frame)
-        else:
-            tables.mkdir(exist_ok=True)
-            frame.to_csv(tables/f'{name}.csv',index=False)
+        store.write_table(tables, name, frame)
     rows=pd.DataFrame(dict(draw_index=[0,0,1,1],posterior_index=[5,5,7,7],family_id=['a']*4,image_label=['a1','a2']*2,
                            recovered=[True,False,True,True],x_model_arcsec=[5.,9.,5.,1.],y_model_arcsec=[5.,9.,5.,0.],
                            x_predicted_arcsec=[0.,9.,.1,1.],y_predicted_arcsec=[0.,9.,0.,0.],

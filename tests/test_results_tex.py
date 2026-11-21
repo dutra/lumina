@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from kappaccino.reporting.results_tex import command_prefix, duration, write_run_results, write_mock_results
+from kappaccino.io import store
 from kappaccino.io.hdf5 import save_arrays
 
 
@@ -27,6 +28,9 @@ def test_duration():
 
 def test_run_export(tmp_path):
     def save(path, data):
+        if path.startswith('tables/'):
+            store.write_record(tmp_path, path[len('tables/'):-len('.json')], data)
+            return
         target = tmp_path / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(data))
@@ -53,9 +57,9 @@ def test_run_export(tmp_path):
     # Two draws: RMS 0.3 and 0.5 (residuals 0.3, 0.3 and 0.4, 0.6, plus an unrecovered image); lens only doubled.
     rows = pd.DataFrame({'draw_index': [0, 0, 0, 1, 1, 1], 'recovered': [True, True, False, True, True, False],
                          'image_residual_arcsec': [.3, .3, np.nan, .4, .6, np.nan]})
-    rows.to_csv(tmp_path / 'tables/posterior_image_residual_draws.csv', index=False)
-    rows.assign(image_residual_arcsec=2 * rows.image_residual_arcsec).to_csv(
-        tmp_path / 'tables/posterior_image_residual_draws_lens_only.csv', index=False)
+    store.write_table(tmp_path, 'posterior_image_residual_draws', rows)
+    store.write_table(tmp_path, 'posterior_image_residual_draws_lens_only',
+                      rows.assign(image_residual_arcsec=2 * rows.image_residual_arcsec))
     text = write_run_results(tmp_path).read_text()
     rms = np.percentile([.3, np.sqrt((.16 + .36) / 2)], [16, 50, 84])
     assert rf'\MJZeroFourOneSixRMS}}{{{{{rms[1]:.3f}_{{-{rms[1] - rms[0]:.3f}}}^{{+{rms[2] - rms[1]:.3f}}}}}}}' in text
@@ -71,10 +75,9 @@ def test_posterior_rms_and_position_coverage(tmp_path):
     (tmp_path / 'artifacts').mkdir()
     (tmp_path / 'tables').mkdir()
     (tmp_path / 'artifacts/summary.json').write_text('{}')
-    pd.DataFrame({'image_rms_arcsec': [.02, .07, .12, np.nan]}).to_csv(
-        tmp_path / 'tables/posterior_image_rms.csv', index=False)
-    pd.DataFrame({'image_label': ['a', 'b', 'c'], 'credible_level': [.3, .9, np.nan]}).to_csv(
-        tmp_path / 'tables/position_coverage.csv', index=False)
+    store.write_table(tmp_path, 'posterior_image_rms', pd.DataFrame({'image_rms_arcsec': [.02, .07, .12, np.nan]}))
+    store.write_table(tmp_path, 'position_coverage',
+                      pd.DataFrame({'image_label': ['a', 'b', 'c'], 'credible_level': [.3, .9, np.nan]}))
     text = write_run_results(tmp_path, name='m0416').read_text()
     for suffix, value in [('NPosteriorRMSDraws', '3'),
                           ('PositionCoverageOneSigmaPercent', '50'), ('NPositionCoverage', '2'),
@@ -87,10 +90,9 @@ def test_field_parameter_medians(tmp_path):
     (tmp_path / 'tables').mkdir()
     (tmp_path / 'artifacts/summary.json').write_text('{}')
     (tmp_path / 'artifacts/config.json').write_text(json.dumps({'likelihood': {'gp_reference_redshift': 2}}))
-    pd.DataFrame({'parameter': ['images.sigma_gp', 'images.lambda_b'],
-                  'median': [.06805, 14.1126], 'best_fit': [.05, 13.6],
-                  'p16': [.055, 13.4], 'p84': [.081, 14.6]}).to_csv(
-        tmp_path / 'tables/posterior_summary.csv', index=False)
+    store.write_table(tmp_path, 'posterior_summary', pd.DataFrame({'parameter': ['images.sigma_gp', 'images.lambda_b'],
+                                                                   'median': [.06805, 14.1126], 'best_fit': [.05, 13.6],
+                                                                   'p16': [.055, 13.4], 'p84': [.081, 14.6]}))
     text = write_run_results(tmp_path, name='m0416').read_text()
     assert r'\MJZeroFourOneSixSigmaGP}{0.068}' in text
     assert r'\MJZeroFourOneSixSigmaGPInterval}{{0.068_{-0.013}^{+0.013}}}' in text
@@ -151,15 +153,15 @@ def test_member_table_uses_joint_deviation_draws(tmp_path):
     physical = np.array([[100., 20., .3, .6]]*3)
     state = {'kpc_per_arcsec': 2., 'parameter_specs': [{'name':'potfile_1.'+n} for n in names]}
     (tmp_path / 'init/artifacts/state.json').write_text(json.dumps(state))
-    pd.DataFrame({'parameter':['potfile_1.'+n for n in names], 'median': physical[0],
-                  'p16':physical[0], 'p84':physical[0]}).to_csv(final/'tables/posterior_summary.csv',index=False)
+    store.write_table(final, 'posterior_summary', pd.DataFrame({'parameter':['potfile_1.'+n for n in names], 'median': physical[0],
+                                                                'p16':physical[0], 'p84':physical[0]}))
     save_arrays(final/'artifacts/posterior.h5',physical=physical)
     delta = np.tile([np.log(2.),np.log(3.)],(3,1,1))
-    save_arrays(final/'tables/member_diagnostic_draws.h5', deviations=delta)
+    store.write_arrays(final, 'member_diagnostic_draws', deviations=delta)
     row = dict(member_id='potfile_1:8971',potfile_id='potfile_1',catalog_mag=21.,luminosity_ratio=1.)
     for prefix, value in [('velocity',np.log(2.)),('radius',np.log(3.))]:
         for suffix in ['p16','median','p84']: row[prefix+'_'+suffix]=value
-    pd.DataFrame([row]).to_csv(final/'tables/member_diagnostics.csv',index=False)
+    store.write_table(final, 'member_diagnostics', pd.DataFrame([row]))
     metrics = m0416_table_metrics(final)
     assert metrics['GalEightNineSevenOneSigma'] == interval(200,0,0,0)
     assert metrics['GalEightNineSevenOneCut'] == interval(30,0,0,1)
@@ -174,18 +176,19 @@ def test_truth_magnification_macros(tmp_path):
     text = write_run_results(tmp_path, name='hera').read_text()
     for suffix in ('MagnificationScatterMuThreePercent', 'LensOnlyMagnificationBiasMuTenPercent', 'SourceAreaRatioMuThirty'):
         assert rf'\Hera{suffix}}}{{\textnormal{{not available}}}}' in text
-    pd.DataFrame(dict(model=['parametric', 'parametric', 'model', 'model'], mu_ref=[3., 10., 3., 10.], bias=[-.18, -.11, -.08, -.1],
-                      scatter=[.192, .394, .124, .263], n_pixels=100)).to_csv(tmp_path / 'tables/magnification_scatter.csv', index=False)
+    scatter = pd.DataFrame(dict(model=['parametric', 'parametric', 'model', 'model'], mu_ref=[3., 10., 3., 10.], bias=[-.18, -.11, -.08, -.1],
+                      scatter=[.192, .394, .124, .263], n_pixels=100))
+    store.write_table(tmp_path, 'magnification_scatter', scatter)
     mu = np.geomspace(2, 100, 50)
-    pd.DataFrame(dict(mu=mu, area_true_arcsec2=100 / mu**2, area_parametric_median_arcsec2=88 / mu**2,
-                      area_model_median_arcsec2=101 / mu**2)).to_csv(tmp_path / 'tables/cumulative_source_area.csv', index=False)
+    store.write_table(tmp_path, 'cumulative_source_area', pd.DataFrame(dict(
+        mu=mu, area_true_arcsec2=100 / mu**2, area_parametric_median_arcsec2=88 / mu**2, area_model_median_arcsec2=101 / mu**2)))
     text = write_run_results(tmp_path, name='hera').read_text()
     for suffix, value in [('MagnificationScatterMuThreePercent', '12'), ('MagnificationScatterMuTenPercent', '26'),
                           ('LensOnlyMagnificationScatterMuThreePercent', '19'), ('LensOnlyMagnificationScatterMuTenPercent', '39'),
                           ('MagnificationBiasMuThreePercent', '-8'), ('SourceAreaRatioMuTen', '1.01'), ('LensOnlySourceAreaRatioMuThirty', '0.88')]:
         assert rf'\Hera{suffix}}}{{{value}}}' in text
     # Without a field the tables carry the parametric lens only, which is then the model of each draw.
-    pd.read_csv(tmp_path / 'tables/magnification_scatter.csv').query('model == "parametric"').to_csv(tmp_path / 'tables/magnification_scatter.csv', index=False)
+    store.write_table(tmp_path, 'magnification_scatter', scatter.query('model == "parametric"').reset_index(drop=True))
     assert r'\HeraMagnificationScatterMuTenPercent}{39}' in write_run_results(tmp_path, name='hera').read_text()
 
 
@@ -237,8 +240,8 @@ def test_halo_table_macros_and_table(tmp_path):
     assert r'Halo 1 & $x$ (arcsec) & $\ToyCompOneXPrior$ & $\ToyCompOneX$ \\' in text and r'\label{tab:halos_toy}' in text
 
 
-def test_same_macros_from_results_h5_and_from_the_old_loose_files(tmp_path):
-    """A run in the new layout (final/results.h5) and the same run as an old run's loose tables give the same file."""
+def test_macros_from_results_h5(tmp_path):
+    """The macros of a run whose tables and records are in final/results.h5."""
     from kappaccino.io import store
     tables = {'posterior_image_residual_draws': pd.DataFrame({'draw_index': [0, 0, 1, 1], 'recovered': [True, False, True, True],
                                                               'family_id': ['1', '1', '1', '1'],
@@ -249,24 +252,14 @@ def test_same_macros_from_results_h5_and_from_the_old_loose_files(tmp_path):
     records = {'run_summary': {'fit': {'observed_image_count': 3, 'recovered_image_count': {'median': 2., 'q16': 1., 'q84': 3.}}},
                'runtime': {'total': 3661.}, 'aperture_mass_histogram': {'normalization_kpc': 2.0, 'samples': {
                    sample: dict(n=3, median=1.1, p25=.9, p75=1.3, iqr=.4, Q=1.2) for sample in ('all', 'image_hull')}}}
-    texts = []
-    for layout in ('legacy', 'store'):
-        final = tmp_path / layout / 'final'
-        (final / 'artifacts').mkdir(parents=True)
-        (final / 'artifacts/summary.json').write_text(json.dumps({'images': 3, 'members': 8, 'exact_members': 2}))
-        for name, frame in tables.items():
-            if layout == 'store':
-                store.write_table(final, name, frame)
-            else:
-                (final / 'tables').mkdir(exist_ok=True)
-                frame.to_csv(final / 'tables' / f'{name}.csv', index=False)
-        for name, record in records.items():
-            if layout == 'store':
-                store.write_record(final, name, record)
-            else:
-                (final / 'tables' / f'{name}.json').write_text(json.dumps(record))
-        texts.append(write_run_results(final, name='hera').read_text())
-    assert texts[0] == texts[1]
-    assert r'\HeraRuntimeHours}{1.017}' in texts[1] and r'\HeraNPosteriorRMSDraws}{2}' in texts[1]
-    assert r'\HeraApertureMassRatioAllMedian}{1.100}' in texts[1]
-    assert not (tmp_path / 'store' / 'final' / 'tables').exists()
+    final = tmp_path / 'final'
+    (final / 'artifacts').mkdir(parents=True)
+    (final / 'artifacts/summary.json').write_text(json.dumps({'images': 3, 'members': 8, 'exact_members': 2}))
+    for name, frame in tables.items():
+        store.write_table(final, name, frame)
+    for name, record in records.items():
+        store.write_record(final, name, record)
+    text = write_run_results(final, name='hera').read_text()
+    assert r'\HeraRuntimeHours}{1.017}' in text and r'\HeraNPosteriorRMSDraws}{2}' in text
+    assert r'\HeraApertureMassRatioAllMedian}{1.100}' in text
+    assert not (final / 'tables').exists()

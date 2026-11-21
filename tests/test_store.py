@@ -167,48 +167,21 @@ def test_missing_entries(tmp_path):
         store.write_table(tmp_path, 'a/b', pd.DataFrame())
 
 
-def _legacy_stage(stage):
+def test_loose_files_are_not_read(tmp_path):
+    # results.h5 is the only source: a file under tables/ or figures/ is no entry.
+    stage = tmp_path / 'final'
     (stage / 'tables').mkdir(parents=True)
     (stage / 'figures').mkdir()
-    (stage / 'tables' / 'image_fit_quality.csv').write_text('family_id,image_label,x\n1,1.1,0.5\n2,2.1,\n')
-    (stage / 'tables' / 'run_summary.json').write_text(json.dumps({'fit': {'n': 3}}, indent=2))
-    save_arrays(stage / 'tables' / 'band.h5', determinant=np.eye(2))
-    save_arrays(stage / 'tables' / 'zeta_masses_cache.h5', draws_key='k')
-    (stage / 'figures' / 'hera_corner.json').write_text(json.dumps({'draws': 7}))
-    (stage / 'tables' / 'posterior_extra_images.csv').write_text('\n')       # an old table without columns
-
-
-def test_old_layout_is_read_from_the_loose_files(tmp_path):
-    stage = tmp_path / 'final'
-    _legacy_stage(stage)
-    before = {path: path.read_bytes() for path in stage.rglob('*') if path.is_file()}
-    table = store.read_table(stage, 'image_fit_quality')
-    pd.testing.assert_frame_equal(table, pd.read_csv(stage / 'tables' / 'image_fit_quality.csv'))
-    assert table['family_id'].dtype.kind == 'i'                       # exactly as the old reader parsed it
-    typed = store.read_table(stage, 'image_fit_quality', legacy_csv=dict(dtype={'family_id': str}))
-    assert typed['family_id'].tolist() == ['1', '2']
-    called = store.read_table(stage, 'image_fit_quality', legacy_csv=lambda path: pd.read_csv(path, usecols=['x']))
-    assert list(called.columns) == ['x']
-    assert store.read_record(stage, 'run_summary') == {'fit': {'n': 3}}
-    np.testing.assert_array_equal(store.read_arrays(stage, 'band')['determinant'], np.eye(2))
-    assert str(store.read_cache_arrays(stage, 'zeta_masses_cache')['draws_key']) == 'k'
-    assert store.read_figure_record(stage / 'figures' / 'hera_corner.pdf') == {'draws': 7}
-    assert store.has_table(stage, 'image_fit_quality') and store.has_arrays(stage, 'band')
-    # Reading creates and changes nothing.
-    assert {path: path.read_bytes() for path in stage.rglob('*') if path.is_file()} == before
-
-
-def test_stored_entries_take_precedence_over_old_files(tmp_path):
-    stage = tmp_path / 'final'
-    _legacy_stage(stage)
-    fresh = pd.DataFrame({'family_id': ['9'], 'image_label': ['9.1'], 'x': [1.0]})
-    store.write_table(stage, 'image_fit_quality', fresh)
-    pd.testing.assert_frame_equal(store.read_table(stage, 'image_fit_quality'), fresh)
-    store.write_figure_record(stage / 'figures' / 'hera_corner.pdf', {'draws': 8})
-    assert store.read_figure_record(stage / 'figures' / 'hera_corner.pdf') == {'draws': 8}
-    # The old files are left as they were.
-    assert (stage / 'tables' / 'image_fit_quality.csv').read_text().startswith('family_id')
-    assert json.loads((stage / 'figures' / 'hera_corner.json').read_text()) == {'draws': 7}
+    (stage / 'tables' / 'image_fit_quality.csv').write_text('family_id,x\n1,0.5\n')
+    (stage / 'tables' / 'run_summary.json').write_text('{}')
+    (stage / 'figures' / 'hera_corner.json').write_text('{}')
+    with pytest.raises(store.MissingEntry):
+        store.read_table(stage, 'image_fit_quality')
+    with pytest.raises(store.MissingEntry):
+        store.read_record(stage, 'run_summary')
+    with pytest.raises(store.MissingEntry):
+        store.read_figure_record(stage / 'figures' / 'hera_corner.pdf')
+    assert not store.has_table(stage, 'image_fit_quality') and not any(store.entries(stage).values())
 
 
 def test_writing_a_name_again_replaces_it(tmp_path):
@@ -342,26 +315,6 @@ def test_command_line_lists_prints_and_exports(tmp_path, capsys):
     assert json.loads((out / 'final/figures/hera_corner.json').read_text()) == {'draws': 2}
     assert (out / 'final/cache/zeta_masses_cache.h5').is_file()
     assert json.loads((out / 'init/tables/shallow_fold_pairs.json').read_text()) == {'pairs': []}
-
-
-def test_command_line_on_an_old_layout_run(tmp_path, capsys):
-    run = tmp_path / 'run'
-    _legacy_stage(run / 'final')
-    assert store.main([str(run)]) == 0
-    listing = capsys.readouterr().out
-    assert 'image_fit_quality' in listing and '[tables/image_fit_quality.csv]' in listing
-    assert '[figures/hera_corner.json]' in listing
-    assert store.main([str(run), '--table', 'image_fit_quality']) == 0
-    assert capsys.readouterr().out == (run / 'final/tables/image_fit_quality.csv').read_text()
-    out = tmp_path / 'export'
-    assert store.main([str(run), '--export', str(out)]) == 0
-    pd.testing.assert_frame_equal(pd.read_csv(out / 'final/tables/image_fit_quality.csv'),
-                                  pd.read_csv(run / 'final/tables/image_fit_quality.csv'))
-    assert (out / 'final/tables/posterior_extra_images.csv').read_text() == '\n'
-    capsys.readouterr()
-    assert store.main([str(run), '--table', 'posterior_extra_images']) == 0
-    assert capsys.readouterr().out == '\n'
-    assert not (run / 'final' / store.RESULTS_FILE).exists()
 
 
 # ------------------------------------------------------------------------------------------- failure handling
@@ -836,10 +789,10 @@ def test_unstorable_input_is_always_a_type_error(tmp_path):
 
 
 def test_tables_keep_their_in_memory_dtypes_not_the_csv_ones(tmp_path):
-    """Numeric-looking ids written as strings read back as strings (an old CSV read them as integers)."""
+    """Numeric-looking ids written as strings read back as strings (a CSV would read them as integers)."""
     frame = pd.DataFrame({'family_id': ['1', '2', '10'], 'image_label': ['1.1', '2.1', '10.3']})
     store.write_table(tmp_path, 'image_fit_quality', frame)
-    back = store.read_table(tmp_path, 'image_fit_quality', legacy_csv=dict(dtype={'family_id': int}))
+    back = store.read_table(tmp_path, 'image_fit_quality')
     assert back['family_id'].tolist() == ['1', '2', '10'] and back['family_id'].dtype == frame['family_id'].dtype
     assert back['family_id'].dtype.kind not in 'iuf'
 

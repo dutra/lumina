@@ -46,8 +46,9 @@ The figures (PDF), the FITS maps, the plain-text reports (`run_summary.txt`, `au
 `classification_report.txt`, `start_parameters.txt`), the `<prefix>_results.tex` macros, the logs, `artifacts/` and
 `inputs/` stay separate files. A table reads back exactly as it was written (column order, dtypes, strings, NaN and
 None). The dtypes are the ones the table had in memory, not what parsing a CSV gives: a column of numeric-looking ids
-such as `family_id` written as strings reads back as strings, where the old `tables/<name>.csv` read it as integers.
-Runs written before this layout keep their loose files, and every reader falls back to them.
+such as `family_id` written as strings reads back as strings. `results.h5` is the only source: loose files under
+`tables/` or `figures/`, as runs written before this layout have, are not read, so such a run fails with the missing
+entry.
 
 `results.h5` is never changed in place. A write builds the new version in a temporary file next to it
 (`results.h5.tmp-*`), fsyncs it and renames it over the old one, so a crash at any moment leaves either the old or the
@@ -76,12 +77,11 @@ python -m kappaccino.io.store results/<cluster>/<run> --record run_summary
 python -m kappaccino.io.store results/<cluster>/<run> --figure-record <prefix>_corner_globals
 python -m kappaccino.io.store results/<cluster>/<run> --arrays conditional_field_maps
 python -m kappaccino.io.store results/<cluster>/<run> --stage init --record shallow_fold_pairs
-python -m kappaccino.io.store results/<cluster>/<run> --export /tmp/<run>_loose  # the old csv/json/h5 files
+python -m kappaccino.io.store results/<cluster>/<run> --export /tmp/<run>_loose  # loose csv/json/h5 files
 ```
 
 `--cache` makes `--table`, `--record` and `--arrays` read `cache.h5`. The export writes `<stage>/tables/<name>.csv`,
-`.json` and `.h5`, `<stage>/figures/<figure>.json` and `<stage>/cache/<name>.*`. All of this also works on runs in the
-old layout. An entry that cannot be read is listed as `DAMAGED` (or reported as not exported), the rest is listed or
+`.json` and `.h5`, `<stage>/figures/<figure>.json` and `<stage>/cache/<name>.*`. An entry that cannot be read is listed as `DAMAGED` (or reported as not exported), the rest is listed or
 exported, and the command exits with status 1.
 
 Every reported product (figures, tables and results macros) is computed over one set of reporting draws:
@@ -654,7 +654,7 @@ python -m kappaccino.plotting.jwst_rgb results/<cluster>/<run> [results/<cluster
 ```
 
 It reads the band from the arrays `<stem>`, the catalog from the table `image_fit_quality` and the contours from
-the saved image recovery (all in `final/results.h5`, or the loose files of an old run), and rebuilds the configuration
+the saved image recovery (all in `final/results.h5`), and rebuilds the configuration
 from `inputs/command.json`. It refuses when the imaging settings, the image catalog or the reference of that
 configuration differ from `final/artifacts/config.json`, and, before writing anything, when the run has no completed
 image recovery or a draw of `<stem>` is missing from `posterior_image_residual_draws`. The model description in the
@@ -676,7 +676,7 @@ record = store.read_figure_record(f"{run}/final/figures/hera_corner_globals.pdf"
 posterior = load_arrays(f"{run}/final/artifacts/posterior.h5")
 ```
 
-The same calls read an old run's loose files. `store.entries(stage)` lists the names. Write only from the main thread
+`store.entries(stage)` lists the names. Write only from the main thread
 of a process: the writes are serialized by a lock, but the worker threads of the output pass never write. Writes made
 in a row go inside `with store.batch(stage):`, which commits them as one new version of `results.h5` (one copy of the
 file instead of one per entry). An exception that leaves the block, a nested `with store.batch(stage):` or a write

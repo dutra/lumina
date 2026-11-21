@@ -28,7 +28,7 @@ def test_uniform_mass_apertures_and_output(tmp_path,monkeypatch,prefix):
     monkeypatch.setattr(am,'mass_per_kappa_pixel_msun',lambda *a:.01)
     paths=NS(tables=tmp_path/'tables',figures=tmp_path/'figures')
     paths.tables.mkdir();paths.figures.mkdir()
-    members.to_csv(paths.tables/'member_diagnostics.csv',index=False)
+    store.write_table(paths.tables,'member_diagnostics',members)
     images=pd.DataFrame(dict(x_obs_arcsec=[-2,2,2,-2],y_obs_arcsec=[-2,-2,2,2]))
     config=NS(paths=NS(figure_prefix=prefix),truth=NS(kappa_true_fits=truth,caustic_source_redshift=9.))
     class Draws(NS):

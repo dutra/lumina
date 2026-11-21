@@ -37,7 +37,7 @@ def position_draws(indices, tables) -> dict:
     tables = Path(tables)
     indices = np.asarray(indices, int)
     slot = {int(index): k for k, index in enumerate(indices)}
-    rows = store.read_table(tables, 'posterior_image_residual_draws', legacy_csv=dict(dtype={'family_id': str, 'image_label': str}))
+    rows = store.read_table(tables, 'posterior_image_residual_draws')
     labels = list(dict.fromkeys(rows['image_label']))
     n = len(indices)
     recovered = np.full((n, len(labels), 2), np.nan)
@@ -76,8 +76,8 @@ def position_draws(indices, tables) -> dict:
 
 def _read(tables, name):
     try:
-        return store.read_table(tables, name, legacy_csv=dict(dtype={'family_id': str}))
-    except (FileNotFoundError, pd.errors.EmptyDataError):
+        return store.read_table(tables, name)
+    except store.MissingEntry:
         return pd.DataFrame()
 
 

@@ -33,11 +33,6 @@ Cache
     :func:`write_cache_arrays`, :func:`read_cache_arrays`, :func:`write_cache_record`, :func:`read_cache_record`,
     :func:`write_cache_table`, :func:`read_cache_table`.
 
-Old runs.  A stage without ``results.h5`` (or one that lacks the name) is read from the loose file it used to have:
-``tables/<name>.csv`` (with the caller's ``legacy_csv`` options, so old runs read exactly as before),
-``tables/<name>.json``, ``tables/<name>.h5``, ``figures/<stem>.json``.  The cache falls back to ``tables/<name>.h5``
-and ``tables/<name>.json``.  Nothing is ever written into the old files.
-
 Crash safety of ``results.h5``.  The file is never modified in place.  A write copies it to a temporary file in the
 same folder (``results.h5.tmp-<host>-<pid>-<token>``), applies the change there, flushes and fsyncs it, renames it over
 ``results.h5`` (``os.replace``) and fsyncs the folder, so the file on disk is always either the complete old version
@@ -84,7 +79,7 @@ entries that are lost.  Any other failure to open or write ``results.h5`` (permi
 files, a full disk, an I/O error) raises :class:`StoreError` and leaves the file as it was.  A reader never moves
 anything.
 
-Reading.  A name that is not in the file (and has no old loose file) raises :class:`MissingEntry`, a
+Reading.  A name that is not in the file raises :class:`MissingEntry`, a
 ``FileNotFoundError``: the product was never written.  An entry that is there but cannot be decoded, or a
 ``results.h5`` that is not a valid HDF5 file, is logged and raises :class:`DamagedEntry`, which is *not* a
 ``FileNotFoundError`` (nor an ``OSError``), so that callers that carry on when a product is missing stop instead of
@@ -104,8 +99,8 @@ thread of the output stage, never from the worker threads of :mod:`kappaccino.co
 
 Inspecting.  ``python -m kappaccino.io.store RUN_OR_STAGE_DIR`` lists the entries with their shapes;
 ``--table NAME`` prints one table as CSV, ``--record NAME`` one record as JSON, ``--arrays NAME`` the arrays of one
-bundle; ``--export DIR`` writes everything as loose ``.csv``, ``.json`` and ``.h5`` files in the old layout.  Old-layout
-runs work too.  Damaged entries are listed as such and make the command exit with status 1.
+bundle; ``--export DIR`` writes everything as loose ``.csv``, ``.json`` and ``.h5`` files.  Damaged entries are
+listed as such and make the command exit with status 1.
 """
 from __future__ import annotations
 
@@ -130,7 +125,7 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from .hdf5 import STRING, load_arrays, save_arrays
+from .hdf5 import STRING, save_arrays
 
 RESULTS_FILE = "results.h5"
 CACHE_FILE = "cache.h5"
@@ -138,7 +133,7 @@ FORMAT_VERSION = 1
 
 TABLES, RECORDS, ARRAYS, FIGURE_RECORDS = "tables", "records", "arrays", "figure_records"
 KINDS = (TABLES, RECORDS, ARRAYS, FIGURE_RECORDS)
-LEGACY_SUFFIX = {TABLES: ".csv", RECORDS: ".json", ARRAYS: ".h5", FIGURE_RECORDS: ".json"}
+EXPORT_SUFFIX = {TABLES: ".csv", RECORDS: ".json", ARRAYS: ".h5", FIGURE_RECORDS: ".json"}
 
 # Repack when the space freed by replaced entries passes both of these.
 REPACK_FRACTION = 0.25
@@ -171,7 +166,7 @@ _log: Callable[[str], Any] = lambda message: print(message, file=sys.stderr, flu
 
 
 class MissingEntry(FileNotFoundError):
-    """No entry of that name in the stage: neither in its HDF5 file nor as an old loose file."""
+    """No entry of that name in the stage's HDF5 file."""
 
 
 class DamagedEntry(Exception):
@@ -1440,31 +1435,19 @@ def _lookup(path: Path, kind: str, name: str, decode: Callable[[Any], Any] | Non
             return DAMAGED, f"{path}: {kind}/{name} cannot be read ({type(error).__name__}: {error})"
 
 
-def _get(path: Path, kind: str, name: str, decode: Callable[[Any], Any], legacy: Path | None,
-         read_legacy: Callable[[Path], Any], missing: str, *, cache: bool = False) -> Any:
+def _get(path: Path, kind: str, name: str, decode: Callable[[Any], Any], missing: str, *, cache: bool = False) -> Any:
     state, value = _lookup(path, kind, name, decode, cache=cache)
     if state == FOUND:
         return value
-    has_legacy = legacy is not None and legacy.is_file()
     if state == DAMAGED and not cache:
         _log(f"[store] ERROR: {value}; raised as damaged (not as missing)")
         raise DamagedEntry(value)
     if state == DAMAGED:
-        _log(f"[store] WARNING: {value}; " + (f"reading {legacy.name} instead" if has_legacy else "treated as a cache miss"))
-    if has_legacy:
-        if not cache:
-            return read_legacy(legacy)
-        try:
-            return read_legacy(legacy)
-        except MemoryError:
-            raise
-        except Exception as error:              # noqa: BLE001 - the cache never stops a run
-            _log(f"[store] WARNING: {legacy} cannot be read ({error}); treated as a cache miss")
-            raise MissingEntry(missing) from error
+        _log(f"[store] WARNING: {value}; treated as a cache miss")
     raise MissingEntry(missing)
 
 
-def _has(path: Path, kind: str, name: str, legacy: Path | None, *, cache: bool = False) -> bool:
+def _has(path: Path, kind: str, name: str, *, cache: bool = False) -> bool:
     """Whether the name is there (decodable or not; the entry is not opened).  For ``results.h5``, a file or group
     whose names cannot be read raises :class:`DamagedEntry`; for the cache it is a miss."""
     state, value = _lookup(path, kind, name, None, cache=cache)
@@ -1475,11 +1458,7 @@ def _has(path: Path, kind: str, name: str, legacy: Path | None, *, cache: bool =
         raise DamagedEntry(value)
     if state == DAMAGED:
         _log(f"[store] WARNING: {value}; treated as a cache miss")
-    return legacy is not None and legacy.is_file()
-
-
-def _legacy_file(stage: Path, kind: str, name: str, folder: str = "tables") -> Path:
-    return stage / folder / f"{name}{LEGACY_SUFFIX[kind]}"
+    return False
 
 
 def _table_group(group: h5py.Group, name: str, frame: pd.DataFrame) -> None:
@@ -1520,10 +1499,6 @@ def _arrays_bytes(bundle: dict[str, Any]) -> int:
     return total
 
 
-def _read_json(path: Path) -> Any:
-    return json.loads(path.read_text())
-
-
 # ------------------------------------------------------------------------------------------------------- results
 
 def write_table(stage: str | Path, name: str, frame: pd.DataFrame) -> None:
@@ -1531,16 +1506,8 @@ def write_table(stage: str | Path, name: str, frame: pd.DataFrame) -> None:
     _write(results_path(stage), TABLES, name, lambda group, key: _table_group(group, key, frame), _table_bytes(frame))
 
 
-def _read_legacy_csv(path: Path, legacy_csv) -> pd.DataFrame:
-    if callable(legacy_csv):
-        return legacy_csv(path)
-    return pd.read_csv(path, **(legacy_csv or {}))
-
-
-def read_table(stage: str | Path, name: str, *, legacy_csv: dict | Callable[[Path], pd.DataFrame] | None = None) -> pd.DataFrame:
-    """The table ``name`` of the stage, exactly as written; for an old run, its ``tables/<name>.csv`` read with
-    ``pd.read_csv(path, **legacy_csv)`` (or ``legacy_csv(path)`` when it is a function), the way each reader read
-    that file before, so that old runs give the same numbers.
+def read_table(stage: str | Path, name: str) -> pd.DataFrame:
+    """The table ``name`` of the stage, exactly as written.
 
     Raises
     ------
@@ -1552,14 +1519,12 @@ def read_table(stage: str | Path, name: str, *, legacy_csv: dict | Callable[[Pat
     """
     stage = stage_dir(stage)
     name = _check_name(name)
-    return _get(results_path(stage), TABLES, name, _decode_table, _legacy_file(stage, TABLES, name),
-                lambda path: _read_legacy_csv(path, legacy_csv),
-                f"{stage}: no table {name!r} (neither in {RESULTS_FILE} nor tables/{name}.csv)")
+    return _get(results_path(stage), TABLES, name, _decode_table, f"{stage}: no table {name!r} in {RESULTS_FILE}")
 
 
 def has_table(stage: str | Path, name: str) -> bool:
     stage = stage_dir(stage)
-    return _has(results_path(stage), TABLES, _check_name(name), _legacy_file(stage, TABLES, name))
+    return _has(results_path(stage), TABLES, _check_name(name))
 
 
 def write_record(stage: str | Path, name: str, record: Any, *, default: Callable[[Any], Any] | None = None) -> None:
@@ -1569,7 +1534,7 @@ def write_record(stage: str | Path, name: str, record: Any, *, default: Callable
 
 
 def read_record(stage: str | Path, name: str) -> Any:
-    """The record ``name`` of the stage (``json.loads`` of its JSON); for an old run, of ``tables/<name>.json``.
+    """The record ``name`` of the stage (``json.loads`` of its JSON).
 
     Raises
     ------
@@ -1582,13 +1547,12 @@ def read_record(stage: str | Path, name: str) -> Any:
     stage = stage_dir(stage)
     name = _check_name(name)
     return _get(results_path(stage), RECORDS, name, lambda node: json.loads(_read_text(node)),
-                _legacy_file(stage, RECORDS, name), _read_json,
-                f"{stage}: no record {name!r} (neither in {RESULTS_FILE} nor tables/{name}.json)")
+                f"{stage}: no record {name!r} in {RESULTS_FILE}")
 
 
 def has_record(stage: str | Path, name: str) -> bool:
     stage = stage_dir(stage)
-    return _has(results_path(stage), RECORDS, _check_name(name), _legacy_file(stage, RECORDS, name))
+    return _has(results_path(stage), RECORDS, _check_name(name))
 
 
 def write_arrays(stage: str | Path, name: str, arrays: dict[str, Any] | None = None, **more: Any) -> None:
@@ -1599,8 +1563,7 @@ def write_arrays(stage: str | Path, name: str, arrays: dict[str, Any] | None = N
 
 
 def read_arrays(stage: str | Path, name: str) -> dict[str, np.ndarray]:
-    """The arrays of bundle ``name`` (as :func:`kappaccino.io.hdf5.load_arrays`); for an old run, of
-    ``tables/<name>.h5``.
+    """The arrays of bundle ``name`` (as :func:`kappaccino.io.hdf5.load_arrays`).
 
     Raises
     ------
@@ -1612,13 +1575,12 @@ def read_arrays(stage: str | Path, name: str) -> dict[str, np.ndarray]:
     """
     stage = stage_dir(stage)
     name = _check_name(name)
-    return _get(results_path(stage), ARRAYS, name, _decode_arrays, _legacy_file(stage, ARRAYS, name), load_arrays,
-                f"{stage}: no arrays {name!r} (neither in {RESULTS_FILE} nor tables/{name}.h5)")
+    return _get(results_path(stage), ARRAYS, name, _decode_arrays, f"{stage}: no arrays {name!r} in {RESULTS_FILE}")
 
 
 def has_arrays(stage: str | Path, name: str) -> bool:
     stage = stage_dir(stage)
-    return _has(results_path(stage), ARRAYS, _check_name(name), _legacy_file(stage, ARRAYS, name))
+    return _has(results_path(stage), ARRAYS, _check_name(name))
 
 
 def _figure_location(figure: str | Path) -> tuple[Path, str]:
@@ -1635,7 +1597,7 @@ def write_figure_record(figure: str | Path, record: Any, *, default: Callable[[A
 
 
 def read_figure_record(figure: str | Path) -> Any:
-    """The record of the figure at ``figure``; for an old run, its ``.json`` next to the figure.
+    """The record of the figure at ``figure``.
 
     Raises
     ------
@@ -1646,14 +1608,13 @@ def read_figure_record(figure: str | Path) -> Any:
         ``MissingEntry``).  ``MemoryError`` and device errors (``OSError``) are raised as they are.
     """
     stage, name = _figure_location(figure)
-    legacy = Path(figure).with_suffix(".json")
-    return _get(results_path(stage), FIGURE_RECORDS, name, lambda node: json.loads(_read_text(node)), legacy,
-                _read_json, f"{figure}: no figure record (neither in {RESULTS_FILE} nor {legacy.name})")
+    return _get(results_path(stage), FIGURE_RECORDS, name, lambda node: json.loads(_read_text(node)),
+                f"{figure}: no figure record in {RESULTS_FILE}")
 
 
 def has_figure_record(figure: str | Path) -> bool:
     stage, name = _figure_location(figure)
-    return _has(results_path(stage), FIGURE_RECORDS, name, Path(figure).with_suffix(".json"))
+    return _has(results_path(stage), FIGURE_RECORDS, name)
 
 
 def compact(stage: str | Path) -> None:
@@ -1700,17 +1661,15 @@ def write_cache_arrays(stage: str | Path, name: str, arrays: dict[str, Any] | No
 
 
 def read_cache_arrays(stage: str | Path, name: str) -> dict[str, np.ndarray]:
-    """Arrays from the stage's cache; for an old run, from ``tables/<name>.h5``.  :class:`MissingEntry` if absent or
-    unreadable (logged)."""
+    """Arrays from the stage's cache.  :class:`MissingEntry` if absent or unreadable (logged)."""
     stage = stage_dir(stage)
     name = _check_name(name)
-    return _get(cache_path(stage), ARRAYS, name, _decode_arrays, _legacy_file(stage, ARRAYS, name), load_arrays,
-                f"{stage}: no cached arrays {name!r}", cache=True)
+    return _get(cache_path(stage), ARRAYS, name, _decode_arrays, f"{stage}: no cached arrays {name!r}", cache=True)
 
 
 def has_cache_arrays(stage: str | Path, name: str) -> bool:
     stage = stage_dir(stage)
-    return _has(cache_path(stage), ARRAYS, _check_name(name), _legacy_file(stage, ARRAYS, name), cache=True)
+    return _has(cache_path(stage), ARRAYS, _check_name(name), cache=True)
 
 
 def write_cache_record(stage: str | Path, name: str, record: Any, *, default: Callable[[Any], Any] | None = None) -> None:
@@ -1719,25 +1678,22 @@ def write_cache_record(stage: str | Path, name: str, record: Any, *, default: Ca
 
 
 def read_cache_record(stage: str | Path, name: str) -> Any:
-    """A record from the stage's cache; for an old run, from ``tables/<name>.json``.  :class:`MissingEntry` if absent
-    or unreadable (logged)."""
+    """A record from the stage's cache.  :class:`MissingEntry` if absent or unreadable (logged)."""
     stage = stage_dir(stage)
     name = _check_name(name)
     return _get(cache_path(stage), RECORDS, name, lambda node: json.loads(_read_text(node)),
-                _legacy_file(stage, RECORDS, name), _read_json, f"{stage}: no cached record {name!r}", cache=True)
+                f"{stage}: no cached record {name!r}", cache=True)
 
 
 def write_cache_table(stage: str | Path, name: str, frame: pd.DataFrame) -> None:
     _write_cache(cache_path(stage), TABLES, name, lambda group, key: _table_group(group, key, frame), _table_bytes(frame))
 
 
-def read_cache_table(stage: str | Path, name: str, *, legacy_csv: dict | Callable[[Path], pd.DataFrame] | None = None) -> pd.DataFrame:
-    """A table from the stage's cache; for an old run, from ``tables/<name>.csv``.  :class:`MissingEntry` if absent or
-    unreadable (logged)."""
+def read_cache_table(stage: str | Path, name: str) -> pd.DataFrame:
+    """A table from the stage's cache.  :class:`MissingEntry` if absent or unreadable (logged)."""
     stage = stage_dir(stage)
     name = _check_name(name)
-    return _get(cache_path(stage), TABLES, name, _decode_table, _legacy_file(stage, TABLES, name),
-                lambda path: _read_legacy_csv(path, legacy_csv), f"{stage}: no cached table {name!r}", cache=True)
+    return _get(cache_path(stage), TABLES, name, _decode_table, f"{stage}: no cached table {name!r}", cache=True)
 
 
 # ------------------------------------------------------------------------------------------------------ listing
@@ -1755,8 +1711,7 @@ def _describe(kind: str, node) -> str:
 
 def entries(stage: str | Path, *, cache: bool = False) -> dict[str, dict[str, str]]:
     """``{kind: {name: source}}`` of every entry of the stage (``cache=True``: of its cache); the source is the file
-    name, or the relative path of an old loose file.  Stored entries take precedence over old files of the same name.
-    A damaged file or group is logged and its entries are left out; damaged entries whose names can still be read are
+    name.  A damaged file or group is logged and its entries are left out; damaged entries whose names can still be read are
     listed (reading them raises :class:`DamagedEntry`)."""
     stage = stage_dir(stage)
     path = cache_path(stage) if cache else results_path(stage)
@@ -1776,36 +1731,15 @@ def entries(stage: str | Path, *, cache: bool = False) -> dict[str, dict[str, st
                 for name in names:
                     if not name.endswith(PENDING_SUFFIX):
                         out[kind][name] = path.name
-    if not cache:
-        tables = stage / "tables"
-        for kind in (TABLES, RECORDS, ARRAYS):
-            for legacy in sorted(tables.glob(f"*{LEGACY_SUFFIX[kind]}")) if tables.is_dir() else ():
-                out[kind].setdefault(legacy.stem, f"tables/{legacy.name}")
-        figures = stage / "figures"
-        for legacy in sorted(figures.glob("*.json")) if figures.is_dir() else ():
-            out[FIGURE_RECORDS].setdefault(legacy.stem, f"figures/{legacy.name}")
     return out
 
 
 def _shape(stage: Path, kind: str, name: str, source: str, *, cache: bool) -> str:
-    if source in (RESULTS_FILE, CACHE_FILE):
-        path = stage / source
-        state, value = _lookup(path, kind, name, lambda node: _describe(kind, node), cache=cache)
-        if state == FOUND:
-            return value
-        raise DamagedEntry(value or f"{path}: {kind}/{name} is no longer there")
     path = stage / source
-    if kind == TABLES:
-        try:
-            frame = pd.read_csv(path)
-        except pd.errors.EmptyDataError:           # an old run's table without columns
-            return "0 rows x 0 columns"
-        return f"{len(frame)} rows x {frame.shape[1]} columns"
-    if kind in (RECORDS, FIGURE_RECORDS):
-        value = json.loads(path.read_text())
-        size = f"{len(value)} keys" if isinstance(value, dict) else (f"{len(value)} items" if isinstance(value, list) else type(value).__name__)
-        return f"JSON {type(value).__name__}, {size}"
-    return ", ".join(f"{key} {tuple(np.shape(value))} {np.asarray(value).dtype}" for key, value in load_arrays(path).items())
+    state, value = _lookup(path, kind, name, lambda node: _describe(kind, node), cache=cache)
+    if state == FOUND:
+        return value
+    raise DamagedEntry(value or f"{path}: {kind}/{name} is no longer there")
 
 
 def stages_of(location: str | Path) -> list[Path]:
@@ -1829,15 +1763,12 @@ def _export(location: str | Path, directory: str | Path) -> tuple[list[Path], li
             for kind, names in entries(stage, cache=cache).items():
                 for name in names:
                     folder = directory / stage.name / ("cache" if cache else ("figures" if kind == FIGURE_RECORDS else "tables"))
-                    target = folder / f"{name}{LEGACY_SUFFIX[kind]}"
+                    target = folder / f"{name}{EXPORT_SUFFIX[kind]}"
                     try:
                         if kind == FIGURE_RECORDS:
                             value = read_figure_record(stage / "figures" / f"{name}.pdf")
                         else:
-                            try:
-                                value = _reader(kind, cache)(stage, name)
-                            except pd.errors.EmptyDataError:   # an old run's table without columns: written as it was
-                                value = pd.DataFrame()
+                            value = _reader(kind, cache)(stage, name)
                     except MemoryError:
                         raise
                     except Exception as error:   # noqa: BLE001 - reported, the rest is exported
@@ -1866,8 +1797,7 @@ def export(location: str | Path, directory: str | Path) -> list[Path]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m kappaccino.io.store",
-                                     description="List, print or export the results and cache of a run or stage "
-                                                 "(new HDF5 layout or old loose files).")
+                                     description="List, print or export the results and cache of a run or stage.")
     parser.add_argument("location", metavar="RUN_OR_STAGE_DIR", help="a run folder (results/<cluster>/<run>) or a stage folder (its init or final)")
     show = parser.add_mutually_exclusive_group()
     show.add_argument("--table", metavar="NAME", help="print the table NAME as CSV")
@@ -1894,10 +1824,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.table:
             reader = read_cache_table if args.cache else read_table
-            try:
-                frame = reader(stage, args.table)
-            except pd.errors.EmptyDataError:               # an old run's table without columns
-                frame = pd.DataFrame()
+            frame = reader(stage, args.table)
             frame.to_csv(sys.stdout, index=False)
             return 0
         if args.record:
@@ -1931,8 +1858,7 @@ def main(argv: list[str] | None = None) -> int:
                         raise
                     except Exception as error:   # noqa: BLE001 - listed as damaged, the rest is listed
                         shape, status = f"DAMAGED: {error}", 1
-                    print(f"  {kind[:-1] if kind != ARRAYS else kind:<14} {name:<48} {shape}"
-                          + ("" if source in (RESULTS_FILE, CACHE_FILE) else f"  [{source}]"))
+                    print(f"  {kind[:-1] if kind != ARRAYS else kind:<14} {name:<48} {shape}")
     return status
 
 

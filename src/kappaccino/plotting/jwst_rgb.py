@@ -332,34 +332,12 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
 
 # The redraw from a finished run's saved tables: no posterior, evaluator or determinant maps.
 
-# The columns of the in-memory image tables that are strings (a family id "1" must stay "1", not become 1).
-CATALOG_TEXT_COLUMNS = ('family_id', 'image_label', 'image_recovery_status')
-
-
-def read_saved_csv(path, text_columns=CATALOG_TEXT_COLUMNS):
-    """A table saved as CSV by an old run, with ``text_columns`` read as the strings they were written from (no NA
-    parsing), the other columns as pandas infers them."""
-    frame = pd.read_csv(path)
-    present = [c for c in text_columns if c in frame.columns]
-    if present:
-        text = pd.read_csv(path, usecols=present, dtype=str, keep_default_na=False)
-        for column in present:
-            frame[column] = text[column]
-    return frame
-
-
-def read_saved_table(tables, name, text_columns=CATALOG_TEXT_COLUMNS):
-    """The saved table ``name`` of the stage of ``tables`` as the pipeline held it: exactly as stored, or, for an old
-    run, its CSV with ``text_columns`` as strings (:func:`read_saved_csv`)."""
-    return store.read_table(tables, name, legacy_csv=lambda path: read_saved_csv(path, text_columns))
-
-
 def read_saved_extra_images(tables):
-    """The table ``image_recovery_extra_images`` as the pipeline holds it; the empty table if missing or empty."""
+    """The table ``image_recovery_extra_images`` as the pipeline holds it; the empty table if missing."""
     from ..diagnostics.image_recovery import common_extra_images
     try:
-        return read_saved_table(tables, 'image_recovery_extra_images', ('family_id',))
-    except (FileNotFoundError, pd.errors.EmptyDataError):
+        return store.read_table(tables, 'image_recovery_extra_images')
+    except store.MissingEntry:
         return common_extra_images(pd.DataFrame(), 1)
 
 
@@ -441,7 +419,7 @@ REDRAW_TABLES = ('image_fit_quality', 'posterior_image_residual_draws')
 def check_saved_draws(indices, tables, stem):
     """Refuse band draw ``indices`` (arrays ``<stem>``) that the saved image recovery (table
     ``posterior_image_residual_draws``) does not hold: their position contours would be empty."""
-    draws = store.read_table(tables, 'posterior_image_residual_draws', legacy_csv=dict(usecols=['posterior_index']))
+    draws = store.read_table(tables, 'posterior_image_residual_draws')
     recovered = set(draws['posterior_index'].astype(int))
     missing = sorted(set(np.asarray(indices, dtype=int).tolist()) - recovered)
     if missing:
@@ -452,8 +430,7 @@ def check_saved_draws(indices, tables, stem):
 
 
 def redraw_rgb_critical(run_dir, *, log=print):
-    """Draw the RGB critical overviews of a finished run again from its saved results (``final/results.h5``, or the
-    loose tables of an old run): the band of the arrays ``<stem>``, the catalog ``image_fit_quality``, the extra
+    """Draw the RGB critical overviews of a finished run again from its saved results (``final/results.h5``): the band of the arrays ``<stem>``, the catalog ``image_fit_quality``, the extra
     images and the position contours of the saved image recovery.  Run from the repository root (the run's catalog and imaging paths are
     relative to it).  The model description of the records comes from the run's ``final/artifacts/config.json``.
     Refuses, before writing anything, a run without a completed image recovery and a band whose draws the image
@@ -479,7 +456,7 @@ def redraw_rgb_critical(run_dir, *, log=print):
     config = rebuild_run_config(run_dir)
     shared_grf, grf_field = saved_grf_field(read_saved_config(run_dir), run_dir / 'final' / 'artifacts' / 'config.json')
     tables, figures = run_dir / 'final' / 'tables', run_dir / 'final' / 'figures'
-    catalog = read_saved_table(tables, 'image_fit_quality')
+    catalog = store.read_table(tables, 'image_fit_quality')
     extra = read_saved_extra_images(tables)
     reference = config.model.reference
     # ModelState.reference, as core.inputs.declared_model_inputs builds it.
@@ -567,8 +544,6 @@ def critical_quantile_band(determinants):
     lower,_,upper=critical_quantile_summary(determinants)
     return lower,upper,(lower<0)&(upper>0)
 
-
-render_jwst_rgb_critical = render_rgb_critical
 
 
 if __name__ == '__main__':
