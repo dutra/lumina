@@ -52,7 +52,7 @@ def main():
  table=load_image_catalog(Path('catalogs/m0416/canucs2025/images.yaml'))
  config=artifacts.load_config(Path('results/nov5a_nosigmainst/m0416_canucs2025/w500s250_allblocks/final/artifacts'))
  view=next(v for v in imaging_variants(config,overview_only=True)if v.figure_suffix=='_jwst')
- images,bands,display,_=load_cluster_imaging(view,config.model,config.paths.run_name);ref=images[rgb_reference_band(bands)]
+ images,bands,display,_=load_cluster_imaging(view,config.model,config.paths.figure_prefix);ref=images[rgb_reference_band(bands)]
  plt.style.use(Path(__file__).resolve().parents[1]/'src/lumina/plotting/style.mplstyle');plt.rcParams.update(PAPER_STYLE)
  out=args.output_dir;out.mkdir(parents=True,exist_ok=True);records=[]
  with PdfPages(out/'m0416_system_merge_review.pdf')as combined:

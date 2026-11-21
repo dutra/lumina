@@ -425,7 +425,7 @@ draws the same figures either way.
 Every setting of the stage lives in the `outputs` section of the configuration
 ({class}`~lumina.config.OutputsConfig`): the settings the modules share at its top level, then one section per
 module, named after it, with its `enabled` switch and the module's own settings. The section never changes a fit:
-it is not part of the run hash, a resume ignores it, and `lumina outputs --set` may change any of it.
+it is not part of the fit settings a resume compares and a run is matched by, and `lumina outputs --set` may change any of it.
 
 ```yaml
 outputs:
@@ -458,15 +458,15 @@ products alone. `runtime.skip_plots` turns the whole stage off.
 ### Rerunning the outputs of a finished run
 
 ```bash
-lumina outputs results/hera/w500s250t7_allblocks-3f9a1c
-lumina outputs results/hera/w500s250t7_allblocks-3f9a1c --only truth,mass
-lumina outputs results/hera/w500s250t7_allblocks-3f9a1c --render            # figures only, from the store
-lumina outputs results/hera/w500s250t7_allblocks-3f9a1c --compute --skip rgb
+lumina outputs results/hera/nov21a_w500s250t7_allblocks
+lumina outputs results/hera/nov21a_w500s250t7_allblocks --only truth,mass
+lumina outputs results/hera/nov21a_w500s250t7_allblocks --render            # figures only, from the store
+lumina outputs results/hera/nov21a_w500s250t7_allblocks --compute --skip rgb
 lumina outputs results/m0416_canucs2025/<run> --skip rgb --fail-fast --draws 32
 lumina outputs RUN --remap /home/dutra/sdev/burkelenscluster=$PWD --only truth
 lumina outputs RUN --all --set outputs.truth.deflection_true_fits=data/imaging/hera/defl.fits
 lumina outputs RUN --set outputs.rgb.enabled=false --set outputs.workers=8
-lumina outputs --list results/hera/w500s250t7_allblocks-3f9a1c
+lumina outputs --list results/hera/nov21a_w500s250t7_allblocks
 ```
 
 The command loads the saved run ({mod}`lumina.outputs.saved_run`) and runs the stage into its `final/` folder,
@@ -494,15 +494,16 @@ the modules. `--only A,B` runs A, B and the modules they require, enabled or not
 that require them on top of that: a module disabled in the configuration stays off, and `--all --skip rgb` runs every
 module but `rgb`. `--set outputs.FIELD=VALUE` or
 `--set outputs.MODULE.FIELD=VALUE` (repeatable, the syntax of the run command) changes a field of the `outputs`
-section before the pass. Anything outside that section is refused: settings in the run hash would no longer describe
-the saved fit, and the `paths` section, which the hash leaves out, names the run, the figure prefix and the imaging
+section before the pass. Anything outside that section is refused: a fit setting would no longer describe
+the saved fit, and the `paths` section names the run, the figure prefix and the imaging
 variants (`paths.figure_prefix=../../X` would write figures outside the run folder). `--draws N` sets
 `outputs.draws` and `outputs.image_draws` to N, as the run command's `--draws` does. `--set` and `--draws` hold for
 that pass only: `lumina outputs` never writes `final/artifacts/config.json`, whatever the pass mode and whether
 it succeeds or fails, so the next pass runs with the saved settings again unless it repeats them. What each module's
 compute used is kept in its completeness record (`settings`, with the draws), and a later pass warns about a module
 computed with other settings than its own (see [Settings of a compute](#settings-of-a-compute)). The run command
-differs: resuming a finished run (`lumina catalogs/hera --draws 8`) is a new run configuration, and it saves the
+differs: resuming a finished run (`lumina catalogs/hera --draws 8`, which finds the run with the same fit settings, or
+`lumina resume RUN --draws 8`) is a new run configuration, and it saves the
 new `outputs` section in `final/artifacts/config.json` before the outputs stage runs and leaves the rest of the saved
 configuration alone. Every write of a `config.json` is atomic (a temporary file in the same folder, renamed over the
 old one), so a crash never leaves a truncated file. `--list` prints the modules
@@ -512,7 +513,10 @@ saved `run_summary`. The exit code is 1 when a module failed, `--fail-fast`
 stopped the pass (one line names the error; the step logged its traceback), the pass failed outside the modules
 (writing the run summary, for example; the traceback is printed) or a render pass drew nothing (the command says
 why), and 2 for a usage
-error, a missing file or a refused `--set` or `--remap`. A `--set` value is checked before the pass, and so is the
+error, a missing file, a refused `--set` or `--remap`, or a run folder another process is working in. A full or
+compute pass locks the run folder (`run.lock`, see {doc}`run-files`) for as long as it runs and refuses a run that a
+fit, a resume or another pass holds; `--render` takes no lock and proceeds, since it only reads results already
+committed to `results.h5` and draws figures. A `--set` value is checked before the pass, and so is the
 whole `outputs` section of every run (`config.validate_outputs`, which calls each section's `validate`). An unknown
 field anywhere in the configuration is an error that names its dotted path (`outputs.rgb.bogus`). Every field under
 `outputs`, nested sections included (`outputs.rgb.display`, `outputs.image_solver`), must have the type it is
@@ -636,7 +640,7 @@ the settings check leaves out. Put the module class in a file of `src/lumina/out
 Three more places name every module: add an `autoclass` entry for the settings class to `docs/api/config.md`,
 describe the section in `docs/configuration.md` (the paragraph on `OutputsConfig`), and add the name to the list in
 `tests/test_output_modules.py::test_default_order_is_the_registry_order`, which hard-codes the registry order.
-Nothing else needs to change: the section is outside the run hash with the rest of `outputs`, and `--set
+Nothing else needs to change: the section is outside the fit settings with the rest of `outputs`, and `--set
 outputs.ggsl.FIELD=VALUE` already accepts it. The context (`ctx`) holds `config`, `state`,
 `posterior`, `audit`, `paths`, `stage`, `tables`, `figures`, `prefix`, `log`, `summary`, `products`, `mode`, `settings`,
 `completion` (product and render: the completeness record), `imaging(image_config)`, which loads each imaging variant

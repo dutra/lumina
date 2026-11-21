@@ -91,6 +91,11 @@ Each run writes to `<output_dir>/<run_name>/`: `init/` holds the search and the 
 figures and the lens maps. The documentation defines every [output file](https://kappaccino.readthedocs.io/en/latest/outputs.html)
 and every [posterior parameter](https://kappaccino.readthedocs.io/en/latest/posterior.html) with its units.
 
+The `lumina` command runs a catalog folder (`lumina catalogs/hera`) and names each new run once, by its date, a
+letter and its settings (`results/hera/nov21a_w500s250t7_allblocks`). Running the same command again resumes the run
+with the same fit settings, and `lumina resume RUN_DIR` continues a run with its own saved settings
+([run files](docs/run-files.md)).
+
 ## Mock validation
 
 ```python

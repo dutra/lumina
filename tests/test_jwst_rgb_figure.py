@@ -126,7 +126,7 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
     monkeypatch.setattr(image_position_contours, 'load_position_contours', lambda tables: {'curves': []})
     catalog=_overview_catalog()
     extra=pd.DataFrame(dict(family_id=['1'],x_model_arcsec=[.1],y_model_arcsec=[-.2]))
-    config=NS(paths=NS(run_name=cluster),outputs=NS(rgb=NS(candidate_catalog_path='must-not-read.json',figure_suffix='')),
+    config=NS(paths=NS(run_name='nov21a_x',figure_prefix=cluster),outputs=NS(rgb=NS(candidate_catalog_path='must-not-read.json',figure_suffix='')),
               model=NS(image_constraints=NS(catalog_path='')))
     if cluster == 'm0416':
         import json

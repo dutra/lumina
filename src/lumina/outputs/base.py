@@ -209,7 +209,7 @@ class OutputContext:
         if known is None:
             from ..imaging.cutouts import load_cluster_imaging
             try:
-                known = (key, load_cluster_imaging(image_config, self.config.model, self.config.paths.run_name), None)
+                known = (key, load_cluster_imaging(image_config, self.config.model, self.config.paths.figure_prefix), None)
             except FileNotFoundError as error:
                 known = (key, None, error)
                 if not required:            # missing external imaging must not prevent the other outputs

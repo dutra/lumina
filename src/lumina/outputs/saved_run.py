@@ -64,23 +64,21 @@ def _set(payload, dotted: str, value) -> None:
             node = node[key][index]
 
 
-def remap_paths(config, remaps, *, log=print):
-    """``config`` with each saved path under ``OLD`` (a whole path prefix) moved under ``NEW`` instead, for every
-    ``(OLD, NEW)`` of ``remaps`` (the first that matches wins).  Only path-valued fields (:func:`path_fields`) are
-    considered: catalogs, imaging folders, truth and deflection maps, candidate catalogs; never a name such as
-    ``paths.run_name`` or ``paths.figure_prefix``.  A relative saved path is taken relative to the working directory
-    (as the command reads it) and compared as that absolute path.  Each field changed is logged.
+def remap_payload(payload, names, remaps):
+    """``(payload, changed)``: a copy of the configuration dictionary ``payload`` (``to_json_dict``, or a part of it
+    such as the init signature) with each path field of ``names`` (:func:`path_fields`) that it holds and that lies
+    under ``OLD`` moved under ``NEW``, for the first ``(OLD, NEW)`` of ``remaps`` that matches, and the list of
+    ``(name, old value, new value)`` changed.  A relative saved path is taken relative to the working directory and
+    compared as that absolute path.
 
     Raises
     ------
     ValueError
         When an ``OLD`` is not an absolute path, or is the root ``/``.
     """
+    import copy
     import os
-    from ..config import LensClusterSolverConfig
     remaps = [(str(old), str(new)) for old, new in remaps]
-    if not remaps:
-        return config
     for old, _ in remaps:
         if not os.path.isabs(old):
             raise ValueError(f"--remap {old}=...: OLD must be an absolute path (a prefix of the saved paths, as "
@@ -88,10 +86,10 @@ def remap_paths(config, remaps, *, log=print):
         if not old.rstrip("/"):
             raise ValueError("--remap /=...: OLD is the root, which would move every absolute path; give the saved "
                              "folder that moved")
-    payload = config.to_json_dict()
+    payload = copy.deepcopy(payload)
     flat = _flatten(payload)
     changed = []
-    for name in path_fields(config):
+    for name in names:
         value = flat.get(name)
         if not isinstance(value, str) or not value:
             continue
@@ -103,19 +101,80 @@ def remap_paths(config, remaps, *, log=print):
                 _set(payload, name, moved)
                 changed.append((name, value, moved))
                 break
+    return payload, changed
+
+
+def relocate(config, remaps, *, log=print):
+    """``(moved, saved_form)``: ``config`` with each saved path under ``OLD`` (a whole path prefix) moved under ``NEW``
+    instead, for every ``(OLD, NEW)`` of ``remaps`` (the first that matches wins), and the inverse, a function that
+    gives any configuration derived from ``moved`` (other outputs settings, another run folder) back with the moved
+    fields as they were saved.  Only path-valued fields (:func:`path_fields`) are considered: catalogs, imaging
+    folders, truth and deflection maps, candidate catalogs; never a name such as ``paths.run_name`` or
+    ``paths.figure_prefix``.  A relative saved path is taken relative to the working directory (as the command reads
+    it) and compared as that absolute path.  Each field moved is logged, and a remap that moves nothing is a warning.
+
+    Raises
+    ------
+    ValueError
+        When an ``OLD`` is not an absolute path, or is the root ``/``.
+    """
+    from ..config import LensClusterSolverConfig
+    remaps = [(str(old), str(new)) for old, new in remaps]
+    if not remaps:
+        return config, None
+    payload, changed = remap_payload(config.to_json_dict(), path_fields(config), remaps)
     for where, old, new in changed:
         log(f"[outputs] remap {where}: {old} -> {new}")
     if not changed:
-        log(f"[outputs] remap: no saved path starts with {', '.join(old for old, _ in remaps)}")
-    return LensClusterSolverConfig.from_json_dict(payload)
+        log(f"[outputs] WARNING remap: no saved path starts with {', '.join(old for old, _ in remaps)}; nothing moved")
+
+    def saved_form(moved_config):
+        restored = moved_config.to_json_dict()
+        flat = _flatten(restored)
+        for where, old, new in changed:
+            if flat.get(where) == new:
+                _set(restored, where, old)
+        return LensClusterSolverConfig.from_json_dict(restored)
+
+    return LensClusterSolverConfig.from_json_dict(payload), saved_form
+
+
+def remap_paths(config, remaps, *, log=print):
+    """``config`` with its saved paths moved as :func:`relocate` moves them.
+
+    Raises
+    ------
+    ValueError
+        When an ``OLD`` is not an absolute path, or is the root ``/``.
+    """
+    return relocate(config, remaps, log=log)[0]
+
+
+def check_outputs_only(overrides) -> dict:
+    """The nested mapping of the ``section.field=value`` assignments ``overrides``, refused unless every one names
+    the ``outputs`` section (``config.REPORT_ONLY_SECTIONS``).  It reads no configuration, so a command can refuse a
+    fit setting before it starts anything.
+
+    Raises
+    ------
+    ValueError
+        For a malformed assignment or a setting outside ``outputs``, naming the refused sections.
+    """
+    from .. import config as _config
+    from ..run_files import _dotted
+    overlay = _dotted(tuple(overrides))
+    refused = sorted(section for section in overlay if section not in _config.REPORT_ONLY_SECTIONS)
+    if refused:
+        allowed = ", ".join(f"{section}.*" for section in _config.REPORT_ONLY_SECTIONS)
+        raise ValueError(f"--set may change only the outputs section ({allowed}); refused: {', '.join(refused)}")
+    return overlay
 
 
 def apply_overrides(config, overrides):
     """``config`` with the ``section.field=value`` assignments ``overrides`` (the syntax of ``lumina --set``,
     ``run_files.read_run``), each of which must name a field of the ``outputs`` section
     (``config.REPORT_ONLY_SECTIONS``): ``outputs.FIELD`` or ``outputs.MODULE.FIELD``.  Everything else describes the
-    saved fit or where its products go (``paths``, which the run hash leaves out but which names the run folder and the
-    figure prefix).
+    saved fit or where its products go (``paths``, which names the run folder and the figure prefix).
 
     Raises
     ------
@@ -124,15 +183,11 @@ def apply_overrides(config, overrides):
         refuses (``config.validate_outputs``).
     """
     from .. import config as _config
-    from ..run_files import _dotted, _merge, parse_value
+    from ..run_files import _merge, parse_value
     overrides = tuple(overrides)
     if not overrides:
         return config
-    overlay = _dotted(overrides)
-    refused = sorted(section for section in overlay if section not in _config.REPORT_ONLY_SECTIONS)
-    if refused:
-        allowed = ", ".join(f"{section}.*" for section in _config.REPORT_ONLY_SECTIONS)
-        raise ValueError(f"--set may change only the outputs section ({allowed}); refused: {', '.join(refused)}")
+    overlay = check_outputs_only(overrides)
     try:
         changed = _config.LensClusterSolverConfig.from_json_dict(_merge(config.to_json_dict(), _config._jsonable(parse_value(overlay))))
     except (TypeError, AttributeError) as error:
