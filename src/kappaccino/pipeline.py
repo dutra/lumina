@@ -940,6 +940,11 @@ def run_final(config: LensClusterSolverConfig, init: InitResult) -> RunResult:
                 log(f"[final] model comparison written ({time.perf_counter() - wbic_started:.0f}s)")
             audit = json.loads((stage.artifacts / artifacts.AUDIT_FILE).read_text())
             write_membership_table(state, evaluator, posterior.samples, stage.tables, log=log)
+            if not runtime.skip_plots:
+                # The outputs section is outside the hash, so this pass may use other settings than the saved ones:
+                # the saved configuration takes them, so that it describes the products this pass rewrites.
+                from dataclasses import replace
+                artifacts.save_config(stage.artifacts, replace(artifacts.load_config(stage.artifacts), outputs=config.outputs))
             outputs_started = time.perf_counter()
             summary = write_outputs(config, state, evaluator, posterior, audit, stage, log=log) if not runtime.skip_plots else {}
             timing = {"sampling": 0.0, "outputs": time.perf_counter() - outputs_started}

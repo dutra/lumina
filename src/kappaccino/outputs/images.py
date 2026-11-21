@@ -13,17 +13,14 @@ COVERAGE_TABLE = "position_coverage"
 
 def write_true_lens_rms(stage: Path, image_df: pd.DataFrame, deflection_fits, cosmo_config: dict, *, log=print) -> dict | None:
     """The true-lens RMS of the image catalog (``diagnostics.true_lens``): the per-image table ``true_lens_residuals``
-    and the record ``true_lens_rms`` (rms, bootstrap band over families, amplitude, images left out) in results.h5.
-    Report-only: an unreadable map or no usable image logs the reason and returns None."""
+    and the record ``true_lens_rms`` (rms, bootstrap band over families, amplitude, images left out) in results.h5;
+    returns the record.  The caller runs it only with a configured map and observed images; an unreadable or malformed
+    map, or a catalog the map cannot be fitted to, raises (a failed step)."""
     from ..diagnostics.exact_images import astropy_cosmology
     from ..diagnostics.true_lens import true_lens_residuals, true_lens_rms
     from ..io import store
-    try:
-        table, amplitude = true_lens_residuals(image_df, deflection_fits, astropy_cosmology(cosmo_config))
-        record = {**true_lens_rms(table), "amplitude": amplitude, "deflection_fits": str(deflection_fits)}
-    except (OSError, KeyError, IndexError, ValueError) as error:
-        log(f"[outputs] true-lens RMS skipped: {type(error).__name__}: {error}")
-        return None
+    table, amplitude = true_lens_residuals(image_df, deflection_fits, astropy_cosmology(cosmo_config))
+    record = {**true_lens_rms(table), "amplitude": amplitude, "deflection_fits": str(deflection_fits)}
     with store.batch(stage):
         store.write_table(stage, "true_lens_residuals", table)
         store.write_record(stage, TRUE_LENS_RECORD, record)
@@ -43,7 +40,7 @@ class ImagesModule(OutputModule):
     Product, read from the store: ``{"image_df": the table image_fit_quality, "recovery": {name: table} for every
     table the fingerprint record lists plus position_coverage, "true_lens": the record true_lens_rms when the last
     compute wrote it, else None}``.  Render: the residual histogram and the image recovery figure, both left out
-    when no image was observed."""
+    when no image was observed and neither drawn after a failed recovery (the module then has no product)."""
 
     name = "images"
     description = ("image recovery (reused when saved for the same draws), position coverage, fit numbers, true-lens "
@@ -93,13 +90,14 @@ class ImagesModule(OutputModule):
 
     def render(self, ctx: OutputContext) -> None:
         from ..plotting import plots
-        images = ctx.products[self.name]
-        image_df, recovery = images["image_df"], images["recovery"]
-        if image_df.empty:
+        # After a failed recovery there is no product: both steps are skipped (not drawn) without reading it.
+        images = lambda: ctx.products[self.name]
+        if ctx.computed("recovery") and images()["image_df"].empty:
             return
-        ctx.render_step("residual_histogram", plots.plot_image_residual_histogram, image_df,
-                        plots.figure_path(ctx.figures, "image_residual_histogram.pdf", ctx.prefix),
-                        draws=recovery.get("posterior_image_residual_draws"), true_lens=images["true_lens"], log=ctx.log,
-                        needs="recovery")
-        ctx.render_step("recovery_figure", plots.plot_image_recovery, image_df, recovery["image_recovery_extra_images"],
-                        plots.figure_path(ctx.figures, "image_recovery.pdf", ctx.prefix), needs="recovery")
+        ctx.render_step("residual_histogram", lambda: plots.plot_image_residual_histogram(
+            images()["image_df"], plots.figure_path(ctx.figures, "image_residual_histogram.pdf", ctx.prefix),
+            draws=images()["recovery"]["posterior_image_residual_draws"], true_lens=images()["true_lens"], log=ctx.log),
+            needs="recovery")
+        ctx.render_step("recovery_figure", lambda: plots.plot_image_recovery(
+            images()["image_df"], images()["recovery"]["image_recovery_extra_images"],
+            plots.figure_path(ctx.figures, "image_recovery.pdf", ctx.prefix)), needs="recovery")

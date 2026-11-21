@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+import pytest
 from astropy.cosmology import FlatLambdaCDM
 from astropy.io import fits
 
@@ -192,14 +193,17 @@ def test_true_lens_with_no_usable_image_raises(tmp_path):
         true_lens_rms(table)
 
 
-def test_outputs_skip_the_true_lens_rms_on_a_missing_map(monkeypatch, tmp_path):
+def test_a_missing_configured_map_fails_the_true_lens_rms(monkeypatch, tmp_path):
     from kappaccino.io import store
     from kappaccino.outputs.images import write_true_lens_rms
     messages = []
-    record = write_true_lens_rms(tmp_path, _catalog(10.0, families=5), tmp_path / "missing.fits", {"H0": 70.0, "Om0": 0.3}, log=messages.append)
-    assert record is None and messages[0].startswith("[outputs] true-lens RMS skipped: ")
-    assert not store.has_record(tmp_path, "true_lens_rms")
-    labels, _ = _legend(monkeypatch, lambda: plots.plot_image_residual_histogram(pd.DataFrame(), tmp_path / "h.pdf", draws=_draws(), true_lens=record))
+    # A configured map that cannot be read is an error (the step fails), never a quiet skip.
+    with pytest.raises(OSError):
+        write_true_lens_rms(tmp_path, _catalog(10.0, families=5), tmp_path / "missing.fits", {"H0": 70.0, "Om0": 0.3},
+                            log=messages.append)
+    assert messages == [] and not store.has_record(tmp_path, "true_lens_rms")
+    # Without the record the histogram has no true-lens line.
+    labels, _ = _legend(monkeypatch, lambda: plots.plot_image_residual_histogram(pd.DataFrame(), tmp_path / "h.pdf", draws=_draws(), true_lens=None))
     assert len(labels) == 2
 
 

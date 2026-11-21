@@ -28,19 +28,26 @@ def variant_label(image_config) -> str:
     return image_config.figure_suffix.lstrip('_') or 'primary'
 
 
-def fit_covariance_errors(stage):
+def fit_covariance_errors(stage, *, note):
     """The table ``covariance_errors_both_planes`` when the last compute of ``fit`` wrote it (its completeness
-    record), else None."""
+    record), else None, after ``note`` (``OutputContext.note``) is called with why: the covariance cutouts are then
+    drawn without their posterior interval lines."""
     from ..io import store
     from .base import completion_name
     try:
         record = store.read_record(stage, completion_name("fit"))
     except store.MissingEntry:
-        return None
-    step = (record.get("steps") or {}).get("covariance", {})
-    if step.get("status") != "done" or not step.get("wrote"):
-        return None
-    return store.read_table(stage, "covariance_errors_both_planes")
+        why = "fit was never computed here"
+    else:
+        step = record["steps"].get("covariance") if "steps" in record else None    # no steps: interrupted compute
+        if step is not None and step["status"] == "done" and step["wrote"]:
+            return store.read_table(stage, "covariance_errors_both_planes")
+        why = ("the last compute of fit did not finish" if "steps" not in record else
+               "its covariance step did not run" if step is None else
+               f"its covariance step {step['status']}" if step["status"] != "done" else "its covariance step wrote nothing")
+    note(f"no posterior interval lines in the covariance cutouts: no table covariance_errors_both_planes from the last "
+         f"compute of fit ({why})")
+    return None
 
 
 def image_tables(ctx: OutputContext):
@@ -110,7 +117,7 @@ class RGBModule(OutputModule):
                 continue
             variant = variant_config(config, image_config)
             ctx.step(f"covariance_cutouts:{label}", lambda: save_covariance_cutouts(
-                variant, state, ctx.draws, paths, imaging, intervals=fit_covariance_errors(ctx.stage), log=log))
+                variant, state, ctx.draws, paths, imaging, intervals=fit_covariance_errors(ctx.stage, note=ctx.note), log=log))
             ctx.step(f"rgb_critical:{label}", lambda: save_rgb_critical(variant, state, ctx.draws, image_df, extra, imaging, tables, log=log))
             view = overview_variant(image_config, overview_configs)
             if view is None:

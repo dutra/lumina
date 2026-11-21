@@ -1,4 +1,6 @@
 """Photometry must remain attached to the right image when catalogs change."""
+from pathlib import Path
+
 import pytest
 import h5py
 import numpy as np
@@ -13,19 +15,19 @@ def test_marker_matches_survive_reordering_but_reject_moved_images(tmp_path):
         phot_id=[1,2],match_separation_arcsec=[.1,.2],m_F200W_AB=[24.,28.],
         valid_photometry=[True,True])).to_csv(path,index=False)
     catalog=pd.DataFrame(dict(image_label=['b','a','new'],x_obs_arcsec=[0.,0.,0.],y_obs_arcsec=[0.,0.,0.]))
-    result=marker_photometry(catalog,(3,64.,-24.),path)
+    result=marker_photometry(catalog,(3,64.,-24.),pd.read_csv(path))
     np.testing.assert_allclose(result.m_F200W_AB[:2],[28,24])
     assert result.marker_area_pt2.iloc[1]>result.marker_area_pt2.iloc[0]
     assert result.marker_area_pt2.iloc[2]==9
     catalog.loc[1,'y_obs_arcsec']=1
-    result=marker_photometry(catalog,(3,64.,-24.),path)
+    result=marker_photometry(catalog,(3,64.,-24.),pd.read_csv(path))
     assert not result.valid_photometry.iloc[1]
     assert result.marker_area_pt2.iloc[1]==9
 
 
-def test_missing_photometry_keeps_all_image_markers(tmp_path):
+def test_no_photometry_keeps_all_image_markers():
     catalog=pd.DataFrame(dict(image_label=['a','b'],x_obs_arcsec=[0.,1.],y_obs_arcsec=[0.,1.]))
-    result=marker_photometry(catalog,(3,64.,-24.),tmp_path/'missing.csv')
+    result=marker_photometry(catalog,(3,64.,-24.))
     assert len(result)==2
     assert not result.valid_photometry.any()
     assert (result.marker_area_pt2==9).all()
@@ -124,7 +126,8 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
     monkeypatch.setattr(image_position_contours, 'load_position_contours', lambda tables: {'curves': []})
     catalog=_overview_catalog()
     extra=pd.DataFrame(dict(family_id=['1'],x_model_arcsec=[.1],y_model_arcsec=[-.2]))
-    config=NS(paths=NS(run_name=cluster),outputs=NS(rgb=NS(candidate_catalog_path='must-not-read.json')))
+    config=NS(paths=NS(run_name=cluster),outputs=NS(rgb=NS(candidate_catalog_path='must-not-read.json',figure_suffix='')),
+              model=NS(image_constraints=NS(catalog_path='')))
     if cluster == 'm0416':
         import json
         candidate_path = tmp_path/'candidates.json'
@@ -139,6 +142,14 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
     rgb.save_rgb_critical(config,state,Draws(),catalog,extra,imaging,tmp_path,log=lambda _:None)
     if cluster == 'm0416':
         candidate_path.unlink()             # the render draws the candidates the compute saved, never the file
+        # ... and sizes the markers from the photometry the compute saved, never from the packaged file.
+        matched = store.read_table(tmp_path, 'hst_rgb_critical_z9_marker_photometry')
+        assert matched.image_label.tolist() == ['1.a', '2.b'] and 'marker_area_pt2' in matched
+        assert store.read_record(tmp_path, 'hst_rgb_critical_z9_marker_photometry') == {'path': str(rgb.MARKER_PHOTOMETRY)}
+        monkeypatch.setattr(rgb, 'MARKER_PHOTOMETRY', tmp_path / 'must-not-read.csv')
+        monkeypatch.setattr(pd, 'read_csv', lambda *a, **k: pytest.fail('the render read a csv file'))
+    else:
+        assert not store.has_table(tmp_path, 'hst_rgb_critical_z9_marker_photometry')
     assert rgb.render_saved_rgb_critical(config,state,catalog,extra,imaging,output,tmp_path,log=lambda _:None)[0] == output
     if cluster == 'm0416':
         shown = store.read_figure_record(output.with_name(output.stem + '_candidates.pdf'))
@@ -155,7 +166,8 @@ def test_simulated_hst_overview_has_no_m0416_overlays(tmp_path, monkeypatch, clu
     assert 'stretch_sticks' not in info and 'stretch_direction' not in info and info['redrawn_from_tables'] is False
     assert info['recovered_position_probability'] == .682689492 and info['recovered_position_contour_scale'] == 4.0
     assert info['candidate_catalog'] is None
-    assert (info['marker_photometry'] is None) == (cluster != 'm0416')
+    assert info['marker_photometry'] == (str(Path(rgb.__file__).parents[1] / 'data' / 'm0416_image_f200w_photometry.csv')
+                                         if cluster == 'm0416' else None)
     assert info['insets'] is None
     assert info['magnitude_band'] == []
     assert store.has_arrays(tmp_path,'hst_rgb_critical_z9') and store.has_record(tmp_path,'hst_rgb_critical_z9_band')
@@ -270,7 +282,7 @@ def _redraw_config(run):
     from types import SimpleNamespace as NS
     image_config=NS(bands=('F814W',),image_dir='fake',figure_suffix='',candidate_catalog_path=None)
     return NS(paths=NS(run_name=run.name,figure_prefix='hera'),outputs=NS(rgb=image_config),
-              model=NS(reference=NS(reference=3,ra0_deg=64.,dec0_deg=-24.),image_constraints=None))
+              model=NS(reference=NS(reference=3,ra0_deg=64.,dec0_deg=-24.),image_constraints=NS(catalog_path='')))
 
 
 FAKE_IMAGING=({'F814W':object()},('F814W',),None,'hera')
@@ -546,9 +558,10 @@ systems:
 ''')
     config = NS(model=NS(image_constraints=NS(catalog_path=path)))
     catalog = pd.DataFrame(dict(image_label=['1.b', '1.a', 'new'], x_obs_arcsec=[0.,0.,0.], y_obs_arcsec=[0.,0.,0.]))
-    result = overview_marker_photometry(config, catalog, (3,64.,-24.), None, 'hst_rgb_critical_z9')
+    from kappaccino.plotting.jwst_rgb import marker_photometry
+    result = overview_marker_photometry(config, catalog, marker_photometry(catalog, (3,64.,-24.)), 'hst_rgb_critical_z9')
     np.testing.assert_allclose(result.magnitude_AB[:2], [28.,24.])
     np.testing.assert_allclose(result.marker_area_pt2, [9.,16*10**.4,9.])
     assert result.valid_photometry.tolist() == [True, True, False]
-    assert rgb_overview_stem(NS(), ['F435W','F606W','F814W']) == 'hst_rgb_critical_z9'
-    assert rgb_overview_stem(NS(), ['F150W','F200W','F444W']) == 'jwst_rgb_critical_z9'
+    assert rgb_overview_stem(NS(figure_suffix=''), ['F435W','F606W','F814W']) == 'hst_rgb_critical_z9'
+    assert rgb_overview_stem(NS(figure_suffix=''), ['F150W','F200W','F444W']) == 'jwst_rgb_critical_z9'

@@ -13,13 +13,18 @@ Each phase is a sequence of named steps (:meth:`OutputContext.step`).  A step th
 and recorded as failed, and the module goes on with its other steps; a step that needs the result of a failed one is
 skipped with the reason (:meth:`OutputContext.skip_step`, :meth:`OutputContext.render_step`).  A module with a failed
 step ends as "failed" but keeps its product; a module that cannot give its dependents what they need raises
-(:class:`ModuleUnavailable` after its failed steps), and is then failed with no product.
+(:class:`ModuleUnavailable` after its failed steps), and is then failed with no product, after its render (in a full
+pass) has drawn the figures whose compute steps succeeded.
 
 At the start of its compute a module's completeness record ``output_module_<name>`` (in ``results.h5``) is set to
-incomplete, and at the end it says whether every compute step ran (``complete``: none failed or was skipped), with the
-step statuses and the reporting draws the compute used.  A render pass renders only modules whose record is complete;
-any other module is failed with :class:`ModuleUnavailable` and the hint to run its compute first.  At the end of every
-pass the saved records are checked for modules computed over different draws (:func:`check_draws`).
+incomplete, and at the end it holds the step statuses, whether every compute step ran (``complete``: none failed or
+was skipped; for information), whether the compute gave no product (``unavailable``: the error it raised, else None)
+and the reporting draws the compute used.  Completeness is per step: a render step is drawn when the compute step it
+needs finished and wrote in the module's last compute, whatever the other steps did.  A render pass refuses a module
+(:class:`NotComputed`) only when it has no record of a compute with its steps (never computed here, or interrupted
+before the end); otherwise it draws what it can, and the module ends as failed when a compute step of its last compute
+failed or a render step could not be drawn.  At the end of every pass the saved records are checked for modules
+computed over different draws (:func:`check_draws`).
 
 The runner (:func:`run_modules`) orders the modules by what they need (``requires``, hard: the module reads
 ``ctx.products`` of those) and by what they should follow (``after``, ordering only), stably with respect to the
@@ -63,8 +68,13 @@ class ComputeOnly(RuntimeError):
 
 class ModuleUnavailable(RuntimeError):
     """Raised by a module that cannot give its dependents what they need (its essential step failed, which was logged,
-    or in a render pass its compute was never completed): the module is failed with no product and the modules that
-    require it are skipped."""
+    or in a render pass its last compute gave no product or never recorded its steps): the module is failed with no
+    product and the modules that require it are skipped."""
+
+
+class NotComputed(ModuleUnavailable):
+    """Raised in a render pass for a module with no record of a compute that recorded its steps (never computed in this
+    stage, or interrupted before the end of its compute): there is nothing to draw from."""
 
 
 class OutputContext:
@@ -97,6 +107,7 @@ class OutputContext:
         self._phase: str | None = None
         self._step: str | None = None
         self._steps: dict[str, dict] = {}             # the compute steps
+        self._notes: list[str] | None = None          # what the running step noted (:meth:`note`)
         self._render_steps: dict[str, dict] = {}
         self._completion: dict[str, Any] | None = None  # the completeness record render and product read
         self._fail_fast = False
@@ -202,6 +213,13 @@ class OutputContext:
             self._imaging.append(known)
         _, imaging, error = known
         if imaging is None and required:
+            if image_config.image_dir != self.config.outputs.rgb.image_dir:
+                # The extra JWST variant: imaging.cutouts.imaging_variants builds its folder, no field names it.
+                raise FileNotFoundError(
+                    f"the last compute drew this imaging variant, but its imaging cannot be loaded from {image_config.image_dir} "
+                    f"({error}); that folder is not a configuration field: imaging.cutouts.imaging_variants builds it "
+                    f"relative to the working directory (here {Path(image_config.image_dir).resolve()}), so --remap "
+                    f"cannot move it: run the command from the repository root, where {image_config.image_dir} is found")
             from .saved_run import REMAP_HINT
             raise FileNotFoundError(f"the last compute drew this imaging variant, but its imaging cannot be loaded from "
                                     f"outputs.rgb.image_dir = {image_config.image_dir} ({error}); {REMAP_HINT}")
@@ -217,10 +235,10 @@ class OutputContext:
         """Run one step of the current module's phase, ``fn(*args, **kwargs)``, and return its result.  The step's
         status and wall time go to the module's record (``steps`` for compute, ``render_steps`` for render) and the
         log (``[outputs] <module>.<step>``).  A compute step that returns None is recorded as having written nothing
-        (``wrote`` False), so render skips what depends on it (:meth:`computed`).  An exception (not
-        KeyboardInterrupt or SystemExit) is logged with its traceback and recorded, and the step returns None so that
-        the module goes on; :meth:`ok` tells a failed step from one that returned None.  With ``fail_fast`` the
-        exception is raised again.
+        (``wrote`` False), so render skips what depends on it (:meth:`computed`).  What the step noted
+        (:meth:`note`) goes to its record as ``notes``.  An exception (not KeyboardInterrupt or SystemExit) is logged
+        with its traceback and recorded, and the step returns None so that the module goes on; :meth:`ok` tells a
+        failed step from one that returned None.  With ``fail_fast`` the exception is raised again.
 
         Raises
         ------
@@ -234,12 +252,14 @@ class OutputContext:
         self._check_declared(name, self._phase)
         label, records = self._label(name), self._records()
         started = time.perf_counter()
-        self._step = name
+        self._step, self._notes = name, []
+        input_step = self._phase == "render" and name.split(":")[0] in module.input_steps
         try:
             result = fn(*args, **kwargs)
         except Exception as error:
             seconds = time.perf_counter() - started
-            records[name] = {"status": "failed", "seconds": seconds, "error": f"{type(error).__name__}: {error}"}
+            records[name] = {"status": "failed", "seconds": seconds, "error": f"{type(error).__name__}: {error}",
+                             **({"notes": self._notes} if self._notes else {}), **({"input": True} if input_step else {})}
             self.log(f"[outputs] {label}: FAILED after {seconds:.1f}s: {type(error).__name__}: {error}\n"
                      f"{traceback.format_exc().rstrip()}")
             if self._fail_fast:
@@ -247,15 +267,32 @@ class OutputContext:
                 raise
             return None
         finally:
-            self._step = None
+            notes, self._step, self._notes = self._notes, None, None
         seconds = time.perf_counter() - started
         records[name] = {"status": "done", "seconds": seconds}
         if self._phase == "compute":
             records[name]["wrote"] = result is not None
-        elif name.split(":")[0] in module.input_steps:
+        elif input_step:
             records[name]["input"] = True         # loaded what the figures read, drew nothing (rendered_anything)
+        if notes:
+            records[name]["notes"] = notes
         self.log(f"[outputs] {label}: done in {seconds:.1f}s")
         return result
+
+    def note(self, message: str) -> None:
+        """Log ``message`` for the running step (``[outputs] <module>.<step>: <message>``) and add it to the step's
+        record (``notes``): for a step that goes on without something it would have used, so that the omission
+        leaves a trace.
+
+        Raises
+        ------
+        RuntimeError
+            Outside a step.
+        """
+        if self._notes is None:
+            raise RuntimeError("OutputContext.note is for the running step: call it inside ctx.step")
+        self._notes.append(message)
+        self.log(f"[outputs] {self._label(self._step)}: {message}")
 
     def _check_declared(self, name: str, phase: str) -> None:
         """Raise RuntimeError unless ``name`` (its part before any ``:``) is a declared step of ``phase`` of the
@@ -272,9 +309,9 @@ class OutputContext:
 
     def skip_step(self, name: str, reason: str) -> None:
         """Record the step ``name`` of the current module's phase as skipped, with the reason (logged).  Only for a
-        step that cannot run because another one failed: in a compute, a skipped step makes the compute incomplete
-        (so its module cannot be rendered until it is computed again).  A step that does not apply to this run runs
-        and returns None instead (``wrote`` false), and render leaves its figure out."""
+        step that cannot run because another one failed: in a compute, the render steps that need a skipped step are
+        skipped too (not drawn), and the compute is recorded as incomplete.  A step that does not apply to this run
+        runs and returns None instead (``wrote`` false), and render leaves its figure out."""
         self._check_declared(name, self._phase)
         self._records()[name] = {"status": "skipped", "seconds": 0.0, "reason": reason}
         self.log(f"[outputs] {self._label(name)}: skipped ({reason})")
@@ -290,13 +327,14 @@ class OutputContext:
     def computed(self, name: str) -> bool:
         """Whether the compute step ``name`` of the current module ran and wrote its entries (did not return None),
         according to :attr:`completion`."""
-        record = self.completion.get("steps", {}).get(name, {})
-        return record.get("status") == "done" and bool(record.get("wrote"))
+        record = self.completion["steps"].get(name)              # None: the step did not run
+        return record is not None and record["status"] == "done" and record["wrote"]
 
     def render_step(self, name: str, fn: Callable, *args, needs: str | Sequence[str] | None = None, **kwargs):
         """:meth:`step` for a render step that draws what the compute steps ``needs`` (default: the compute step of the
-        same name) saved.  When one of them failed or was skipped, the step is skipped with the reason; when one ran
-        but wrote nothing (it did not apply), the step is left out silently; otherwise it runs.
+        same name) saved in the module's last compute, whatever its other steps did.  When one of them failed, was
+        skipped or did not run, the step is skipped with the reason (it could not be drawn); when one ran but wrote
+        nothing (it did not apply), the step is left out silently; otherwise it runs.
 
         Raises
         ------
@@ -310,9 +348,9 @@ class OutputContext:
         self._check_declared(name, "render")
         for need in needs:
             self._check_declared(need, "compute")
-        steps = self.completion.get("steps", {})
+        steps = self.completion["steps"]
         for need in needs:
-            status = steps.get(need, {}).get("status", "not run")
+            status = steps[need]["status"] if need in steps else "not run"
             if status != "done":
                 self.skip_step(name, f"compute step {need} {status}")
                 return None
@@ -453,7 +491,9 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
     product); ``skip`` removes modules; ``disabled`` names the modules switched off in the configuration
     (:func:`disabled_modules`), which are recorded as disabled and do not run.  A module that requires a skipped,
     disabled, inactive or failed-without-product one is skipped too.  A failing step is recorded and the module goes on
-    (:meth:`OutputContext.step`); an error outside the steps fails the module, and the other modules still run.
+    (:meth:`OutputContext.step`); an error outside the steps fails the module, and the other modules still run.  A
+    module ends as failed when a compute step failed (in a render pass: in its last compute) or a render step failed or
+    could not be drawn; the record of a module refused in a render pass for want of a compute has ``not_computed``.
     ``fail_fast`` re-raises the first error instead.  ``checkpoint`` is called once, before the first module with
     ``checkpoint`` set that runs.  Every module of the plan gets a record in ``ctx.summary["modules"]``: ``status``
     ("done", "disabled", "inactive", "skipped" or "failed"),
@@ -484,19 +524,22 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
             continue
         missing = next((r for r in module.requires if r not in ctx.products), None)
         if missing is not None:
-            required = records.get(missing, {})
-            status = required.get("status")
+            required = records[missing]
+            status = required["status"]
             reason = f"requires {missing}, which was {status}" if status != "failed" else f"requires {missing}, which failed without a product"
             records[name] = {"status": "skipped", "mode": ctx.mode, "seconds": 0.0, "reason": reason}
             if status == "failed" or "failed_requirement" in required:
                 # Not the user's choice: what this module would have computed from is gone (merged_summary).
                 records[name]["failed_requirement"] = required.get("failed_requirement", missing)
+            elif status == "disabled" or "disabled_requirement" in required:
+                # A requirement switched off in this pass: this record replaces the saved one (merged_summary).
+                records[name]["disabled_requirement"] = required.get("disabled_requirement", missing)
             log(f"[outputs] {name}: skipped ({reason})")
             continue
         started = time.perf_counter()
         ctx._module, ctx._phase, ctx._steps, ctx._render_steps = module, None, {}, {}
         ctx._completion, ctx._fail_fast, ctx._used_draws = None, fail_fast, False
-        error_text = None
+        error_text, not_computed = None, False
         try:
             reason = module.active(ctx)
             if reason is None:
@@ -507,6 +550,7 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
                 _run_phases(ctx, module, product_only=ctx.mode == "render" and name in added)
         except Exception as error:
             reason, error_text = None, f"{type(error).__name__}: {error}"
+            not_computed = isinstance(error, NotComputed)
             seconds = time.perf_counter() - started
             # Once per error: a step (or the checkpoint) logged its traceback, and ModuleUnavailable follows logged steps.
             told = error is ctx._logged or isinstance(error, ModuleUnavailable)
@@ -526,20 +570,23 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
             log(f"[outputs] {name}: inactive ({reason})")
             continue
         seconds = time.perf_counter() - started
-        failed_steps = [step for step, record in step_records.get("steps", {}).items() if record["status"] == "failed"]
-        failed_steps += [f"{step} (render)" for step, record in step_records.get("render_steps", {}).items()
-                         if record["status"] == "failed"]
-        if error_text is None and failed_steps:
-            error_text = f"failed steps: {', '.join(failed_steps)}"
+        render_records = step_records.get("render_steps", {})      # absent when the module drew nothing
+        failed_steps = [step for step, record in step_records["steps"].items() if record["status"] == "failed"]
+        failed_steps += [f"{step} (render)" for step, record in render_records.items() if record["status"] == "failed"]
+        not_drawn = [step for step, record in render_records.items() if record["status"] == "skipped"]
+        if error_text is None and (failed_steps or not_drawn):   # each step not drawn was logged with its reason
+            error_text = (f"failed steps: {', '.join(failed_steps)}" if failed_steps else
+                          f"render steps not drawn: {', '.join(not_drawn)}")
         records[name] = {"status": "failed" if error_text else "done", "mode": ctx.mode, "seconds": seconds,
                          **step_records, **draws_record}
         if error_text:
             records[name]["error"] = error_text
+        if not_computed:
+            records[name]["not_computed"] = True
         log(f"[outputs] {name}: {'FAILED (' + error_text + ')' if error_text else 'done'} in {seconds:.1f}s")
     check_draws(ctx, modules)
     if ctx.mode == "render" and not rendered_anything(records):
-        log("[outputs] WARNING: this render pass drew nothing: no selected module with a completed compute drew a "
-            "figure (run a full or --compute pass first)")
+        log(f"[outputs] WARNING: this render pass drew nothing: {nothing_drawn_reason(records)}")
     failed = [name for name, record in records.items() if record["status"] == "failed"]
     if failed:
         log(f"[outputs] failed modules: {', '.join(failed)} (tracebacks above)")
@@ -549,8 +596,33 @@ def run_modules(ctx: OutputContext, modules: Sequence[OutputModule] | None = Non
 def rendered_anything(records: dict[str, dict]) -> bool:
     """Whether any module of a pass's ``records`` ran a render step that draws (not one of its ``input_steps``,
     which only load what the figures read) without failing."""
-    return any(step.get("status") == "done" and not step.get("input") for record in records.values()
-               for step in (record.get("render_steps") or {}).values())
+    return any(step["status"] == "done" and not step.get("input") for record in records.values()
+               for step in record.get("render_steps", {}).values())
+
+
+def nothing_drawn_reason(records: dict[str, dict]) -> str:
+    """Why a render pass whose module ``records`` drew nothing (:func:`rendered_anything` false) drew nothing: no module
+    ran; an input a figure needs is missing (a failed input step, such as the imaging of ``rgb``, named with its
+    error); nothing was computed for the modules that ran (``not_computed``); render steps were skipped or failed; or
+    the last compute saved nothing to draw."""
+    ran = {name: record for name, record in records.items() if record["status"] in ("done", "failed")}
+    if not ran:
+        return "no selected module ran (each was disabled, inactive or skipped)"
+    render_steps = [(f"{name}.{step}", record) for name, module in ran.items()
+                    for step, record in module.get("render_steps", {}).items()]
+    missing = [f"{step} ({record['error']})" for step, record in render_steps if record.get("input") and record["status"] == "failed"]
+    if missing:
+        return f"the compute is there, but an input needed to draw is missing: {'; '.join(missing)}"
+    uncomputed = [name for name, record in ran.items() if record.get("not_computed")]
+    if len(uncomputed) == len(ran):
+        return (f"nothing was computed for the selected modules ({', '.join(uncomputed)}): run a full or --compute "
+                "pass first")
+    not_drawn = [f"{step} ({record['status']}: {record['error'] if record['status'] == 'failed' else record['reason']})"
+                 for step, record in render_steps if record["status"] != "done"]
+    if not_drawn:
+        return f"the compute is there, but no figure could be drawn: {'; '.join(not_drawn)}"
+    return ("the last compute of the selected modules saved nothing to draw"
+            + (f" (never computed: {', '.join(uncomputed)})" if uncomputed else ""))
 
 
 DRAWS_WARNING = "modules computed over different reporting draws"
@@ -575,12 +647,12 @@ def check_draws(ctx: OutputContext, modules: Sequence[OutputModule]) -> str | No
     groups: dict[str, list[str]] = {}
     for name, record in saved.items():
         groups.setdefault(record["draws_key"], []).append(name)
-    described = "; ".join(", ".join(names) + f" ({saved[names[0]].get('reporting_draws', '?')} draws, seed "
-                          f"{saved[names[0]].get('draws_seed', '?')}, key {key[:8]})" for key, names in groups.items())
+    described = "; ".join(", ".join(names) + f" ({saved[names[0]]['reporting_draws']} draws, seed "
+                          f"{saved[names[0]]['draws_seed']}, key {key[:8]})" for key, names in groups.items())
     stale = [f"{module.name} (requires {required})" for module in modules if module.name in saved
              for required in module.requires
              if required in saved and saved[required]["draws_key"] != saved[module.name]["draws_key"]
-             and str(saved[required].get("computed_at", "")) > str(saved[module.name].get("computed_at", ""))]
+             and saved[required]["computed_at"] > saved[module.name]["computed_at"]]
     warning = f"{DRAWS_WARNING}: {described}"
     if stale:
         warning += (f". Stale, because a module they require was computed again with other draws since: "
@@ -592,32 +664,45 @@ def check_draws(ctx: OutputContext, modules: Sequence[OutputModule]) -> str | No
 
 
 def _run_phases(ctx: OutputContext, module: OutputModule, *, product_only: bool) -> None:
-    """Run the phases of ``module`` that ``ctx.mode`` asks for and set its product."""
+    """Run the phases of ``module`` that ``ctx.mode`` asks for and set its product.  A compute that raises
+    :class:`ModuleUnavailable` gives no product, but in a full pass its render still draws the figures whose compute
+    steps succeeded before the error is raised again; in a render pass the same holds for a module whose last compute
+    gave no product (``unavailable`` in its record)."""
+    from ..io import store
     name = module.name
+    unavailable: ModuleUnavailable | None = None
     if ctx.mode == "render":
         ctx._completion = load_completion(ctx.stage, name)
+        if ctx._completion["unavailable"] is not None:
+            unavailable = ModuleUnavailable(f"the last compute of {name} gave no product "
+                                            f"({ctx._completion['unavailable']}); {_compute_hint(name)}")
     else:
         ctx._phase = "compute"
         _mark_incomplete(ctx, name)
         try:
             module.compute(ctx)
-        except Exception:
+        except ModuleUnavailable as error:
+            unavailable = error
+            ctx._completion = _write_completion(ctx, name, unavailable=error)
+        except Exception as error:
             try:                        # the steps that ran, still incomplete; the marker above already says so
-                _write_completion(ctx, name, complete=False)
-            except Exception as error:
-                ctx.log(f"[outputs] {name}: completeness record not updated: {type(error).__name__}: {error}")
+                _write_completion(ctx, name, unavailable=error)
+            except Exception as failure:
+                ctx.log(f"[outputs] {name}: completeness record not updated: {type(failure).__name__}: {failure}")
             raise
-        failed = [step for step, record in ctx._steps.items() if record["status"] != "done"]
-        ctx._completion = _write_completion(ctx, name, complete=not failed)
-    from ..io import store
-    ctx._phase = "product"
-    try:
-        ctx.products[name] = module.product(ctx)
-    except store.MissingEntry as error:
-        raise ModuleUnavailable(f"{error}; {_compute_hint(name)}") from error
+        else:
+            ctx._completion = _write_completion(ctx, name)
+    if unavailable is None:
+        ctx._phase = "product"
+        try:
+            ctx.products[name] = module.product(ctx)
+        except store.MissingEntry as error:
+            raise ModuleUnavailable(f"{error}; {_compute_hint(name)}") from error
     if ctx.mode != "compute" and not product_only:
         ctx._phase = "render"
         module.render(ctx)
+    if unavailable is not None:
+        raise unavailable
 
 
 def _compute_hint(name: str) -> str:
@@ -629,20 +714,20 @@ def load_completion(stage, name: str) -> dict[str, Any]:
 
     Raises
     ------
-    ModuleUnavailable
-        When there is none, it cannot be read, or the last compute of the module did not complete; the message tells
-        to run the compute first.
+    NotComputed
+        When there is none, it cannot be read, or the last compute of the module was interrupted before it recorded
+        its steps (the record is still the marker of :func:`_mark_incomplete`); the message tells to run the compute
+        first.  A compute with failed or skipped steps is returned: render draws what its other steps saved.
     """
     from ..io import store
     try:
         record = store.read_record(stage, completion_name(name))
     except (store.MissingEntry, store.DamagedEntry, store.StoreError) as error:
-        raise ModuleUnavailable(f"no record {completion_name(name)} of a completed compute ({type(error).__name__}); "
-                                f"{_compute_hint(name)}") from error
-    if not isinstance(record, dict) or not record.get("complete"):
-        failed = [step for step, r in (record.get("steps") or {}).items() if r.get("status") != "done"] if isinstance(record, dict) else []
-        detail = f"steps not done: {', '.join(failed)}" if failed else "it did not finish"
-        raise ModuleUnavailable(f"the last compute of {name} is incomplete ({detail}); {_compute_hint(name)}")
+        raise NotComputed(f"no record {completion_name(name)} of a compute of {name} ({type(error).__name__}); "
+                          f"{_compute_hint(name)}") from error
+    if "steps" not in record:
+        raise NotComputed(f"the last compute of {name}, started at {record['started_at']}, was interrupted before it "
+                          f"recorded its steps; {_compute_hint(name)}")
     return record
 
 
@@ -654,13 +739,16 @@ def _mark_incomplete(ctx: OutputContext, name: str) -> None:
                        {"module": name, "complete": False, "started_at": datetime.now(timezone.utc).isoformat()})
 
 
-def _write_completion(ctx: OutputContext, name: str, *, complete: bool) -> dict[str, Any]:
-    """Write and return the module's completeness record after its compute: ``complete`` (every compute step done),
-    when, the compute steps and the reporting draws the compute used (``reporting_draws``, ``image_draws``,
-    ``draws_seed``, ``draws_key``)."""
+def _write_completion(ctx: OutputContext, name: str, *, unavailable: Exception | None = None) -> dict[str, Any]:
+    """Write and return the module's completeness record after its compute: ``complete`` (every compute step done and
+    the compute gave its product), ``unavailable`` (the error with which the compute ended without a product, as
+    text, else None), when, the compute steps and the reporting draws the compute used (``reporting_draws``,
+    ``image_draws``, ``draws_seed``, ``draws_key``)."""
     from ..io import store
-    record = {"module": name, "complete": bool(complete), "computed_at": datetime.now(timezone.utc).isoformat(),
-              "steps": ctx._steps, **_draws_record(ctx)}
+    done = all(record["status"] == "done" for record in ctx._steps.values())
+    record = {"module": name, "complete": done and unavailable is None,
+              "unavailable": None if unavailable is None else f"{type(unavailable).__name__}: {unavailable}",
+              "computed_at": datetime.now(timezone.utc).isoformat(), "steps": ctx._steps, **_draws_record(ctx)}
     if ctx._used_draws and ctx._draws is not None:
         record["draws_seed"] = int(ctx._draws.seed)
         key = getattr(ctx._draws, "key", None)
@@ -674,7 +762,7 @@ def _step_records(ctx: OutputContext) -> dict[str, dict]:
     """``steps`` (and ``render_steps`` when the module rendered) of the current module; in a render pass ``steps`` are
     the compute steps of the saved completeness record."""
     if ctx.mode == "render" and ctx._completion is not None:
-        out = {"steps": ctx._completion.get("steps", {})}
+        out = {"steps": ctx._completion["steps"]}
     else:
         out = {"steps": ctx._steps}
     if ctx._render_steps:

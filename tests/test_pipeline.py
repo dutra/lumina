@@ -131,6 +131,15 @@ def test_single_stage_end_to_end(synthetic_config, monkeypatch):
     # The init stage alone resumes too; a changed sampling setting under the same run name is refused
     # rather than silently overwriting the saved posterior.
     assert pipeline.run(config, stage="init").resumed
+    # A resume with other outputs settings (outside the hash) saves them: the saved configuration describes the
+    # products that pass rewrites, and the rest of it is left as it was.
+    before = artifacts.load_config(result.paths.final.artifacts)
+    fewer = replace(config, outputs=replace(config.outputs, draws=3, image_draws=3))
+    assert pipeline.run(fewer).resumed
+    after = artifacts.load_config(result.paths.final.artifacts)
+    assert (after.outputs.draws, after.outputs.image_draws) == (3, 3)
+    assert after.to_json_dict() | {"outputs": None} == before.to_json_dict() | {"outputs": None}
+    assert pipeline.run(config).resumed and artifacts.load_config(result.paths.final.artifacts).outputs == config.outputs
 
     # Model comparison: the init stage writes BIC, the final stage copies it.  Turning on WBIC for the finished run adds
     # only the tempered NUTS run; the posterior is not sampled again.

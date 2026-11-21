@@ -146,6 +146,32 @@ def test_render_skips_the_figures_of_a_failed_compute_step(rgb_pass):
     assert record["render_steps"]["paper_cutouts:jwst"]["reason"] == "compute step paper_cutouts:jwst skipped"
     assert "render_saved_rgb_critical" in rgb_pass.events
 
+    # A later render pass draws the same: what the other steps saved, with rgb failed for the folds.
+    record = rgb_pass("render")
+    assert record["status"] == "failed" and record["error"] == "failed steps: fold_data"
+    assert record["render_steps"]["fold_cutouts:jwst"]["reason"] == "compute step fold_data failed"
+    assert record["render_steps"]["small_lambda:jwst"]["status"] == "done"
+    assert rgb_pass.events.count("render_saved_rgb_critical") == 2
+
+
+def test_one_failed_variant_leaves_the_other_variants_figures(rgb_pass):
+    from kappaccino.plotting import jwst_rgb
+
+    def save(variant, *a, **k):
+        if variant.outputs.rgb.figure_suffix == "_jwst":
+            raise ValueError("no JWST band")
+        return "saved"
+    rgb_pass.monkeypatch.setattr(jwst_rgb, "save_rgb_critical", save)
+    for mode in ("full", "render"):
+        record = rgb_pass(mode)
+        assert record["status"] == "failed" and record["steps"]["rgb_critical:jwst"]["status"] == "failed"
+        assert record["render_steps"]["rgb_critical:primary"]["status"] == "done"
+        assert record["render_steps"]["rgb_critical:jwst"]["reason"] == "compute step rgb_critical:jwst failed"
+        assert record["render_steps"]["covariance_cutouts:jwst"]["status"] == "done"
+        assert rgb_pass.events.count("render_saved_rgb_critical") == 1
+    # The cutouts went without the posterior intervals of fit (which wrote no covariance), and the step says so.
+    assert record["steps"]["covariance_cutouts:primary"]["notes"][0].startswith(
+        "no posterior interval lines in the covariance cutouts")
 
 def test_position_contours_read_back_as_computed(tmp_path):
     from kappaccino.diagnostics.position_contours import load_or_compute_contours, load_position_contours
@@ -365,9 +391,17 @@ def test_the_covariance_cutouts_read_the_table_of_fit_only_when_its_last_compute
     from kappaccino.outputs.rgb import fit_covariance_errors
     table = pd.DataFrame(dict(image_label=["a"], plane=["image"], direction=["arc"], total_p16_arcsec=[1.], total_p84_arcsec=[2.]))
     store.write_table(tmp_path, "covariance_errors_both_planes", table)
-    assert fit_covariance_errors(tmp_path) is None                                   # no compute of fit recorded
+    notes = []
+    assert fit_covariance_errors(tmp_path, note=notes.append) is None                # no compute of fit recorded
+    store.write_record(tmp_path, completion_name("fit"), {"complete": False, "started_at": "now"})
+    assert fit_covariance_errors(tmp_path, note=notes.append) is None                # an interrupted compute
     for step in ({"status": "failed", "error": "x"}, {"status": "done", "wrote": False}):
         store.write_record(tmp_path, completion_name("fit"), {"complete": False, "steps": {"covariance": step}})
-        assert fit_covariance_errors(tmp_path) is None
+        assert fit_covariance_errors(tmp_path, note=notes.append) is None
+    # Each time the cutouts go without their interval lines, the step says so and why.
+    assert [note.split("(")[-1] for note in notes] == ["fit was never computed here)", "the last compute of fit did not finish)",
+                                                        "its covariance step failed)", "its covariance step wrote nothing)"]
+    assert all(note.startswith("no posterior interval lines in the covariance cutouts") for note in notes)
     store.write_record(tmp_path, completion_name("fit"), {"complete": True, "steps": {"covariance": {"status": "done", "wrote": True}}})
-    pd.testing.assert_frame_equal(fit_covariance_errors(tmp_path), table)
+    pd.testing.assert_frame_equal(fit_covariance_errors(tmp_path, note=notes.append), table)
+    assert len(notes) == 4

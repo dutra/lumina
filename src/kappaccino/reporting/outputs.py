@@ -16,9 +16,10 @@ def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator:
                   mode: str = "full") -> dict[str, Any]:
     """Run the output modules (``outputs.registry.MODULES``) and write the record ``run_summary`` and the results
     macros; returns the summary.  ``paths`` is the final StagePaths.  The modules run are chosen by the ``enabled``
-    switch of each module's section of ``config.outputs`` (``config.OutputsConfig``), unless a selection is given
-    (``kappaccino outputs --only/--skip/--all``), which replaces it: ``only`` runs these modules and the modules they
-    require, ``skip`` every module but these and those that require them, ``all_modules`` every module.  ``fail_fast``
+    switch of each module's section of ``config.outputs`` (``config.OutputsConfig``) and the selection
+    (``kappaccino outputs --only/--skip/--all``): ``only`` runs these modules and the modules they require, enabled or
+    not; ``all_modules`` runs every module, enabled or not; ``skip`` takes these modules and those that require them
+    out of what would run otherwise (the enabled modules, or with ``all_modules`` every module).  ``fail_fast``
     defaults to ``config.outputs.fail_fast``.  ``mode`` is the pass mode
     (``outputs.base.MODES``): ``full``, ``compute`` (no figures) or ``render`` (figures from the store only; the
     evaluator may be None and is never used).  A render pass always merges its summary into the saved one and keeps
@@ -38,8 +39,7 @@ def write_outputs(config: LensClusterSolverConfig, state: ModelState, evaluator:
     logged with its reason."""
     from ..io import store
     from ..outputs.registry import MODULES
-    selected = only is not None or skip is not None or all_modules
-    disabled = () if selected else disabled_modules(config, MODULES)
+    disabled = () if only is not None or all_modules else disabled_modules(config, MODULES)
     only = None if only is None else tuple(only)
     skip = () if skip is None else tuple(skip)
     fail_fast = config.outputs.fail_fast if fail_fast is None else fail_fast
@@ -68,7 +68,9 @@ def merged_summary(saved: dict[str, Any], summary: dict[str, Any], modules) -> d
     from ``saved`` first, so a failed module leaves no old numbers.  So are those of a module skipped because a module
     it requires failed in this pass (its record has ``failed_requirement``): what its numbers came from was computed
     again and failed, and its record is this pass's.  A disabled module (``outputs.<name>.enabled`` false) keeps its
-    saved keys and gets this pass's record, "disabled".  A module that did not run otherwise (not selected, in the skip
+    saved keys and gets this pass's record, "disabled"; so does a module skipped because a module it requires is
+    disabled in this pass (its record has ``disabled_requirement``): nothing was recomputed or failed, so its numbers
+    stay, but its record says it did not run.  A module that did not run otherwise (not selected, in the skip
     list or requiring one that is, or inactive) keeps its saved keys and its saved module record.  In a render pass
     (``mode`` "render") the modules get this pass's records but keep their saved keys, which come from their last
     compute.  ``warnings`` belong to the reporting draws and are replaced when this pass built them; the warning of
@@ -90,7 +92,8 @@ def merged_summary(saved: dict[str, Any], summary: dict[str, Any], modules) -> d
     if warnings:
         base["warnings"] = warnings
     saved_records = saved.get("modules", {}) if isinstance(saved.get("modules"), dict) else {}
-    disabled = {name for name, record in records.items() if record["status"] == "disabled"}
+    disabled = {name for name, record in records.items()
+                if record["status"] == "disabled" or "disabled_requirement" in record}
     chosen = {**saved_records, **{name: record for name, record in records.items()
                                   if name in ran or name in disabled or name not in saved_records}}
     order = [m.name for m in modules] + [name for name in chosen if name not in {m.name for m in modules}]

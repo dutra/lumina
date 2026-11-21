@@ -69,7 +69,7 @@ def test_a_map_inside_a_worker_runs_serially_and_workers_must_be_positive():
 
 
 # ----------------------------------------------------------------------------- the setting, the hash and a resume
-def test_output_workers_is_left_out_of_the_hash_and_of_the_resume_comparison(synthetic_config, tmp_path):
+def test_outputs_workers_is_left_out_of_the_hash_and_of_the_resume_comparison(synthetic_config, tmp_path):
     from kappaccino import cli
     from kappaccino.config import LensClusterSolverConfig
     from kappaccino.pipeline import resume_payload
