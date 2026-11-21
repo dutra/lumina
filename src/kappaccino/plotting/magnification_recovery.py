@@ -169,12 +169,3 @@ def render_magnification_recovery(stage, path, *, log=print):
     render_recovery(pixels['true_abs_mu'], pixels['model_abs_mu'], store.read_table(stage, 'magnification_recovery_bins'), points, path)
     log(f'[outputs] magnification recovery: {path} ({points.finite.sum()}/{len(points)} finite image markers)')
     return path
-
-
-def write_magnification_recovery(truth, images, reference, z_lens, cosmology, truth_config,
-                                 figures, tables, prefix, *, log=print):
-    """:func:`save_magnification_recovery`, then :func:`render_magnification_recovery` to
-    ``<prefix>_magnification_recovery.pdf`` in ``figures``; returns the figure, or None when it does not apply."""
-    if save_magnification_recovery(truth, images, reference, z_lens, cosmology, truth_config, tables, log=log) is None:
-        return None
-    return render_magnification_recovery(tables, figures / f'{prefix + "_" if prefix else ""}magnification_recovery.pdf', log=log)

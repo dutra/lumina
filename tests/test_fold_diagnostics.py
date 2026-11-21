@@ -472,7 +472,8 @@ def test_standard_system_render_retains_latest_style_and_ignores_cached_gp(synth
         observed=observed,positions=positions,relative=source,source_cartesian_grf=source,source_aligned_grf=source,
         caustic_aligned_grf_median=curve,caustic_grf_median=curve,
         critical=np.tile(curve,(n,1,1)),critical_parametric_median=curve+[0.,.2],critical_grf_median=curve,
-        critical_grf_draws=np.tile(curve,(n,1,1)),normal=np.array([0.,1.]),origin=np.zeros(2),seeds=curve,
+        critical_grf_draws=np.tile(curve,(n,1,1)),critical_grf_local_draws=np.tile(curve,(n,1,1)),
+        normal=np.array([0.,1.]),origin=np.zeros(2),seeds=curve,
         gp_adjusted_mean_positions=positions+100.,gp_displacement_covariance=np.zeros((n,2,2,2)))
     data=dict(systems=[system],pairs=[],draw_indices=list(range(n)))
     wcs=WCS(naxis=2);wcs.wcs.crpix=[1000,1000];wcs.wcs.crval=[0,0]

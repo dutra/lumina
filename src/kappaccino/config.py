@@ -1948,7 +1948,6 @@ def validate_config(config: LensClusterSolverConfig) -> None:
     if isinstance(runtime.seed, bool) or not isinstance(runtime.seed, Integral) or int(runtime.seed) < 0:
         raise ValueError("seed must be a nonnegative integer.")
     _positive_int("chains", runtime.chains)
-    _positive_int("runtime.output_workers", runtime.output_workers)
     if runtime.nuts_chain_method not in {"parallel", "sequential", "vectorized"}:
         raise ValueError("nuts_chain_method must be 'parallel', 'sequential', or 'vectorized'.")
     search = config.search
@@ -2172,11 +2171,34 @@ def validate_config(config: LensClusterSolverConfig) -> None:
     _positive("image_diagnostics.exact_image_seed_tolerance_pitches", diagnostics.exact_image_seed_tolerance_pitches)
     if int(config.truth.truth_grid_size) < 0:
         raise ValueError("truth.truth_grid_size must be nonnegative.")
-    _validate_outputs_config(config.outputs)
+    validate_report_settings(config)
     if config.partition is not None:
         _validate_partition_config(config.partition, config)
         if any(prior is not None for prior in config.model.cosmology.priors.values()):
             raise ValueError("partition (uncertain images) is not supported with a sampled cosmology.")
+
+
+def validate_report_settings(config: LensClusterSolverConfig) -> None:
+    """Check the settings ``kappaccino outputs --set`` may change (``REPORT_ONLY_SECTIONS``, ``REPORT_ONLY_FIELDS``,
+    ``PERFORMANCE_FIELDS``): the ``outputs`` section, ``truth.deflection_true_fits`` (None or a path) and
+    ``runtime.output_workers`` (a positive integer).  Part of :func:`validate_config`.
+
+    Raises
+    ------
+    ValueError
+        At the first bad value, with a message naming the field.
+    """
+    if not isinstance(config.outputs, OutputsConfig):
+        raise ValueError(f"outputs must be a section (only, skip, fail_fast); got {config.outputs!r}")
+    _validate_outputs_config(config.outputs)
+    if not isinstance(config.truth, TruthRecoveryConfig):
+        raise ValueError(f"truth must be a section; got {config.truth!r}")
+    deflection = config.truth.deflection_true_fits
+    if deflection is not None and (not isinstance(deflection, (str, Path)) or not str(deflection)):
+        raise ValueError(f"truth.deflection_true_fits must be the path of a FITS file or null; got {deflection!r}")
+    if not isinstance(config.runtime, RuntimeConfig):
+        raise ValueError(f"runtime must be a section; got {config.runtime!r}")
+    _positive_int("runtime.output_workers", config.runtime.output_workers)
 
 
 def _validate_outputs_config(outputs: OutputsConfig) -> None:

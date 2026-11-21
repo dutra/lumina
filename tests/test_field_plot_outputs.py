@@ -21,7 +21,8 @@ def test_standard_gp_outputs_include_field_figures(monkeypatch, tmp_path):
     config = SimpleNamespace(paths=SimpleNamespace(figure_prefix='test'))
     evaluator = SimpleNamespace(gp_mode=True, gp_knee=True)
     paths = SimpleNamespace(figures=tmp_path, tables=tmp_path / 'tables')
-    outputs = gp.write_gp_plots(config, None, evaluator, None, paths, log=lambda _: None)
+    assert gp.save_gp_diagnostics(config, None, evaluator, None, paths, log=lambda _: None) == gp.GP_DIAGNOSTICS
+    outputs = gp.render_gp_diagnostics(config, None, None, paths, log=lambda _: None)
     assert outputs[-2:] == expected
     saver.assert_called_once()
     renderer.assert_called_once()
@@ -31,7 +32,7 @@ def test_no_mass_field_skips_the_shared_maps():
     config = SimpleNamespace(likelihood=SimpleNamespace(gp_blocks='all'))
     evaluator = SimpleNamespace(gp_knee=True, sigma_grf_index=-1, gp_knee_spectrum='knee', state=SimpleNamespace(gp_blocks='all'))
     messages = []
-    assert fields.write_field_plots(config, None, evaluator, None, None, log=messages.append) == []
+    assert fields.save_field_maps(config, None, evaluator, None, None, log=messages.append) is None
     assert 'skipped' in messages[0]
 
 
@@ -53,7 +54,7 @@ def test_system_blocks_render_through_the_shared_twin(monkeypatch):
     posterior = SimpleNamespace(samples=np.arange(20.)[:, None], physical=np.arange(20.)[:, None])
     messages = []
     with pytest.raises(RuntimeError):
-        fields.write_field_plots(config, None, run, posterior, None, log=messages.append)
+        fields.save_field_maps(config, None, run, posterior, None, log=messages.append)
     draws = seen[0]
     assert draws.evaluator is run and len(draws) == 8
     evaluator, samples = draws.shared()

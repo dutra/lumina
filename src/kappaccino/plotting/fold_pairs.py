@@ -1013,7 +1013,7 @@ def render_system_fold_diagnostics(config, state, data, paths, imaging, *, log=p
                         ax.imshow(rgb, origin='lower', interpolation='nearest')
                         sets = [(system['critical'], CRITICAL_COLOR, '--' if 'critical_grf_draws' in system else '-', .12)]
                         if 'critical_grf_draws' in system:
-                            sets.append((system.get('critical_grf_local_draws', system['critical_grf_draws']), GRF_COLOR, '-', .22))
+                            sets.append((system['critical_grf_local_draws'], GRF_COLOR, '-', .22))
                         for curves, color, linestyle, alpha in sets:
                             for low, median, high in critical_curve_quantiles(
                                     curves, system['seeds'], system['origin'], system['normal']):

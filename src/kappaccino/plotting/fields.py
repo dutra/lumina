@@ -258,11 +258,3 @@ def render_field_plots(config, paths, *, log=print):
     for output in outputs:
         log(f'[outputs] {output}')
     return outputs
-
-
-def write_field_plots(config, state, evaluator, posterior, paths, *, log=print):
-    """Standard outputs for a single shared knee-spectrum GRF plus image GP: :func:`save_field_maps`, then
-    :func:`render_field_plots`."""
-    if save_field_maps(config, state, evaluator, posterior, paths, log=log) is None:
-        return []
-    return render_field_plots(config, paths, log=log)

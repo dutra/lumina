@@ -478,6 +478,27 @@ def test_remap_and_report_overrides(synthetic_config, tmp_path):
         apply_overrides(config, ["nosuch.field=1"])
     with pytest.raises(ValueError):
         apply_overrides(config, ["outputs.nosuch=1"])
+    # A report setting of the wrong type is refused before the pass, with the field named.
+    for bad, field in (("truth.deflection_true_fits={a: 1}", "truth.deflection_true_fits"),
+                       ("truth.deflection_true_fits=[a, b]", "truth.deflection_true_fits"),
+                       ("truth.deflection_true_fits.x=1", "truth.deflection_true_fits"),
+                       ("truth.deflection_true_fits=true", "truth.deflection_true_fits"),
+                       ("runtime.output_workers=abc", "runtime.output_workers"),
+                       ("runtime.output_workers=-5", "runtime.output_workers"),
+                       ("runtime.output_workers=2.5", "runtime.output_workers"),
+                       ("outputs.skip=rgb", "outputs.skip"), ("outputs.only=[nope]", "outputs.only"),
+                       ("outputs.fail_fast=3", "outputs.fail_fast"), ("outputs=5", "outputs")):
+        with pytest.raises(ValueError, match=rf"^--set: {field.replace('.', r'.')} "):
+            apply_overrides(config, [bad])
+
+
+def test_a_bad_report_setting_is_a_usage_error(synthetic_config, tmp_path, capsys):
+    from kappaccino import cli
+    from kappaccino.io import artifacts
+    run = tmp_path / "run"
+    artifacts.save_config(run / "final" / "artifacts", synthetic_config)
+    assert cli.main(["outputs", str(run), "--set", "runtime.output_workers=-5"]) == 2
+    assert "runtime.output_workers must be a positive integer" in capsys.readouterr().out
 
 
 def test_missing_files_name_the_field_and_suggest_remap(synthetic_config):

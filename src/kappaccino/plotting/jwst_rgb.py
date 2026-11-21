@@ -98,20 +98,27 @@ def recovered_contour_segments(contours):
             for curve in curves]
 
 
-def render_rgb_critical(config, state, draws, catalog, extra, imaging, output, tables, *, log=print):
-    """Render the z = 9 critical curve (zero contour of the per-pixel median det A over the reporting draws) and its
-    16-84% band on the RGB overview: :func:`save_rgb_critical` then :func:`render_saved_rgb_critical`."""
-    save_rgb_critical(config, state, draws, catalog, extra, imaging, tables, log=log)
-    render_saved_rgb_critical(config, state, catalog, extra, imaging, output, tables, log=log)
-    return Path(output)
+def candidate_catalog(config):
+    """The M0416 candidate catalog the ``_candidates`` overview draws: ``{"path": ..., "candidates": [...]}``, read from
+    ``image_catalog.candidate_catalog_path`` (default: the packaged ``data/m0416_candidates.json``)."""
+    path = getattr(config.image_catalog, 'candidate_catalog_path', None)
+    path = Path(path) if path else Path(__file__).parents[1] / 'data' / 'm0416_candidates.json'
+    return dict(path=str(path), candidates=json.loads(path.read_text())['candidates'])
+
+
+def candidate_record(stem):
+    """The record of the candidates of the overview ``stem`` (:func:`candidate_catalog`)."""
+    return f'{stem}_candidate_catalog'
 
 
 def save_rgb_critical(config, state, draws, catalog, extra, imaging, tables, *, log=print):
     """Compute and save what the RGB critical overview draws, in the stage's results (``tables`` is the stage folder or
     its ``tables``): the arrays ``<stem>`` (median det A over the reporting draws on the overview grid, its 16th and
     84th percentiles), the records ``<stem>_band`` and ``<stem>_model`` (whether the run has a shared GRF and its
-    label) and the position contours (:func:`~kappaccino.diagnostics.position_contours.load_or_compute_contours`).
-    Of the imaging only the reference band's WCS and shape (the overview grid) are read.  Returns the stem."""
+    label), for M0416 the candidates of its ``_candidates`` overview (record ``<stem>_candidate_catalog``,
+    :func:`candidate_catalog`) and the position contours
+    (:func:`~kappaccino.diagnostics.position_contours.load_or_compute_contours`).  Of the imaging only the reference
+    band's WCS and shape (the overview grid) are read.  Returns the stem."""
     tables=Path(tables)
     from .mass_figure import overview_geometry
     from ..imaging import cutouts
@@ -126,6 +133,7 @@ def save_rgb_critical(config, state, draws, catalog, extra, imaging, tables, *, 
     lower,det,upper=critical_quantile_summary(determinants)
     band=(lower<0)&(upper>0)
     fingerprint=draws.key
+    candidates=candidate_catalog(config) if cluster.lower()=='m0416' else None
     band_info=dict(draw_indices=draws.indices.tolist(),resolution=int(det.shape[0]),
                    definition='Zero contour of pointwise median determinant; shaded where its 16-84% interval contains zero; parametric + conditional GRF realization of each draw',
                    selection='The reporting draws: random posterior draws over all chains (run seed)')
@@ -136,6 +144,8 @@ def save_rgb_critical(config, state, draws, catalog, extra, imaging, tables, *, 
                             central_statistic='pointwise posterior median determinant')
         store.write_record(tables,f'{stem}_model',dict(shared_grf=shared_field_evaluator(draws.evaluator) is not None,
                                                        grf_field=shared_grf_label(draws.evaluator)))
+        if candidates is not None:
+            store.write_record(tables,candidate_record(stem),candidates)
     from ..diagnostics.position_contours import load_or_compute_contours
     load_or_compute_contours(config, state, draws, extra, tables, log=log)
     return stem
@@ -149,21 +159,23 @@ def render_saved_rgb_critical(config, state, catalog, extra, imaging, output, ta
     stem=rgb_overview_stem(config.image_catalog, imaging[1])
     saved=store.read_arrays(tables,stem)
     model=store.read_record(tables,f'{stem}_model')
+    candidates=store.read_record(tables,candidate_record(stem)) if imaging[3].lower()=='m0416' else None
     return draw_rgb_critical(config, state.reference, catalog, extra, imaging, output, tables, determinant=saved['determinant'],
                              lower=saved['lower'], upper=saved['upper'],
                              contours=load_position_contours(tables) if contours is None else contours,
                              fingerprint=np.asarray(saved['fingerprint']).item(), reporting_draws=len(saved['draw_indices']),
-                             shared_grf=model['shared_grf'], grf_field=model['grf_field'], log=log)
+                             shared_grf=model['shared_grf'], grf_field=model['grf_field'], candidates=candidates, log=log)
 
 
 @plt.rc_context()
 def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables, *, determinant, lower, upper, contours,
-                      fingerprint, reporting_draws, shared_grf, grf_field, redrawn=False, log=print):
+                      fingerprint, reporting_draws, shared_grf, grf_field, candidates=None, redrawn=False, log=print):
     """Draw the RGB critical overview (and, for M0416, its ``_candidates`` variant) from computed inputs: the
     median ``determinant`` of det A with its 16th/84th percentiles ``lower``/``upper``, the position ``contours``
     (:func:`~kappaccino.diagnostics.position_contours.load_or_compute_contours`), the draws' ``fingerprint`` and
     count, whether the run has a ``shared_grf`` (a knee mass field shared by every image) and the ``grf_field``
-    provenance label (:func:`~kappaccino.likelihood.grf_fields.shared_grf_label`).  Writes the PDFs, their figure
+    provenance label (:func:`~kappaccino.likelihood.grf_fields.shared_grf_label`) and, for M0416, the saved
+    ``candidates`` (:func:`candidate_catalog`) of the ``_candidates`` variant.  Writes the PDFs, their figure
     records and the marker tables (in the results of the stage of ``tables``); returns the PDF paths."""
     output,tables=Path(output),Path(tables)
     from .mass_figure import overview_geometry, aligned_rgb, grid_pixels
@@ -172,6 +184,8 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
     images,bands,display,cluster=imaging
     stem=rgb_overview_stem(config.image_catalog, bands)
     m0416=cluster.lower()=='m0416'
+    if m0416 and candidates is None:
+        raise ValueError('The M0416 overview needs the saved candidates of its _candidates variant (candidate_catalog)')
     reference_image=images[cutouts.rgb_reference_band(bands)]
     geometry=overview_geometry(reference_image,catalog,extra,reference,resolution=768)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -212,13 +226,12 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
         marker_table=overview_marker_photometry(config, catalog, reference, photpath, stem)
         sizes=marker_table.marker_area_pt2.to_numpy()
         valid=marker_table.valid_photometry.to_numpy()
-        candidate_path=getattr(config.image_catalog,'candidate_catalog_path',None)
-        candidate_path=(Path(candidate_path) if candidate_path else Path(__file__).parents[1]/'data'/'m0416_candidates.json') if m0416 and show_candidates else None
-        candidates=json.loads(candidate_path.read_text())['candidates'] if candidate_path is not None and candidate_path.exists() else []
+        candidate_path=Path(candidates['path']) if show_candidates else None
+        shown_candidates=candidates['candidates'] if show_candidates else []
         family_colors={'K66':'#40DFFF','K67':'#FF70C5','K20':'#FF6060',
                        'K28':'#BD9AFF','K34':'#609FFF','K115':'#FFFFFF','A':'#32E875'}
         systems=catalog.family_id.astype(str).str.extract(r'^(K\d+|C\d+)',expand=False)
-        selected={r['system'] for r in candidates if r['kind']=='counterimage'}
+        selected={r['system'] for r in shown_candidates if r['kind']=='counterimage'}
         colors=[family_colors.get(system,'#FF9500') if system in selected else '#FF9500' for system in systems]
         missed = ((catalog['image_recovery_status'].astype(str) != 'recovered').to_numpy()
                   if 'image_recovery_status' in catalog else np.zeros(len(catalog), bool))
@@ -239,10 +252,10 @@ def draw_rgb_critical(config, reference, catalog, extra, imaging, output, tables
         marker_table['color']=colors
         overlay_rows=[]
         all_px,all_py=list(px),list(py)
-        for system in dict.fromkeys(r['system'] for r in candidates):
+        for system in dict.fromkeys(r['system'] for r in shown_candidates):
             color=family_colors.get(system,'#42A5FF')
             label='New family A' if system=='A' else f'{system} candidates'
-            rows=[r for r in candidates if r['system']==system]
+            rows=[r for r in shown_candidates if r['system']==system]
             if not rows:
                 continue
             ra0,dec0=reference[1:]
@@ -491,7 +504,8 @@ def redraw_rgb_critical(run_dir, *, log=print):
                                   determinant=saved['determinant'], lower=saved['lower'], upper=saved['upper'],
                                   contours=contours,
                                   fingerprint=draws.key, reporting_draws=len(draws), shared_grf=shared_grf,
-                                  grf_field=grf_field, redrawn=True, log=log)
+                                  grf_field=grf_field, redrawn=True, log=log,
+                                  candidates=store.read_record(tables, candidate_record(stem)) if imaging[3].lower() == 'm0416' else None)
         contoured = store.read_figure_record(paths[0])['recovered_position_contours']
         if recovered and not contoured:
             log(f'[redraw] {stem}: no recovered-position contour drawn although {recovered} images are recovered')
