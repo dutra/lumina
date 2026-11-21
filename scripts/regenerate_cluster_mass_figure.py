@@ -40,7 +40,7 @@ def main():
         jwst = args.imaging == "jwst"
         from lumina.config import RGBDisplayConfig
         from lumina.imaging.cutouts import cluster_from_config
-        cluster = cluster_from_config(config.model, config.paths.run_name)
+        cluster = cluster_from_config(config.model, config.paths.figure_prefix)
         jwst_dir = f"data/imaging/{cluster}/{'canucs_dr1' if cluster == 'm0416' else 'dja_v7.5'}"
         hst_dir = f"data/imaging/{cluster}/buffalo"
         # The run's saved display numbers belong to the imaging it was run with; the library defaults carry the balance.
@@ -72,7 +72,7 @@ def main():
     if args.imaging == 'jwst' or config.image_catalog.figure_suffix == '_jwst':
         from lumina.diagnostics.position_contours import load_or_compute_contours
         position_contours = load_or_compute_contours(config, state, draws, extra, final / 'tables', log=log)
-    imaging = load_cluster_imaging(config.image_catalog, config.model, config.paths.run_name)
+    imaging = load_cluster_imaging(config.image_catalog, config.model, config.paths.figure_prefix)
     plt.style.use(str(ROOT / "src" / "lumina" / "plotting" / "style.mplstyle"))
     output = plots.figure_path(final / "figures", f"image_catalog_family_cluster_mass{config.image_catalog.figure_suffix}.pdf", config.paths.figure_prefix)
     print(f"Rendering the median over {len(draws)} posterior draws: {output}", flush=True)

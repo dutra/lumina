@@ -176,7 +176,7 @@ def test_tng_catalog_sizes_are_nested_and_resolve(tag, monkeypatch):
             assert {parent / 'large/run.yaml', parent / 'large/priors.yaml'} <= dependencies
 
 
-def test_command_line(monkeypatch, capsys):
+def test_command_line(monkeypatch, capsys, tmp_path):
     from lumina import cli
     monkeypatch.chdir(ROOT)
     with pytest.raises(SystemExit):
@@ -184,17 +184,22 @@ def test_command_line(monkeypatch, capsys):
     assert "no run.yaml" in capsys.readouterr().err
     config = cli.build_config("catalogs/as1063/diego2026", profiles=["fast"], overrides=["sampling.warmup=7"], run_label="r", results="out")
     assert config.paths.output_dir == "out/as1063_jwst" and config.paths.run_name == "r" and config.sampling.warmup == 7
-    assert cli.main(["catalogs/hera", "--profile", "fast", "--dry-run"]) == 0
-    assert '"dry_run": true' in capsys.readouterr().out
-    # The default folder: results/<name>/<description>-<hash>, the same for the same configuration, new for any change.
+    results = tmp_path / "results"
+    assert cli.main(["catalogs/hera", "--profile", "fast", "--dry-run", "--results", str(results)]) == 0
+    out = capsys.readouterr().out
+    assert '"dry_run": true' in out and "would create" in out and "a_w500s250t8_systemblocks_fast" in out
+    assert not results.exists()                         # a dry run reserves nothing
+    # The description in a new run's name (the name itself is assigned by the command: tests/test_run_names.py).
     hera, fast = cli.build_config("catalogs/hera"), cli.build_config("catalogs/hera", profiles=["fast"])
-    assert hera.paths.output_dir == "results/hera" and hera.paths.run_name == f"w500s250t7_allblocks-{cli.config_hash(hera)}"
-    assert fast.paths.run_name.startswith("w500s250t8_systemblocks_fast-")
-    assert cli.build_config("catalogs/hera").paths.run_name == hera.paths.run_name
+    assert hera.paths.output_dir == "results/hera" and hera.paths.run_name is None
+    assert cli.describe(hera) == "w500s250t7_allblocks" and cli.describe(fast, ["fast"]) == "w500s250t8_systemblocks_fast"
+    assert cli.describe(cli.build_config("catalogs/hera", images="x/trusted.yaml")) == "w500s250t7_allblocks_trusted"
+    # A run's identity is its fit settings: a prior changed with --set changes it, turning on WBIC does not.
+    from lumina.run_names import fit_settings
     prior = cli.build_config("catalogs/hera", overrides=["likelihood.lambda_b_prior=lognormal(10, 1) in [0.5, 80]"])
-    assert prior.paths.run_name.split("-")[0] == "w500s250t7_allblocks" and prior.paths.run_name != hera.paths.run_name
-    assert cli.build_config("catalogs/hera", overrides=["sampling.wbic=true"]).paths.run_name == hera.paths.run_name
-    assert cli.build_config("catalogs/hera", images="x/trusted.yaml").paths.run_name.startswith("w500s250t7_allblocks_trusted-")
+    assert fit_settings(prior) != fit_settings(hera)
+    assert fit_settings(cli.build_config("catalogs/hera", overrides=["sampling.wbic=true"])) == fit_settings(hera)
+    assert fit_settings(cli.build_config("catalogs/hera", overrides=["runtime.skip_plots=true"])) == fit_settings(hera)
     seen = {}
     monkeypatch.setattr(cli, "build_config", lambda *a, **k: seen.update(k) or (_ for _ in ()).throw(SystemExit(0)))
     with pytest.raises(SystemExit):
@@ -222,14 +227,14 @@ def test_power_law_members(tmp_path, monkeypatch):
     from lumina import cli
     monkeypatch.chdir(ROOT)
     dpie = cli.build_config("catalogs/hera")
-    sampled = cli.build_config("catalogs/hera", member_profile="power-law").validate()
-    held = cli.build_config("catalogs/hera", member_profile="power-law", member_slope=2.3).validate()
-    assert dpie.model.member_populations[0].profile_type == 81 and "powerlaw" not in dpie.paths.run_name
+    sampled = cli.build_config("catalogs/hera", member_profile="power-law", run_label="r").validate()
+    held = cli.build_config("catalogs/hera", member_profile="power-law", member_slope=2.3, run_label="r").validate()
+    assert dpie.model.member_populations[0].profile_type == 81 and "powerlaw" not in cli.describe(dpie)
     assert sampled.model.member_populations[0].profile_type == 102 and "slope" not in sampled.scaling.fixed_relation_fields
-    assert sampled.paths.run_name.startswith("w500s250t7_allblocks_powerlaw-")
+    assert cli.describe(sampled) == "w500s250t7_allblocks_powerlaw"
     assert held.model.member_populations[0].slope == 2.3 and held.scaling.fixed_relation_fields[-1] == "slope"
-    assert held.paths.run_name.startswith("w500s250t7_allblocks_powerlaw2.3-")
-    assert len({dpie.paths.run_name, sampled.paths.run_name, held.paths.run_name}) == 3
+    assert cli.describe(held) == "w500s250t7_allblocks_powerlaw2.3"
+    assert len({cli.describe(dpie), cli.describe(sampled), cli.describe(held)}) == 3
     with pytest.raises(ValueError, match="needs power-law members"):
         cli.build_config("catalogs/hera", member_slope=2.3)
     with pytest.raises(SystemExit):

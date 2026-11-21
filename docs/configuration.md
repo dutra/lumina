@@ -296,7 +296,7 @@ products are identical for any value and each thread holds one draw's working ar
 output module (`fit`, `images`, `mass`, `truth`, `rgb`), each with an `enabled` switch and its own settings: the truth
 maps of a simulated cluster in `truth` ({class}`~lumina.config.TruthOutputConfig`), the imaging, RGB display,
 paper cutouts and fold-pair search in `rgb` ({class}`~lumina.config.RGBOutputConfig`), the extra-image search in
-`images`. The section is not part of the run hash and a resume ignores it, so `--set outputs.workers=8` or
+`images`. The section is not part of the fit settings a resume compares, so `--set outputs.workers=8` or
 `--set outputs.rgb.enabled=false` reuses the existing run folder. See {doc}`outputs`.
 
 ```python
@@ -315,7 +315,9 @@ RunPathsConfig(output_dir="results/demo/hera", run_name="v1", figure_prefix="her
 ```
 
 The run directory is `<output_dir>/<run_name>/`, and figure file names start with `figure_prefix`. `run_name` must be a
-single directory name.
+single directory name. The `lumina` command sets both: `output_dir` is `<results>/<name>` and `run_name` the name it
+assigns a new run (`nov21a_w500s250t7_allblocks`) or the saved run it resumes ({doc}`run-files`). Neither is a fit
+setting, so a resume does not compare them.
 
 ## Recommended settings
 

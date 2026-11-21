@@ -123,7 +123,7 @@ else:
 @pytest.mark.parametrize("cluster", ["catalogs/hera", "catalogs/as1063/bergamini2019"])
 def test_launcher_uses_resolved_runtime_before_cosmology(cluster):
     code = """
-import os, shutil, sys
+import os, shutil, sys, tempfile
 from lumina import cli
 from jax._src import xla_bridge
 assert not xla_bridge.backends_are_initialized(), 'importing the launcher initialized JAX before CPU setup'
@@ -135,10 +135,11 @@ def check_run(config, stage="both"):
     assert (sorted(os.sched_getaffinity(0)) if before is not None else None) == before      # not pinned
 import lumina.pipeline as pipeline
 pipeline.run = check_run
+results = tempfile.mkdtemp()                # never a results/ folder in the repository
 try:
-    assert cli.main([sys.argv[1], '--results', 'results/pytest_cpu_launcher', '--set', 'runtime.chains=2']) == 0
+    assert cli.main([sys.argv[1], '--results', results, '--set', 'runtime.chains=2']) == 0
 finally:
-    shutil.rmtree('results/pytest_cpu_launcher', ignore_errors=True)
+    shutil.rmtree(results, ignore_errors=True)
 """
     subprocess.run([sys.executable, "-c", code, cluster], check=True, timeout=45,
                    env=dict(os.environ, PYTHONPATH=str(Path("src").resolve())))

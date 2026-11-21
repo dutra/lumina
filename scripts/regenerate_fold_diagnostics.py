@@ -45,7 +45,7 @@ def main():
         if args.imaging == 'jwst' and image_config.figure_suffix != '_jwst':
             continue
         try:
-            imaging = load_cluster_imaging(image_config, config.model, config.paths.run_name)
+            imaging = load_cluster_imaging(image_config, config.model, config.paths.figure_prefix)
         except FileNotFoundError as error:
             print(f'[outputs] fold RGB skipped: {error}')
             continue

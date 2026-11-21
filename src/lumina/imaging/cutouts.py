@@ -77,15 +77,18 @@ def arcsec_to_radec(x_arcsec: Any, y_arcsec: Any, reference: tuple[int, float, f
     return float(ra0) - x / (3600.0 * cos_dec0), float(dec0) + y / 3600.0
 
 
-def cluster_from_config(model_config: Any, run_name: str = "") -> str:
-    """Identify the imaging cluster from the catalog paths of the model configuration."""
+def cluster_from_config(model_config: Any, name: str | None = "") -> str:
+    """Identify the imaging cluster from the catalog paths of the model configuration, else from ``name``, the
+    cluster's name in its run file (``paths.figure_prefix``, e.g. ``m0416_canucs2025``): the known cluster it names,
+    else its part before the first ``_``, else ``cluster``.  The run folder's name says nothing about the cluster."""
+    name = str(name or "")
     paths = [str(model_config.image_constraints.catalog_path)]
     paths.extend(str(p.catalog_path) for p in model_config.member_populations)
-    for text in (" ".join(paths).lower(), str(run_name).lower()):
+    for text in (" ".join(paths).lower(), name.lower()):
         for cluster, tokens in CLUSTER_IMAGE_TOKENS.items():
             if any(token in text for token in tokens):
                 return cluster
-    return str(run_name).split("_", 1)[0].lower() or "cluster"
+    return name.split("_", 1)[0].lower() or "cluster"
 
 
 def imaging_variants(config, *, overview_only=False):
@@ -96,7 +99,7 @@ def imaging_variants(config, *, overview_only=False):
 
     primary = config.outputs.rgb
     variants = [primary]
-    cluster = cluster_from_config(config.model, config.paths.run_name)
+    cluster = cluster_from_config(config.model, config.paths.figure_prefix)
     if cluster in {"m0416", "as1063"} and not any(
         str(band).upper() in DEFAULT_JWST_RGB_BANDS for band in (primary.bands or ())
     ):
@@ -105,7 +108,7 @@ def imaging_variants(config, *, overview_only=False):
                                 figure_suffix="_jwst"))
     if overview_only:
         catalog = str(config.model.image_constraints.catalog_path).lower()
-        identity = f"{catalog} {config.paths.run_name} {config.paths.figure_prefix}".lower()
+        identity = f"{catalog} {config.paths.figure_prefix}".lower()
         if "canucs" in identity and cluster == "m0416":
             return [replace(view, figure_suffix="_jwst") for view in variants
                     if any(str(band).upper() in DEFAULT_JWST_RGB_BANDS for band in (view.bands or ()))]
@@ -373,9 +376,10 @@ def downsample_rgb(rgb: np.ndarray, max_side_pixels: int | None) -> np.ndarray:
     return image[np.ix_(ys, xs)]
 
 
-def load_cluster_imaging(config, model_config: Any, run_name: str) -> tuple[dict[str, BandImage], tuple[str, ...], RGBDisplayConfig, str]:
-    """Band images, bands, RGB display and cluster name from an ``outputs.rgb`` section (``config.RGBOutputConfig``)."""
-    cluster = cluster_from_config(model_config, run_name)
+def load_cluster_imaging(config, model_config: Any, name: str | None) -> tuple[dict[str, BandImage], tuple[str, ...], RGBDisplayConfig, str]:
+    """Band images, bands, RGB display and cluster name from an ``outputs.rgb`` section (``config.RGBOutputConfig``);
+    ``name`` is the run's ``paths.figure_prefix`` (:func:`cluster_from_config`)."""
+    cluster = cluster_from_config(model_config, name)
     bands = tuple(config.bands) if config.bands else tuple(DEFAULT_HFF_RGB_BANDS)
     paths = find_rgb_band_paths(Path(str(config.image_dir)), cluster=cluster, bands=bands, image_scale=str(config.image_scale))
     images = load_band_images(paths, bands)

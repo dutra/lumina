@@ -66,7 +66,7 @@ def rgb_pass(monkeypatch, synthetic_config, tmp_path):
             (apj_fold_cutouts, "render_apj_fold_cutouts", None),
             (paper_cutouts, "prepare_paper_cutouts", ["fold_cutouts"]), (paper_cutouts, "render_paper_cutouts", None)):
         monkeypatch.setattr(module, name, record(name, result))
-    config = replace(synthetic_config, paths=replace(synthetic_config.paths, run_name="m0416"),
+    config = replace(synthetic_config, paths=replace(synthetic_config.paths, figure_prefix="m0416"),
                      outputs=replace(synthetic_config.outputs, rgb=replace(synthetic_config.outputs.rgb, image_dir="hst")))
     paths = SimpleNamespace(tables=tmp_path / "tables", figures=tmp_path / "figures", fits=tmp_path / "fits", root=tmp_path)
 
@@ -357,8 +357,10 @@ def test_the_real_rgb_module_renders_its_figures_again_from_the_store(synthetic_
     from lumina.likelihood.evaluator import Evaluator
     from lumina.pipeline import StagePaths
     outputs = synthetic_config.outputs
-    config = replace(synthetic_config, outputs=replace(outputs, draws=2, rgb=replace(outputs.rgb, image_dir=str(tmp_path / "toy_imaging"),
-                                                                                     bands=("F435W", "F606W", "F814W"))))
+    # The cluster ("toy", which the imaging files must name) comes from the run's figure prefix.
+    config = replace(synthetic_config, paths=replace(synthetic_config.paths, figure_prefix="toy"),
+                     outputs=replace(outputs, draws=2, rgb=replace(outputs.rgb, image_dir=str(tmp_path / "toy_imaging"),
+                                                                   bands=("F435W", "F606W", "F814W"))))
     state = build_state(config)
     _toy_imaging(tmp_path / "toy_imaging", state.reference)
     evaluator = Evaluator(state)
@@ -369,8 +371,9 @@ def test_the_real_rgb_module_renders_its_figures_again_from_the_store(synthetic_
     records = run_modules(OutputContext(config, state, evaluator, posterior, {}, paths, log=lambda _: None), only=("rgb",))
     assert records["rgb"]["status"] == "done", records["rgb"]
     # The figures of rgb (images, pulled in by --only rgb, gives only its product in a render pass).
-    drawn = sorted(p.name for p in paths.figures.glob("*.pdf") if not p.name.startswith("image_re"))
-    assert drawn == ["hst_rgb_critical_z9.pdf", "image_catalog_family_cluster_mass.pdf", "small_lambda_covariance_cutouts.pdf"]
+    drawn = sorted(p.name for p in paths.figures.glob("*.pdf") if not p.name.startswith("toy_image_re"))
+    assert drawn == ["toy_hst_rgb_critical_z9.pdf", "toy_image_catalog_family_cluster_mass.pdf",
+                     "toy_small_lambda_covariance_cutouts.pdf"]
     for path in paths.figures.glob("*.pdf"):
         path.unlink()
     _forbid_evaluation(monkeypatch)

@@ -13,4 +13,9 @@
 .. autoclass:: lumina.pipeline.RunResult
    :no-members:
 .. autofunction:: lumina.pipeline.init_verdict
+.. autofunction:: lumina.pipeline.resume_payload
+.. autofunction:: lumina.pipeline.saved_init_conflict
+.. autofunction:: lumina.pipeline.saved_final_conflict
+.. autofunction:: lumina.pipeline.resume_conflicts
+.. autoclass:: lumina.pipeline.SavedStageMismatch
 ```

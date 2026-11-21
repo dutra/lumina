@@ -515,7 +515,7 @@ def redraw_rgb_critical(run_dir, *, log=print):
                  if 'image_recovery_status' in catalog else len(catalog))
     written = []
     for image_config, bands, stem, saved in variants:
-        imaging = load_cluster_imaging(image_config, config.model, config.paths.run_name)
+        imaging = load_cluster_imaging(image_config, config.model, config.paths.figure_prefix)
         if imaging[1] != bands or rgb_overview_stem(image_config, imaging[1]) != stem:
             raise ValueError(f'The imaging bands {imaging[1]} do not give the stem {stem}')
         reference_image = imaging[0][cutouts.rgb_reference_band(imaging[1])]

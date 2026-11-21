@@ -24,9 +24,8 @@ the value itself.  Creating one of the exp-transformed priors starts JAX, so cal
 """
 from __future__ import annotations
 
-import importlib
 import math
-from dataclasses import dataclass, field, fields, is_dataclass, replace
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass, replace
 from numbers import Integral, Real
 from pathlib import Path
 from types import UnionType
@@ -43,7 +42,16 @@ ERROR_SCALE_FLOOR_ARCSEC = 1.0e-4
 
 class UnknownField(TypeError):
     """A configuration payload (a run file, ``--set``, a saved ``config.json``) names a field its section does not
-    have."""
+    have, or a class (``_class``) this code does not define."""
+
+
+class MissingField(TypeError):
+    """A saved configuration payload (``config.json``) lacks a field its section requires."""
+
+
+class InvalidSection(TypeError):
+    """A saved configuration payload (``config.json``) gives a section (a field whose type is a configuration class)
+    a value that is not a mapping, e.g. ``"runtime": [1, 2]``."""
 
 
 def _error_scale_prior(median: float, log_sigma: float, upper: float):
@@ -668,8 +676,8 @@ class RuntimeConfig:
     numpyro_print_summary: bool = False
 
 
-# Sections that change only what is reported, never a fit (``OutputsConfig``): left out of the run hash
-# (``cli.config_hash``), of the configuration a resume compares (``pipeline.resume_payload``) and of the init signature
+# Sections that change only what is reported, never a fit (``OutputsConfig``): left out of the fit settings a resume
+# compares and the ``lumina`` command matches saved runs by (``pipeline.resume_payload``) and of the init signature
 # (``io.artifacts.init_signature``).
 REPORT_ONLY_SECTIONS: tuple[str, ...] = ("outputs",)
 
@@ -1751,8 +1759,8 @@ class RGBOutputConfig:
 @dataclass(frozen=True)
 class OutputsConfig:
     """The outputs stage (:mod:`lumina.outputs`): the settings shared by its modules and one section per module
-    (``lumina outputs --list`` names them).  Nothing here changes a fit: the section is outside the run hash and
-    the resume comparison (``REPORT_ONLY_SECTIONS``), and ``lumina outputs --set`` may change any of it.
+    (``lumina outputs --list`` names them).  Nothing here changes a fit: the section is outside the fit settings a
+    resume compares and saved runs are matched by (``REPORT_ONLY_SECTIONS``), and ``lumina outputs --set`` may change any of it.
     ``runtime.skip_plots`` turns the whole stage off.
 
     One set of random posterior draws (over all chains, chosen with ``runtime.seed``) is evaluated once, each draw with
@@ -1856,7 +1864,7 @@ class LensClusterSolverConfig:
     likelihood : LikelihoodConfig, optional
         Likelihood and error model.  Default: ``LikelihoodConfig()``.
     outputs : OutputsConfig, optional
-        The outputs stage: its reporting draws and the settings of each output module.  Outside the run hash.
+        The outputs stage: its reporting draws and the settings of each output module.  Outside the fit settings.
         Default: ``OutputsConfig()``.
     partition : PartitionConfig or None, optional
         Uncertain images assigned to families jointly with the lens.  Default None (none).
@@ -1982,16 +1990,44 @@ def _jsonable(value: Any, hint: Any = Any) -> Any:
     return value
 
 
+def _section_classes(hint: Any) -> list[type]:
+    """The configuration classes ``hint`` admits when it admits nothing else (``X``, ``X | None``, ``X | Y``), else
+    an empty list."""
+    options = [a for a in get_args(hint) if a is not type(None)] if get_origin(hint) in (Union, UnionType) else [hint]
+    return options if options and all(isinstance(a, type) and is_dataclass(a) for a in options) else []
+
+
+def _config_class(text: Any, where: str) -> type:
+    """The configuration class a ``_class`` entry (``lumina.config:DPIEHaloConfig``) names: a dataclass defined in
+    this module, where every configuration class is.  Anything else (another module, a function, an old package
+    name) raises :class:`UnknownField`."""
+    module, _, name = str(text).partition(":")
+    cls = globals().get(name) if module == __name__ else None
+    if not (isinstance(cls, type) and is_dataclass(cls) and cls.__module__ == __name__):
+        raise UnknownField(f"{where or 'the configuration'}: no such class {text!r} (the configuration classes are "
+                           f"those of {__name__})")
+    return cls
+
+
 def _from_jsonable(value: Any, hint: Any = Any, where: str = "") -> Any:
     """The value a ``_jsonable`` payload stands for, read as ``hint``; ``where`` is its dotted name in the
-    configuration (``outputs.rgb``), which names an unknown field in the TypeError it raises."""
+    configuration (``outputs.rgb``), which names an unknown field in the TypeError it raises.
+
+    Raises
+    ------
+    UnknownField, MissingField, InvalidSection
+        For a field its section does not have, or a ``_class`` that is not a configuration class; a required field
+        that is absent; a section given a value that is not a mapping."""
     def at(key):
         return f"{where}.{key}" if where else str(key)
+    sections = _section_classes(hint)
+    if sections and not isinstance(value, dict) and not (value is None and type(None) in get_args(hint)):
+        raise InvalidSection(f"{where or 'the configuration'} is a JSON {type(value).__name__} where the section "
+                             f"{' or '.join(c.__name__ for c in sections)} belongs")
     if isinstance(value, dict):
         if CLASS_KEY in value or _hint_class(hint) is not None:
             if CLASS_KEY in value:
-                module, name = value[CLASS_KEY].split(":")
-                cls = getattr(importlib.import_module(module), name)
+                cls = _config_class(value[CLASS_KEY], where)
             else:
                 cls = _hint_class(hint)
             hints = get_type_hints(cls)
@@ -2000,6 +2036,11 @@ def _from_jsonable(value: Any, hint: Any = Any, where: str = "") -> Any:
             if unknown:
                 raise UnknownField(f"{', '.join(at(key) for key in unknown)}: no such field (the fields of "
                                 f"{where or 'the configuration'} are {', '.join(known)})")
+            missing = [f.name for f in fields(cls) if f.init and f.name not in value
+                       and f.default is MISSING and f.default_factory is MISSING]
+            if missing:
+                raise MissingField(f"{', '.join(at(key) for key in missing)}: missing (a required field of "
+                                   f"{where or 'the configuration'})")
             return cls(**{key: _from_jsonable(item, hints.get(key, Any), at(key)) for key, item in value.items()
                           if key != CLASS_KEY})
         if {"family", "log"} <= value.keys():

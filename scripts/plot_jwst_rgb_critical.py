@@ -38,7 +38,7 @@ def main():
         jwst = args.imaging == "jwst"
         from lumina.config import RGBDisplayConfig
         from lumina.imaging.cutouts import cluster_from_config
-        cluster = cluster_from_config(config.model, config.paths.run_name)
+        cluster = cluster_from_config(config.model, config.paths.figure_prefix)
         jwst_dir = f"data/imaging/{cluster}/{'canucs_dr1' if cluster == 'm0416' else 'dja_v7.5'}"
         hst_dir = f"data/imaging/{cluster}/buffalo"
         # The run's saved display numbers belong to the imaging it was run with; the library defaults carry the balance.
@@ -70,7 +70,7 @@ def main():
     except pd.errors.EmptyDataError:
         extra = pd.DataFrame()  # No extra images were recovered in this saved run.
     from lumina.plotting.jwst_rgb import render_rgb_critical, rgb_overview_stem
-    imaging = load_cluster_imaging(config.image_catalog, config.model, config.paths.run_name)
+    imaging = load_cluster_imaging(config.image_catalog, config.model, config.paths.figure_prefix)
     render_rgb_critical(config,state,evaluator,theta,catalog,extra,imaging,
         plots.figure_path(final/'figures',rgb_overview_stem(config.image_catalog, imaging[1]) + '.pdf',config.paths.figure_prefix),
         final/'tables',best_index=best_index,posterior=posterior)

@@ -4,9 +4,9 @@ Run it from the folder the run was started from (usually the repository root): t
 it, or absolute.  ``--remap OLD=NEW`` relocates the saved paths of a run made on another machine (OLD absolute; a
 relative saved path is compared as the absolute path it names from here)::
 
-    lumina outputs results/hera/w500s250t7_allblocks-3f9a1c
-    lumina outputs results/hera/w500s250t7_allblocks-3f9a1c --only truth,mass
-    lumina outputs results/hera/w500s250t7_allblocks-3f9a1c --render
+    lumina outputs results/hera/nov21a_w500s250t7_allblocks
+    lumina outputs results/hera/nov21a_w500s250t7_allblocks --only truth,mass
+    lumina outputs results/hera/nov21a_w500s250t7_allblocks --render
     lumina outputs results/m0416_canucs2025/<run> --skip rgb --fail-fast
     lumina outputs RUN --remap /home/me/burkelenscluster=$PWD --set outputs.truth.deflection_true_fits=defl.fits
     lumina outputs RUN --set outputs.rgb.enabled=false
@@ -34,6 +34,10 @@ the next pass runs with the saved settings again unless it repeats them.  Each m
 the outputs settings its last compute used; when a module's recorded settings differ from this pass's in a field its
 compute reads, the pass ends with a warning naming the module and the fields (old -> current).  ``--list RUN``
 applies ``--remap`` and ``--set`` before listing.
+
+A pass that computes (the default, or ``--compute``) locks the run folder (``run.lock``, :mod:`lumina.run_lock`) and
+refuses a run that another process (a fit, a resume, another pass) is working in.  ``--render`` takes no lock and
+proceeds: it only reads what earlier passes committed to ``results.h5`` and draws figures.
 """
 from __future__ import annotations
 
@@ -172,7 +176,7 @@ def prepare_rerun(run_directory, *, only=None, skip=None, all_modules=False, fai
     FileNotFoundError
         When a catalog of the model or a file the selected modules read does not exist (:func:`check_module_paths`).
     ValueError
-        For an override of a setting inside the run hash, or an unknown one.
+        For an override of a setting outside the ``outputs`` section, or an unknown one.
     """
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-lumina")
     import matplotlib
@@ -213,7 +217,8 @@ def rerun_outputs(run_directory, *, log=print, mode="full", only=None, skip=None
 
 def main(argv=None) -> int:
     """``lumina outputs``; returns the exit code: 1 when a module failed, the pass stopped (``--fail-fast``) or
-    raised, or a render pass drew nothing; 2 for a usage error, a missing file, a refused override or remap."""
+    raised, or a render pass drew nothing; 2 for a usage error, a missing file, a refused override or remap, or (unless
+    ``--render``) a run folder locked by another process."""
     p = parser()
     args = p.parse_args(argv)
     if args.list:
@@ -246,6 +251,23 @@ def main(argv=None) -> int:
             except ValueError as error:
                 p.error(str(error))
     log = lambda text: print(text, flush=True)
+    lock = None
+    if mode != "render" and Path(args.run).is_dir():    # a pass that computes writes results.h5: one at a time
+        from ..run_lock import lock_run
+        try:
+            lock = lock_run(args.run, log=log)
+        except (ValueError, OSError) as error:  # RunLocked, or a folder that cannot be written
+            print(f"lumina outputs: {error}", flush=True)
+            return 2
+    try:
+        return _pass(args, mode, log)
+    finally:
+        if lock is not None:
+            lock.release()
+
+
+def _pass(args, mode, log) -> int:
+    """The output pass of :func:`main` (the run folder locked unless ``mode`` is ``render``)."""
     try:
         prepared = prepare_rerun(args.run, only=args.only, skip=args.skip, all_modules=args.all, fail_fast=args.fail_fast,
                                  draws=args.draws, remap=args.remap, overrides=args.overrides, mode=mode, log=log)
