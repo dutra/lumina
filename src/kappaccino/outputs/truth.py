@@ -37,6 +37,7 @@ class TruthModule(OutputModule):
     summary_keys = ("truth",)
     path_fields = ("truth.kappa_true_fits", "truth.gammax_true_fits", "truth.gammay_true_fits",
                    "truth.deflection_true_fits")
+    shared_settings = ("draws", "image_draws", "caustic_source_redshift", "image_solver")      # image_solver: the images product it reads
 
     def active(self, ctx: OutputContext) -> str | None:
         truth = ctx.settings
@@ -82,8 +83,7 @@ class TruthModule(OutputModule):
         ctx.render_step("relative_displacement", lambda: render_relative_displacement(
             store.read_table(ctx.stage, "relative_displacement"),
             plots.figure_path(ctx.figures, "relative_displacement.pdf", ctx.prefix)))
-        maps = ctx.completion["steps"]["truth_maps"]
-        if maps["status"] == "done" and not maps["wrote"]:   # no truth convergence map, or no source behind the lens
+        if ctx.wrote_nothing("truth_maps"):     # no truth convergence map, or no source behind the lens
             return
         figures, prefix, stage = ctx.figures, ctx.prefix, ctx.stage
         truth = _once(lambda: load_truth_recovery(stage))

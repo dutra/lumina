@@ -20,6 +20,7 @@ class MassModule(OutputModule):
     compute_steps = ("critical_curves", "aperture_masses", "zeta_masses")
     render_steps = ("critical_curves", "zeta_masses")
     path_fields = ("truth.kappa_true_fits",)
+    shared_settings = ("draws", "image_draws", "caustic_source_redshift", "image_solver")      # image_solver: the images product it reads
 
     def compute(self, ctx: OutputContext) -> None:
         from ..io import store

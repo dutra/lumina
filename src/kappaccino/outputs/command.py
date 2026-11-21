@@ -22,16 +22,18 @@ products go to the run's ``final/`` folder, as after the fit.
 Pass mode: by default each module computes its results into the store and draws its figures from the store.
 ``--render`` only draws the figures again from what an earlier pass saved, without building the evaluator or the
 reporting draws: each render step is drawn when the compute step it needs wrote in the module's last compute; a module
-never computed here fails with the hint to compute it first; a render step that cannot be drawn (its compute step
-failed, or ``rgb`` cannot load the imaging of a variant its compute drew) is reported and fails the module; a render
-pass that draws nothing at all says why and exits with 1.  ``--compute`` writes the results and no figures (on a
-machine without the imaging: ``--compute --skip rgb``).
+never computed here fails (``NotComputed``) with the hint to compute it first; a render step that cannot be drawn (its
+compute step failed or did not run, or ``rgb`` cannot load the imaging of a variant its compute drew) is reported and
+fails the module; a render pass that draws nothing at all says why and exits with 1.  ``--compute`` writes the results
+and no figures (on a machine without the imaging: ``--compute --skip rgb``).
 
 ``--set`` changes only the ``outputs`` section (``outputs.FIELD`` or ``outputs.MODULE.FIELD``), which never changes
 the fit, checked (``config.validate_outputs``) before the pass.  ``--draws N`` sets ``outputs.draws`` and
-``outputs.image_draws``.  After a full or compute pass, ``final/artifacts/config.json`` takes the outputs section of
-that pass (``--set`` and ``--draws`` applied, paths as saved), so that it describes the products; a render pass
-leaves it alone.  ``--list RUN`` applies ``--remap`` and ``--set`` before listing.
+``outputs.image_draws``.  Both hold for this pass only: the command never writes ``final/artifacts/config.json``, so
+the next pass runs with the saved settings again unless it repeats them.  Each module's completeness record keeps
+the outputs settings its last compute used; when a module's recorded settings differ from this pass's in a field its
+compute reads, the pass ends with a warning naming the module and the fields (old -> current).  ``--list RUN``
+applies ``--remap`` and ``--set`` before listing.
 """
 from __future__ import annotations
 
@@ -198,38 +200,15 @@ def prepare_rerun(run_directory, *, only=None, skip=None, all_modules=False, fai
     return config, state, evaluator, posterior, audit, final
 
 
-def save_outputs_settings(run_directory, *, overrides=(), draws=None, log=print) -> bool:
-    """After a pass that computed (full or compute), make ``final/artifacts/config.json`` describe the settings that
-    produced its products: its ``outputs`` section becomes the saved one with ``overrides`` (``--set``) and ``draws``
-    (``--draws``) applied.  The paths stay as saved (``--remap`` only says where the same files are on this machine)
-    and nothing outside ``outputs`` changes.  Returns whether the file changed (logged)."""
-    from ..io import artifacts
-    from .saved_run import apply_overrides
-    directory = Path(run_directory) / "final" / "artifacts"
-    saved = artifacts.load_config(directory)
-    config = apply_overrides(saved, overrides)
-    if draws is not None:
-        config = replace(config, outputs=replace(config.outputs, draws=int(draws), image_draws=int(draws)))
-    if config.outputs == saved.outputs:
-        return False
-    artifacts.save_config(directory, replace(saved, outputs=config.outputs))
-    log(f"[outputs] {directory / artifacts.CONFIG_FILE}: outputs section set to the settings of this pass")
-    return True
-
-
 def rerun_outputs(run_directory, *, log=print, mode="full", only=None, skip=None, all_modules=False, **options) -> dict:
     """Run the outputs stage of the finished run in ``run_directory`` into its ``final/`` folder in ``mode``
     (:func:`prepare_rerun` with ``options``, then ``reporting.outputs.write_outputs`` with the module selection
-    ``only``, ``skip``, ``all_modules``: none of them runs the enabled modules); returns this pass's summary.  After a
-    pass that computed, the saved configuration takes its outputs settings (:func:`save_outputs_settings`)."""
+    ``only``, ``skip``, ``all_modules``: none of them runs the enabled modules); returns this pass's summary.  The
+    run's ``final/artifacts/config.json`` is never written: ``--set`` and ``--draws`` hold for this pass only."""
     from ..reporting.outputs import write_outputs
     selection = dict(only=only, skip=skip, all_modules=all_modules)
     prepared = prepare_rerun(run_directory, log=log, mode=mode, **selection, **options)
-    try:
-        return write_outputs(*prepared, log=log, mode=mode, **selection)
-    finally:
-        if mode != "render":
-            save_outputs_settings(run_directory, overrides=options.get("overrides", ()), draws=options.get("draws"), log=log)
+    return write_outputs(*prepared, log=log, mode=mode, **selection)
 
 
 def main(argv=None) -> int:
@@ -277,8 +256,6 @@ def main(argv=None) -> int:
     try:
         summary = write_outputs(*prepared, log=log, mode=mode, only=args.only, skip=args.skip, all_modules=args.all)
     except Exception as error:
-        if mode != "render":                    # what the pass wrote before the error came from these settings
-            save_outputs_settings(args.run, overrides=args.overrides, draws=args.draws, log=log)
         if prepared[0].outputs.fail_fast:       # the step logged its traceback; one line here
             print(f"kappaccino outputs: stopped at the first error (fail_fast: {type(error).__name__}: {error})", flush=True)
         else:                                   # outside the modules (the run summary, the store): nothing logged it
@@ -286,8 +263,6 @@ def main(argv=None) -> int:
             print(f"kappaccino outputs: the pass failed outside the modules ({type(error).__name__}: {error})\n"
                   f"{traceback.format_exc().rstrip()}", flush=True)
         return 1
-    if mode != "render":
-        save_outputs_settings(args.run, overrides=args.overrides, draws=args.draws, log=log)
     from ..io import store
     try:
         saved = store.read_record(Path(args.run) / "final", "run_summary")

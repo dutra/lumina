@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 import json
+from kappaccino.config import ImagesOutputConfig, OutputsConfig
 from kappaccino.io import store
 
 import matplotlib.pyplot as plt
@@ -34,8 +35,8 @@ def test_run_outputs_create_potfile_corner(tmp_path, monkeypatch):
     posterior = SimpleNamespace(samples=samples, physical=samples, log_prob=np.zeros(len(samples)))
     state = SimpleNamespace(parameter_specs=specs)
     config = SimpleNamespace(paths=SimpleNamespace(figure_prefix="hera"), runtime=SimpleNamespace(seed=0),
-                             outputs=SimpleNamespace(draws=2, image_draws=2, workers=1, fail_fast=False, image_solver=None,
-                                                     images=SimpleNamespace(extra_images=False)))
+                             outputs=OutputsConfig(draws=2, image_draws=2, workers=1,
+                                                   images=ImagesOutputConfig(extra_images=False)))
     paths = SimpleNamespace(tables=tmp_path / "tables", figures=tmp_path / "figures", root=tmp_path)
     monkeypatch.setattr(posterior_module, "posterior_summary_table", lambda *args: pd.DataFrame())
     monkeypatch.setattr(posterior_module, "classification_table", lambda *args: pd.DataFrame())

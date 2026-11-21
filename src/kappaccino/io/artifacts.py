@@ -30,6 +30,7 @@ here take that directory.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -82,8 +83,23 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def write_json_atomic(path: Path, payload: Any) -> None:
+    """:func:`write_json`, atomically: the JSON goes to a temporary file in the same folder, which then replaces
+    ``path`` (``os.replace``), so a crash mid-write leaves the old file whole, never a truncated one.  The temporary
+    file is removed when the write fails."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        write_json(temporary, payload)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def save_config(directory: Path, config: LensClusterSolverConfig) -> None:
-    """Write ``config.json`` of a run configuration (:meth:`LensClusterSolverConfig.to_json_dict`).
+    """Write ``config.json`` of a run configuration (:meth:`LensClusterSolverConfig.to_json_dict`), atomically
+    (:func:`write_json_atomic`).
 
     Parameters
     ----------
@@ -93,7 +109,7 @@ def save_config(directory: Path, config: LensClusterSolverConfig) -> None:
         The run configuration.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    write_json(directory / CONFIG_FILE, config.to_json_dict())
+    write_json_atomic(directory / CONFIG_FILE, config.to_json_dict())
 
 
 def load_config(directory: Path) -> LensClusterSolverConfig:

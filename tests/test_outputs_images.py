@@ -2,6 +2,7 @@
 figures drawn from it alone, the failed recovery, the true-lens record and the fit numbers of a render pass."""
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -43,9 +44,10 @@ def recovery_tables(empty=False):
 
 
 class Dependent(OutputModule):
-    """A converted module that requires ``images`` and records the product it got."""
+    """A converted module that requires ``images`` and records the product it got; named after a section of the
+    outputs configuration (``mass``), as every module is."""
 
-    name, requires, compute_steps, render_steps = "dependent", ("images",), ("use",), ()
+    name, requires, compute_steps, render_steps = "mass", ("images",), ("use",), ()
 
     def __init__(self, seen):
         self.seen = seen
@@ -109,9 +111,8 @@ class Setup:
 
     def context(self, mode="full"):
         self.mode = mode
-        config = SimpleNamespace(outputs=SimpleNamespace(image_solver=SimpleNamespace(exact_image_finder="global-jax"),
-                                                         images=SimpleNamespace(extra_images=True),
-                                                         truth=SimpleNamespace(deflection_true_fits=self.deflection)),
+        from kappaccino.config import OutputsConfig, TruthOutputConfig
+        config = SimpleNamespace(outputs=OutputsConfig(truth=TruthOutputConfig(deflection_true_fits=self.deflection)),
                                  paths=SimpleNamespace(figure_prefix="toy"))
         state = SimpleNamespace(family_data=[], parameter_specs=[], cosmo_config={"H0": 70.0, "Om0": 0.3})
         paths = SimpleNamespace(tables=self.tmp_path / "tables", figures=self.tmp_path / "figures", root=self.tmp_path)
@@ -156,7 +157,7 @@ def test_an_empty_image_table_round_trips_and_draws_no_figure(setup):
         pd.testing.assert_frame_equal(ctx.products["images"]["recovery"][name], frame, check_exact=True)
     assert ctx.products["images"]["recovery"]["position_coverage"].empty
     assert records["images"]["status"] == "done" and "render_steps" not in records["images"] and setup.figures() == []
-    ctx.config.outputs.rgb = SimpleNamespace(image_dir="imaging")
+    ctx.config.outputs = replace(ctx.config.outputs, rgb=replace(ctx.config.outputs.rgb, image_dir="imaging"))
     assert ctx.inactive_reason(module_named("rgb")) == "no observed image in the image recovery"
 
 
@@ -206,7 +207,7 @@ def test_a_failed_recovery_makes_the_module_unavailable(setup):
     assert records["images"]["status"] == "failed" and "images" not in ctx.products
     assert records["images"]["steps"]["recovery"]["status"] == "failed"
     assert records["images"]["steps"]["true_lens"] == {"status": "skipped", "seconds": 0.0, "reason": "recovery failed"}
-    assert records["dependent"]["status"] == "skipped" and seen == [] and setup.figures() == [] and "fit" not in ctx.summary
+    assert records["mass"]["status"] == "skipped" and seen == [] and setup.figures() == [] and "fit" not in ctx.summary
     assert setup.true_lens_calls == []
     # Nothing to draw without the recovery: both render steps are reported as not drawn, the product is never read.
     assert {step: record["reason"] for step, record in records["images"]["render_steps"].items()} == {
@@ -215,13 +216,13 @@ def test_a_failed_recovery_makes_the_module_unavailable(setup):
     ctx, records = setup.run("render", modules=[ImagesModule(), Dependent(seen)])
     assert records["images"]["status"] == "failed" and "gave no product" in records["images"]["error"]
     assert "images" not in ctx.products and setup.figures() == []
-    assert records["dependent"]["status"] == "skipped"
+    assert records["mass"]["status"] == "skipped"
 
 
 def test_dependents_get_the_product(setup):
     seen = []
     ctx, records = setup.run(modules=[ImagesModule(), Dependent(seen)])
-    assert records["dependent"]["status"] == "done" and seen == [ctx.products["images"]]
+    assert records["mass"]["status"] == "done" and seen == [ctx.products["images"]]
 
 
 def test_the_true_lens_record_only_from_this_compute(setup):

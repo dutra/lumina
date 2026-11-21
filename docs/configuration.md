@@ -354,7 +354,7 @@ Common changes on an existing configuration:
 | drop a large-scale component | rebuild `LensModelConfig.large_halos` without it |
 | start from a previous run | `SearchConfig(warm_start="results/demo/v1")` |
 | skip figures and tables | `RuntimeConfig(skip_plots=True)` |
-| skip the imaging figures | `OutputsConfig(skip=("rgb",))` |
+| skip the imaging figures | `OutputsConfig(rgb=RGBOutputConfig(enabled=False))` |
 
 (lenstool-par)=
 ## From a Lenstool `.par` file

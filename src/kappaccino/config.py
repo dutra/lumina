@@ -41,6 +41,11 @@ from .priors import (cut_excess_from_moments, ellipticity_box, is_distribution, 
 ERROR_SCALE_FLOOR_ARCSEC = 1.0e-4
 
 
+class UnknownField(TypeError):
+    """A configuration payload (a run file, ``--set``, a saved ``config.json``) names a field its section does not
+    have."""
+
+
 def _error_scale_prior(median: float, log_sigma: float, upper: float):
     """Log-normal error-scale prior truncated to [ERROR_SCALE_FLOOR_ARCSEC, upper]."""
     return truncated_lognormal(median, log_sigma, low=ERROR_SCALE_FLOOR_ARCSEC, high=upper)
@@ -1992,7 +1997,7 @@ def _from_jsonable(value: Any, hint: Any = Any, where: str = "") -> Any:
             known = [f.name for f in fields(cls) if f.init]
             unknown = [key for key in value if key != CLASS_KEY and key not in known]
             if unknown:
-                raise TypeError(f"{', '.join(at(key) for key in unknown)}: no such field (the fields of "
+                raise UnknownField(f"{', '.join(at(key) for key in unknown)}: no such field (the fields of "
                                 f"{where or 'the configuration'} are {', '.join(known)})")
             return cls(**{key: _from_jsonable(item, hints.get(key, Any), at(key)) for key, item in value.items()
                           if key != CLASS_KEY})

@@ -32,9 +32,8 @@ everything else as JSON. `config.json` restores the run configuration exactly
 Each stage folder (`init/`, `final/`) keeps its products in two HDF5 files instead of loose tables:
 
 `results.h5`
-: Every table (formerly `tables/<name>.csv`), every record (formerly `tables/<name>.json`), every array bundle (formerly
-  `tables/<name>.h5`) and the record of each figure (formerly `figures/<figure>.json`, now stored under the figure's
-  name without `.pdf`). Below, a table, record or arrays `<name>` means that entry of `results.h5`.
+: Every table, every record, every array bundle and the record of each figure (stored under the figure's name
+  without `.pdf`). Below, a table, record or arrays `<name>` means that entry of `results.h5`.
 
 `cache.h5`
 : What only saves time: the lens maps of every grid the products evaluate (`grid_maps_<key>`, float32 maps of the
@@ -306,8 +305,9 @@ recorded figure cannot be drawn.
   took 54 s (`rgb` 50 s, most of it building the RGB cutouts from the JWST mosaics) against 240 s for
   `--only rgb --draws 16` (`rgb` 199 s). A render pass in which no selected module draws anything says why in the
   log and on the command line: no selected module was computed in this run folder, an input a figure needs is missing
-  (the imaging of `rgb`, named with its folder), the render steps could not be drawn, or the last compute saved
-  nothing to draw; the command then exits with 1. So does any render pass in which a module failed, for example
+  (the imaging of `rgb`, named with its folder), the render steps could not be drawn, modules failed outside their
+  steps (a product that could not be loaded, a render that raised outside its steps; each named with its error), or
+  the last compute saved nothing to draw; the command then exits with 1. So does any render pass in which a module failed, for example
   `rgb` when the imaging of a variant its compute drew cannot be loaded.
 
 In a render pass (and in the product and render phases of any pass) `ctx.draws` and `ctx.evaluator` raise
@@ -322,14 +322,15 @@ When a module's compute starts, its record `output_module_<name>` in `results.h5
 `{"complete": false, "started_at": ...}`; when the compute ends it holds the compute steps (`status`, `seconds`,
 `wrote`, `notes` when the step noted something it went without, and `error` or `reason`), `complete` (true only when
 every compute step ran without failing and the module gave its product; for information), `unavailable` (the error
-with which the compute ended without a product, `ModuleUnavailable` or another error, else null), `computed_at`, and
-when the compute used the reporting draws `reporting_draws`, `image_draws`, `draws_seed` and `draws_key`.
+with which the compute ended without a product, `ModuleUnavailable` or another error, else null), `computed_at`,
+when the compute used the reporting draws `reporting_draws`, `image_draws`, `draws_seed` and `draws_key`, and
+`settings`, the outputs settings the compute used (see [Settings of a compute](#settings-of-a-compute)).
 
 Completeness is per step. A render step is drawn when the compute step it needs finished and wrote in the module's
 last compute, whatever the other steps did; its figure never comes from an older compute. A render pass refuses a
 module only when there is no record of a compute with its steps: never computed in this run folder, or interrupted
-before the compute recorded them (the record is still the marker). The module then fails with `ModuleUnavailable`
-and a message that says to run its compute first (`kappaccino outputs RUN --only <module>`, or `--compute --only
+before the compute recorded them (the record is still the marker). The module then fails with `NotComputed` (a
+subclass of `ModuleUnavailable`) and a message that says to run its compute first (`kappaccino outputs RUN --only <module>`, or `--compute --only
 <module>`). Otherwise the render pass draws what it can and reports each render step it could not draw, with the
 reason; the module ends as failed when a compute step of its last compute failed or a render step could not be drawn,
 and as done otherwise. A module whose last compute gave no product (`unavailable`) draws what it can and is failed
@@ -354,13 +355,16 @@ whose compute steps succeeded. A module that cannot give its dependents what the
 (`images` without its recovery, `truth` without its maps) and is failed with no product; its render still runs, in a
 full pass and in a later render pass, and draws the figures whose compute steps succeeded (`truth` draws the relative
 displacement, which needs no truth map, and reports its other figures as not drawn; `images` has nothing to draw
-without its recovery). A module that requires
+without its recovery). A compute that ends with any other error (one raised outside its steps, or the first failed
+step under `--fail-fast`) is failed before its render, so a full pass draws nothing for that module; its record keeps
+the steps that ran, and a later `--render` draws those that succeeded and reports the others as not drawn (their
+compute step did not run). A module that requires
 another runs only when that module gave its product, whatever it is: `mass`, `truth` and `rgb` therefore need a
 successful image recovery. The log ends with the list of failed modules. `run_summary` records each module under
 `modules`, in run order: `status` (`done`, `disabled`, `inactive`, `skipped` or `failed`), `mode` (the pass mode),
 `seconds`, `steps` (each compute step's `status`, `seconds`, `wrote` and `error` or `reason`; in a render pass those of
 the completeness record), `render_steps` when the module rendered, `reporting_draws` and `image_draws` when its
-compute used the draws, the module's `reason` or `error`, and `failed_requirement` (the module whose failure it
+compute used the draws, `settings` (those of its compute, as in the completeness record), the module's `reason` or `error`, and `failed_requirement` (the module whose failure it
 follows) when it was skipped because a module it requires failed in this pass.
 
 The reporting draws are built the first time a step needs them (the `covariance` step of `fit`); if building them
@@ -383,6 +387,38 @@ were computed over other reporting draws than others (a pass with `--only` and a
 log has one `[outputs] WARNING` that names the modules with their draw counts and seeds, and the warning goes to
 `warnings` in `run_summary`. A module whose required module was computed again with other draws after it is named
 as stale. The warning never blocks a pass; computing the modules together over the same draws clears it.
+
+### Settings of a compute
+
+The completeness record of a module keeps, under `settings`, the outputs settings its compute used, as dotted names
+under `outputs` with the values of that pass (paths as the configuration gave them, after any `--remap`): the
+shared fields the module declares (`shared_settings`), its own section without its `enabled` switch, and the fields
+of other sections named in its `path_fields`. `workers` and `fail_fast` are never recorded: they change how a pass
+runs, not what it computes, and neither do the `enabled` switches.
+
+| module | recorded settings |
+|---|---|
+| `fit` | `draws`, `image_draws`, `caustic_source_redshift`, `fit.*` |
+| `images` | `draws`, `image_draws`, `image_solver.*`, `images.*`, `truth.deflection_true_fits` |
+| `mass` | `draws`, `image_draws`, `caustic_source_redshift`, `image_solver.*`, `mass.*`, `truth.kappa_true_fits` |
+| `truth` | `draws`, `image_draws`, `caustic_source_redshift`, `image_solver.*`, `truth.*` |
+| `rgb` | `draws`, `image_draws`, `caustic_source_redshift`, `image_solver.*`, `rgb.*`, `truth.kappa_true_fits` |
+
+`mass`, `truth` and `rgb` record `image_solver` because they read the image recovery of `images`, which the solver
+made. At the end of every pass, and in a render pass too, each module's recorded settings are compared with those of
+the current pass. A field counts when the compute reads it; a field that only render reads from the current
+configuration (the module's `render_settings`) changes no saved result and is left out. The only such field is
+`outputs.rgb.display` (the colours of the RGB composite: the compute reads only the WCS and shape of the imaging).
+Fields both phases read count as compute fields: `rgb.image_dir`, `image_scale`, `bands` and `figure_suffix` choose the
+imaging the compute measured, and the `paper_*_cutouts` selections are prepared by the compute (render refuses
+selections other than the prepared ones). For every module whose fields differ, the log has one `[outputs] WARNING`
+naming the module and each field as `old -> current`, and the warning goes to `warnings` in `run_summary`. Modules
+disabled or inactive in this pass are not compared. The note never blocks a pass: after `kappaccino outputs RUN --only
+images --draws 4`, a plain `--render` draws what was computed and warns that `images` was computed with
+`outputs.draws 4 -> 64` (and the draws warning above names `mass`, `truth` and `rgb` as stale). A full pass with the
+same settings for every module never warns. Since nothing is saved by `kappaccino outputs`, a render pass of a run
+whose compute used `--set` (a truth map path, say) gives the same `--set` to compare against the same settings; it
+draws the same figures either way.
 
 ### The outputs section
 
@@ -414,7 +450,7 @@ outputs:
 
 A module runs when it is enabled and active (its inputs exist: `truth` needs a truth map, `rgb` an imaging folder).
 A disabled module is recorded as `disabled` and the modules that require it are skipped with the reason; `--set
-outputs.rgb.enabled=false` does the same for one rerun. Steps cannot be switched on and off. Some inputs are read by
+outputs.rgb.enabled=false` does the same for one rerun (nothing is saved). Steps cannot be switched on and off. Some inputs are read by
 more than one module: `outputs.truth.kappa_true_fits` also by `mass` (aperture and zeta masses) and `rgb` (the cluster mass
 figure), and `outputs.truth.deflection_true_fits` also by `images` (the true-lens RMS), so a disabled `truth` leaves those
 products alone. `runtime.skip_plots` turns the whole stage off.
@@ -444,7 +480,8 @@ command runs in, so `--remap $PWD/data/imaging/m0416/buffalo=/elsewhere` also mo
 `data/imaging/m0416/buffalo`. The extra JWST variant of M0416 and AS1063 (`imaging.cutouts.imaging_variants`) is not
 a configuration field: its folder is built as `data/imaging/<cluster>/canucs_dr1` (M0416) or
 `data/imaging/<cluster>/dja_v7.5` (AS1063) relative to the folder the command runs in, and `--remap` does not move
-it, so run the command from the repository root for that variant. Before a full or compute pass, the command checks
+it, so run the command from the folder that contains `data/imaging/<cluster>/...` (usually the repository root) for
+that variant; when it is missing there, render names the absolute folder it looked for. Before a full or compute pass, the command checks
 that the files the selected modules read exist; a missing one is named by its field, with the hint to use `--remap`.
 A render pass needs the catalogs (the state is built from them) and, for `rgb`, the imaging pixels of every variant
 its last compute drew; the imaging is not checked before the pass, and a variant whose imaging is missing fails its
@@ -460,16 +497,15 @@ module but `rgb`. `--set outputs.FIELD=VALUE` or
 section before the pass. Anything outside that section is refused: settings in the run hash would no longer describe
 the saved fit, and the `paths` section, which the hash leaves out, names the run, the figure prefix and the imaging
 variants (`paths.figure_prefix=../../X` would write figures outside the run folder). `--draws N` sets
-`outputs.draws` and `outputs.image_draws` to N, as the run command's `--draws` does. After a full or compute pass
-(also one that failed), `final/artifacts/config.json` takes the `outputs` section of that pass: the saved one with
-`--set` and `--draws` applied, its paths as saved (`--remap` only says where the same files are on this machine;
-`--fail-fast` is a flag of the command, not a setting). The saved configuration then describes the settings behind the
-products, and a later `kappaccino outputs RUN` uses them. A render pass changes nothing, since it computes nothing. A
-pass that computes only some modules (`--only truth --draws 4`) still records its settings for the whole section; the
-completeness record of each module keeps the draws its own compute used, and the draws check below warns when they
-differ. The run command does the same: resuming a finished run (`kappaccino catalogs/hera --draws 8`) saves the new
-`outputs` section in `final/artifacts/config.json` before the outputs stage runs, and leaves the rest of the saved
-configuration alone. `--list` prints the modules
+`outputs.draws` and `outputs.image_draws` to N, as the run command's `--draws` does. `--set` and `--draws` hold for
+that pass only: `kappaccino outputs` never writes `final/artifacts/config.json`, whatever the pass mode and whether
+it succeeds or fails, so the next pass runs with the saved settings again unless it repeats them. What each module's
+compute used is kept in its completeness record (`settings`, with the draws), and a later pass warns about a module
+computed with other settings than its own (see [Settings of a compute](#settings-of-a-compute)). The run command
+differs: resuming a finished run (`kappaccino catalogs/hera --draws 8`) is a new run configuration, and it saves the
+new `outputs` section in `final/artifacts/config.json` before the outputs stage runs and leaves the rest of the saved
+configuration alone. Every write of a `config.json` is atomic (a temporary file in the same folder, renamed over the
+old one), so a crash never leaves a truncated file. `--list` prints the modules
 with their `requires`, `after` and compute and render steps; given a run, it also says whether each is enabled and
 whether it applies to it, judged from the configuration alone, after the `--remap` and `--set` given with it. At the end the command prints the fit numbers of the
 saved `run_summary`. The exit code is 1 when a module failed, `--fail-fast`
@@ -514,7 +550,11 @@ column such as `exposure_seconds` is always compared. It exits with 1 on any oth
 A module is three things: a subclass of {class}`~kappaccino.outputs.base.OutputModule`, a frozen dataclass of its
 settings in `config.py`, and one entry in the registry. The class has a `name`, the modules whose products it reads
 (`requires`) or that it should follow (`after`), an optional `active` that returns the reason it does not apply, its
-`compute_steps` and `render_steps`, and the three methods:
+`compute_steps` and `render_steps`, and the three methods.
+
+**The module's `name` must equal the field name of its section in `OutputsConfig`** (`name = "ggsl"` and
+`ggsl: GGSLOutputConfig`): the runner, `--list`, `--set`, the path check and the settings record all find the
+section as `config.outputs.<name>`.
 
 ```python
 from kappaccino.outputs.base import ModuleUnavailable, OutputModule
@@ -587,8 +627,15 @@ class GGSLOutputConfig:
 `OutputsConfig.validate` calls the section's `validate`, the runner reads its `enabled`, and the module reads the
 section as `ctx.settings`; a file the compute reads is a path field of the section, named in the module's
 `path_fields` as a dotted name under `outputs` (`"ggsl.catalog_path"`), which `kappaccino outputs` checks before a
-pass and `--remap` moves. Put the module class in a file of `src/kappaccino/outputs/` and add an instance to
+pass and `--remap` moves; a field of another module's section that the compute reads goes there too
+(`"truth.kappa_true_fits"`), so that the settings record keeps it. Name the shared fields the compute reads in
+`shared_settings` (`("draws", "image_draws", "caustic_source_redshift")`, plus `"image_solver"` when it solves images
+or reads the `images` product), and the fields only render reads from the configuration in `render_settings`, which
+the settings check leaves out. Put the module class in a file of `src/kappaccino/outputs/` and add an instance to
 `MODULES` in `outputs/registry.py`, where its position sets its place among modules with no ordering between them.
+Three more places name every module: add an `autoclass` entry for the settings class to `docs/api/config.md`,
+describe the section in `docs/configuration.md` (the paragraph on `OutputsConfig`), and add the name to the list in
+`tests/test_output_modules.py::test_default_order_is_the_registry_order`, which hard-codes the registry order.
 Nothing else needs to change: the section is outside the run hash with the rest of `outputs`, and `--set
 outputs.ggsl.FIELD=VALUE` already accepts it. The context (`ctx`) holds `config`, `state`,
 `posterior`, `audit`, `paths`, `stage`, `tables`, `figures`, `prefix`, `log`, `summary`, `products`, `mode`, `settings`,
