@@ -1,12 +1,11 @@
-"""Locks of the results tree: one process at a time works in a run folder, and one at a time creates a run of a cluster.
+"""Locks of the results tree: one process at a time works in a run folder.
 
 A lock is a file holding one JSON line: the host name, the process id, the local time it was taken and the command.
 It is written whole to a temporary file of the same folder and published with ``os.link``, which fails when the lock
 exists, so exactly one process creates it and no process ever sees it empty.  ``run.lock`` in a run folder is held by
 ``lumina <cluster>``, ``lumina resume`` and ``lumina outputs`` (except ``--render``) for as long as they work in that
-folder; ``.names.lock`` in a cluster folder ``results/<name>/`` is held by ``lumina <cluster>`` only while it reserves
-a name and creates and locks the new run folder (:func:`lumina.run_names.new_run`), never while it fits.  Both are
-removed when the process leaves the ``with`` block or calls :meth:`Lock.release`, also on an exception or Ctrl-C.
+folder.  It is removed when the process leaves the ``with`` block or calls :meth:`Lock.release`, also on an exception
+or Ctrl-C.
 
 A lock left by a process that died without removing it (SIGTERM, SIGKILL, a crash, a power cut) is stale when it
 names this host (its short name, before the first dot, in any case) and its process id no longer runs: the next
@@ -31,10 +30,7 @@ from datetime import datetime
 from pathlib import Path
 
 RUN_LOCK = "run.lock"                   # in a run folder
-CLUSTER_LOCK = ".names.lock"            # in a cluster folder, while a new run is created
-CLUSTER_LOCK_WAIT = 120.0               # seconds a command waits for the cluster lock before it gives up
-POLL = 0.05                             # seconds between two attempts at a held cluster lock
-WAIT_REPORT = 30.0                      # seconds between two log lines while a command waits for the cluster lock
+TAKEOVER_PAUSE = 0.005                  # seconds a process waits when another one is taking over the same stale lock
 
 
 class RunLocked(ValueError):
@@ -167,7 +163,7 @@ def _take_over(info: LockInfo) -> bool:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             os.close(descriptor)
-            time.sleep(POLL / 10)
+            time.sleep(TAKEOVER_PAUSE)
             return False
         try:
             same = os.fstat(descriptor).st_ino == os.stat(guard).st_ino
@@ -249,31 +245,6 @@ def acquire(path, *, what: str, log=print) -> Lock:
     if lock is None:
         raise RunLocked(f"{what} is in use: locked by {holder.holder()}; {holder.advice()}")
     return lock
-
-
-def acquire_waiting(path, *, what: str, wait: float = CLUSTER_LOCK_WAIT, log=print) -> Lock:
-    """Take the short-lived lock ``path``, waiting up to ``wait`` seconds while another process holds it.
-
-    Raises
-    ------
-    RunLocked
-        When it is still held after ``wait`` seconds, naming the holder and the file to delete.
-    """
-    started = time.monotonic()
-    reported = None
-    while True:
-        lock, holder = try_acquire(path, log=log)
-        if lock is not None:
-            return lock
-        waited = time.monotonic() - started
-        if waited >= wait:
-            raise RunLocked(f"gave up after {wait:g} s waiting for {what}: locked by {holder.holder()}; "
-                            f"{holder.advice()}")
-        if reported is None or waited - reported >= WAIT_REPORT:
-            reported = waited
-            log(f"[lock] waiting for {what} ({path}): locked by {holder.holder()}; "
-                f"{waited:.0f} s of at most {wait:g} s")
-        time.sleep(POLL)
 
 
 def run_lock_path(run_dir) -> Path:

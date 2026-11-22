@@ -634,6 +634,16 @@ def resume_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+class SavedStageMismatch(Exception):
+    """A saved stage of the run folder does not match the configuration it is resumed with, so it is neither reused
+    nor overwritten."""
+
+    def __init__(self, stage: str):
+        super().__init__(f"the saved {stage} stage of this run folder does not match the settings it is resumed with "
+                         "(after a code change or a hand edit of its saved files, say), so it cannot be continued; "
+                         "start a new run")
+
+
 def _recorded(config: LensClusterSolverConfig, saved_form) -> LensClusterSolverConfig:
     """The configuration the run's files record and its saved stages are compared with: ``saved_form(config)``, the
     inverse of a ``lumina resume --remap`` relocation (so a remap is never saved), else ``config``."""
@@ -714,9 +724,10 @@ def run_init(config: LensClusterSolverConfig, *, saved_form=None) -> InitResult:
     Raises
     ------
     ValueError
-        If the config is invalid, or a saved init is being resumed but was made
-        with a different model, likelihood, member, search configuration or
-        seed (use a new run name).
+        If the config is invalid.
+    SavedStageMismatch
+        If a saved init is being resumed but was made with a different model,
+        likelihood, member, search configuration or seed.
     RuntimeError
         If the likelihood rejects the best mode after reclassification.
     """
@@ -739,7 +750,7 @@ def _run_init(config: LensClusterSolverConfig, saved_form=None) -> InitResult:
         if config.runtime.resume and artifacts.is_init_complete(paths.artifacts):
             saved = json.loads((paths.artifacts / artifacts.INIT_SIGNATURE_FILE).read_text())
             if saved != artifacts._jsonable(artifacts.init_signature(recorded)):
-                raise ValueError("The saved init stage was made with a different model, likelihood, member or search configuration; use a new run name.")
+                raise SavedStageMismatch("init")
             log("[init] complete init stage found; loading the saved start")
             saved_classes = json.loads((paths.artifacts / artifacts.CLASSIFICATION_FILE).read_text())
             state = build_state(config, drop_member_ids=saved_classes.get("dropped_members", ()))
@@ -914,8 +925,10 @@ def run_final(config: LensClusterSolverConfig, init: InitResult, *, saved_form=N
     Raises
     ------
     ValueError
-        If the config is invalid, or a saved final stage is being resumed but
-        was made with a different configuration (use a new run name).
+        If the config is invalid.
+    SavedStageMismatch
+        If a saved final stage is being resumed but was made with a different
+        configuration.
     """
     config = config.validate()
     recorded = _recorded(config, saved_form)
@@ -945,7 +958,7 @@ def run_final(config: LensClusterSolverConfig, init: InitResult, *, saved_form=N
         if runtime.resume and artifacts.is_final_complete(stage.artifacts):
             saved = artifacts.load_config(stage.artifacts)
             if resume_payload(saved.to_json_dict()) != resume_payload(recorded.to_json_dict()):
-                raise ValueError("The saved final stage was made with a different configuration; use a new run name.")
+                raise SavedStageMismatch("final")
             log("[final] complete posterior found; loading artifacts")
             posterior = artifacts.load_posterior(stage.artifacts)
             comparison_file = stage.artifacts / model_comparison.MODEL_COMPARISON_FILE

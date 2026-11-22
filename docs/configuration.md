@@ -287,7 +287,8 @@ second NUTS run on the tempered posterior that gives WBIC for model comparison. 
 the length of that run (see {doc}`model-comparison`).
 
 `RuntimeConfig` sets `seed`, `chains`, `nuts_chain_method` (`"parallel"`, `"sequential"` or `"vectorized"`),
-`resume` and `skip_plots` (no outputs stage at all).
+`resume` and `skip_plots` (no outputs stage at all). `resume` matters only to the Python API and mock validation:
+the `lumina` command always starts a new run folder, and `lumina resume` turns it on.
 
 `OutputsConfig` (the `outputs` section) holds everything the outputs stage reads and nothing a fit reads: the
 reporting draws (`draws`, `image_draws`), `workers` (default 4, at least 1, the threads that evaluate the draws; the

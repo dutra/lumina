@@ -14,4 +14,5 @@
    :no-members:
 .. autofunction:: lumina.pipeline.init_verdict
 .. autofunction:: lumina.pipeline.resume_payload
+.. autoclass:: lumina.pipeline.SavedStageMismatch
 ```

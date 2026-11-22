@@ -655,7 +655,9 @@ class RuntimeConfig:
         Number of NUTS chains (positive).  Each chain starts from one of the kept search modes, the best first,
         cycling through them.  Default ``4``.
     resume : bool, optional
-        Skip a stage (init or final) whose saved artifacts are complete and reuse them.  Default True.
+        Skip a stage (init or final) whose saved artifacts are complete and reuse them.  Default True.  A setting
+        of the Python API (``pipeline.run``) and of mock validation: the ``lumina`` command always starts a new run
+        folder, and ``lumina resume`` turns it on.
     skip_plots : bool, optional
         Skip the output figures and tables written after each stage.  Default False.
     quiet : bool, optional

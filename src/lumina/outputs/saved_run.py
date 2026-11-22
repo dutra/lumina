@@ -5,8 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-REMAP_HINT = ("for a run made on another machine or moved, give --remap OLD=NEW (OLD an absolute prefix of the saved "
-              "paths, NEW its replacement)")
+REMAP_HINT = ("saved paths are relative to the folder the run was started in: run the command from there (usually the "
+              "repository root), or, for a run made elsewhere or moved, give --remap OLD=NEW (OLD an absolute prefix "
+              "of the saved paths, NEW its replacement)")
 
 
 def _flatten(payload, prefix=""):
@@ -64,46 +65,6 @@ def _set(payload, dotted: str, value) -> None:
             node = node[key][index]
 
 
-def remap_payload(payload, names, remaps):
-    """``(payload, changed)``: a copy of the configuration dictionary ``payload`` (``to_json_dict``, or a part of it
-    such as the init signature) with each path field of ``names`` (:func:`path_fields`) that it holds and that lies
-    under ``OLD`` moved under ``NEW``, for the first ``(OLD, NEW)`` of ``remaps`` that matches, and the list of
-    ``(name, old value, new value)`` changed.  A relative saved path is taken relative to the working directory and
-    compared as that absolute path.
-
-    Raises
-    ------
-    ValueError
-        When an ``OLD`` is not an absolute path, or is the root ``/``.
-    """
-    import copy
-    import os
-    remaps = [(str(old), str(new)) for old, new in remaps]
-    for old, _ in remaps:
-        if not os.path.isabs(old):
-            raise ValueError(f"--remap {old}=...: OLD must be an absolute path (a prefix of the saved paths, as "
-                             "printed by the error that named the missing file)")
-        if not old.rstrip("/"):
-            raise ValueError("--remap /=...: OLD is the root, which would move every absolute path; give the saved "
-                             "folder that moved")
-    payload = copy.deepcopy(payload)
-    flat = _flatten(payload)
-    changed = []
-    for name in names:
-        value = flat.get(name)
-        if not isinstance(value, str) or not value:
-            continue
-        absolute = value if os.path.isabs(value) else os.path.normpath(os.path.join(os.getcwd(), value))
-        for old, new in remaps:
-            old, new = os.path.normpath(old), new.rstrip("/") or "/"
-            if absolute == old or absolute.startswith(old + "/"):
-                moved = new + absolute[len(old):]
-                _set(payload, name, moved)
-                changed.append((name, value, moved))
-                break
-    return payload, changed
-
-
 def relocate(config, remaps, *, log=print):
     """``(moved, saved_form)``: ``config`` with each saved path under ``OLD`` (a whole path prefix) moved under ``NEW``
     instead, for every ``(OLD, NEW)`` of ``remaps`` (the first that matches wins), and the inverse, a function that
@@ -118,11 +79,33 @@ def relocate(config, remaps, *, log=print):
     ValueError
         When an ``OLD`` is not an absolute path, or is the root ``/``.
     """
+    import os
     from ..config import LensClusterSolverConfig
     remaps = [(str(old), str(new)) for old, new in remaps]
     if not remaps:
         return config, None
-    payload, changed = remap_payload(config.to_json_dict(), path_fields(config), remaps)
+    for old, _ in remaps:
+        if not os.path.isabs(old):
+            raise ValueError(f"--remap {old}=...: OLD must be an absolute path (a prefix of the saved paths, as "
+                             "printed by the error that named the missing file)")
+        if not old.rstrip("/"):
+            raise ValueError("--remap /=...: OLD is the root, which would move every absolute path; give the saved "
+                             "folder that moved")
+    payload = config.to_json_dict()
+    flat = _flatten(payload)
+    changed = []
+    for name in path_fields(config):
+        value = flat.get(name)
+        if not isinstance(value, str) or not value:
+            continue
+        absolute = value if os.path.isabs(value) else os.path.normpath(os.path.join(os.getcwd(), value))
+        for old, new in remaps:
+            old, new = os.path.normpath(old), new.rstrip("/") or "/"
+            if absolute == old or absolute.startswith(old + "/"):
+                moved = new + absolute[len(old):]
+                _set(payload, name, moved)
+                changed.append((name, value, moved))
+                break
     for where, old, new in changed:
         log(f"[outputs] remap {where}: {old} -> {new}")
     if not changed:

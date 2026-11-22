@@ -35,16 +35,18 @@ samples and tree depth, the GP blocks (or the likelihood when it is not the GRF)
 replaces it, `uncertain` with uncertain images, `powerlaw` with power-law members, and the profiles. The name is given
 once and never changes.
 
-A letter is reserved by creating `results/<name>/.names/<mon><day><letter>` (an atomic directory creation), so fits
-launched together get different letters, and a letter once given is not given again, even when its run folder is
-deleted. Folders named like an assigned name (`<mon><day>`, one or two letters, `_` and a description) take their
-letter too; a label made by hand such as `nov21final` takes none. Names carry no year, so on the same date of a later
-year the letters go on after those already given.
+A letter is reserved by creating `results/<name>/.names/<mon><day><letter>`, and the run folder is then created
+the same way; both are atomic directory creations, so fits launched together get different letters and folders, and
+a letter once given is not given again, even when its run folder is deleted. Folders named like an assigned name
+(`<mon><day>`, one or two letters, `_` and a description) take their letter too; a label made by hand such as
+`nov21final` takes none. Names carry no year, so on the same date of a later year the letters go on after those
+already given.
 
 `--run-label NAME` names the new folder by hand. A folder that already exists is refused (exit code 2) with the
-`lumina resume` command that continues it. `--results DIR` moves the tree to `DIR/<name>/...`. `--dry-run` prints the
-folder it would create and creates nothing, not even a reserved letter. The files the run read and the command are
-copied to the run's `inputs/` folder.
+`lumina resume` command that continues it, a label starting with a dot is refused, and a label of the assigned form
+(`nov22a_x`) reserves its letter and is refused when that letter is already given. `--results DIR` moves the tree to
+`DIR/<name>/...`. `--dry-run` prints the folder it would create and creates nothing, not even a reserved letter. The
+files the run read and the command are copied to the run's `inputs/` folder.
 
 The command prints the run folder when it starts and, when it ends, the command to run next:
 
@@ -54,15 +56,21 @@ lumina catalogs/hera --stage init
 lumina resume results/hera/nov21a_w500s250t7_allblocks --stage final
 ```
 
-A run that stops early (an error, Ctrl-C) prints `lumina resume RUN_DIR`, and a finished run the `lumina resume` and
-`lumina outputs` commands that rerun its outputs. `--stage final` on the run command is refused, since a new folder
-has no init stage to start from.
+A run that stops on an error prints `lumina resume RUN_DIR` before the traceback; after Ctrl-C it prints that one line
+and exits with code 130. A finished run prints the `lumina outputs` command that reruns its outputs. A run killed with
+SIGTERM or SIGKILL prints nothing and leaves its `run.lock`, which the next `lumina resume` takes over (see Locks).
+`--stage final` on the run command is refused, since a new folder has no init stage to start from.
+
+The paths a run saves (its catalogs, and the run folder under the default `--results results`) are relative to the
+folder the command was started in. Start runs from the repository root, and give later `lumina resume` and `lumina
+outputs` commands from there too.
 
 ## Resuming a run folder
 
 `lumina resume RUN_DIR` is the only way back into an existing run. It continues the run with its own saved
 configuration (`final/artifacts/config.json` once the final stage started, else `init/artifacts/config.json`), so it
-works whatever the defaults or the run files say now:
+works whatever the defaults or the run files say now. Give it from the folder the run was started in (usually the
+repository root), since the saved catalog paths are relative to it:
 
 ```bash
 lumina resume results/hera/nov21a_w500s250t7_allblocks                 # whatever stage is unfinished
@@ -72,35 +80,27 @@ lumina resume results/hera/nov21a_w500s250t7_allblocks --draws 64      # a finis
 
 A run whose init stage is complete and whose final stage never started runs its final stage. A run stopped during
 sampling samples again from the saved chain start, since sampling has no checkpoint. A run stopped in the init stage
-runs it again from the start. A finished run reloads its posterior and reruns the outputs stage; `lumina outputs
-RUN_DIR` reruns the outputs alone and saves no settings (see {doc}`outputs`). `--dry-run` prints the state of the run
-and what would run.
+runs it again from the start. A finished run reloads its posterior and reruns the outputs stage (unless its saved
+`runtime.skip_plots` is true); `lumina outputs RUN_DIR` reruns the outputs alone and saves no settings (see
+{doc}`outputs`). `--dry-run` prints the state of the run and what would run. A saved stage that does not match the
+saved settings (after a code change or a hand edit of its files) is refused with exit code 2; start a new run.
 
 `--set` and `--draws` change only the `outputs` section, checked as for `lumina outputs`; any fit setting is refused.
 Unlike `lumina outputs`, a resumed final stage saves the outputs settings it used into `final/artifacts/config.json`.
-`--remap OLD=NEW` relocates the saved paths of a run made on another machine, as for `lumina outputs`, for that command
-only: it is never saved. Every file the run writes (`config.json`, `init_signature.json`) keeps the paths as first
-saved, and the saved stages are compared in those terms, so later commands treat the folder the same with or without
-the remap. The outputs records of `final/results.h5` are the exception: the outputs stage of a remapped resume records
-the remapped truth-map paths it read (in `output_module_mass`, `output_module_truth`, `run_summary` and
-`magnification_recovery_provenance`), as `lumina outputs --remap` does, so a later pass without the remap warns that the
-outputs settings changed; nothing else follows from it. A remap that moves no saved path is a warning. The run writes
-where its folder is now, so a run folder can be moved or renamed.
+`--remap OLD=NEW` relocates the saved paths of a run made on another machine or moved, as for `lumina outputs`, for
+that command only: it is never saved. A catalog that is not found is reported with both fixes: run the command from
+the folder the run was started in, or give `--remap`. Every file the run writes (`config.json`,
+`init_signature.json`) keeps the paths as first saved, and the saved stages are compared in those terms, so later
+commands treat the folder the same with or without the remap. The outputs records of `final/results.h5` are the
+exception: the outputs stage of a remapped resume records the remapped truth-map paths it read (in
+`output_module_mass`, `output_module_truth`, `run_summary` and `magnification_recovery_provenance`), as `lumina
+outputs --remap` does, so a later pass without the remap warns that the outputs settings changed; nothing else follows
+from it. A remap that moves no saved path is a warning. The run writes where its folder is now, so a run folder can be
+moved or renamed.
 
-Since the fit settings come from the saved configuration, a run folder holds one fit. A second final stage from the
-same init stage, keeping the first, goes in a copy of the folder without its `final/`:
-
-```bash
-cp -R results/hera/nov21a_w500s250t7_allblocks results/hera/nov21a_w500s250t7_allblocks_second
-rm -rf results/hera/nov21a_w500s250t7_allblocks_second/final
-lumina resume results/hera/nov21a_w500s250t7_allblocks_second --stage final
-```
-
-The copy samples with the sampling settings of the init stage's saved configuration, those of the command that made
-the run, so it repeats the first final stage with the same seed. No command samples a saved init stage with other
-sampling settings (more draws, another tree depth or seed): that is a new run, which runs its init stage again.
-Turning on WBIC for a finished run is the same: the command line has no route to it, since `lumina resume --set`
-changes only `outputs` (see {doc}`model-comparison` for the Python route).
+A run folder holds one fit, with the settings it was started with. Two things have no command: a final stage with
+other sampling settings from a saved init stage, which is a new run (it runs its init stage again), and adding WBIC
+to a finished run, which has a Python route in {doc}`model-comparison`.
 
 ## Locks
 
@@ -113,19 +113,13 @@ refuse a run locked by a running process with exit code 2, and name the host, th
 writing the same run, a render pass can report a module as not computed yet (its compute has not committed), wait
 behind the fit for the store, or write the same PDF as the fit's outputs stage (the last one written stays).
 
-Reserving a new name and creating and locking its folder happen under a second, short-lived lock,
-`results/<name>/.names.lock`, which the command holds for that only (never while it fits) and waits for up to two
-minutes before it gives up with the holder's name; the wait is logged when it starts, with the holder, and every 30
-seconds.
-
 A lock whose process is gone (stopped with SIGTERM or SIGKILL, a crash, a reboot) is stale when it names this host
 (the same short host name, the part before the first dot, in any case, so `mac` and `mac.local` are one host) and that
 process no longer runs: the next command takes it over and logs one line. A lock written on another host cannot be
 checked (the results tree may be mirrored between machines by a file-sync tool, and lock files travel with it), so it
 counts as held; the message names the file to delete when that process is known to be gone. An empty or cut-short lock
 file (which this code never writes) is reported as an incomplete lock file, with the file to delete. A process id
-reused by an unrelated process makes a stale lock look held: delete the file then. A copy of a run folder made while a
-command works in it carries that command's `run.lock`; delete it in the copy.
+reused by an unrelated process makes a stale lock look held: delete the file then.
 
 Locks and letters are per machine. Two commands started on two machines that mirror the same results tree do not see
 each other's lock or reserved letter until the sync tool copies them, so within that delay they can reserve the same

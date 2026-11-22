@@ -36,12 +36,26 @@ posterior is reloaded and only the WBIC run is added. Changing any other setting
 refused. The command line has no route to it, since `lumina resume --set` changes only the `outputs` section.
 
 ```python
+import json
+from dataclasses import replace
 from pathlib import Path
-from lumina.io import artifacts
 
-saved = artifacts.load_config(Path("results/m0416_canucs2025/nov21a_w500s250t7_allblocks/final/artifacts"))
-run(replace(saved, sampling=replace(saved.sampling, wbic=True)))
+folder = Path("results/m0416_canucs2025/nov21a_w500s250t7_allblocks")
+runtime = json.loads((folder / "final/artifacts/config.json").read_text())["runtime"]
+
+from lumina.cpu_runtime import configure_cpu_runtime
+configure_cpu_runtime(runtime["chains"], runtime["nuts_chain_method"])     # one CPU device per chain, before JAX starts
+from lumina.io import artifacts
+from lumina.pipeline import run
+
+saved = artifacts.load_config(folder / "final/artifacts")
+run(replace(saved, sampling=replace(saved.sampling, wbic=True),
+            paths=replace(saved.paths, output_dir=str(folder.parent), run_name=folder.name)))
 ```
+
+Run it from the folder the run was started in (usually the repository root), since the saved catalog paths are
+relative to it; the `paths` line makes it write where `folder` is now, also after a move. It takes no run lock, so do
+not run it while another command works in that folder.
 
 `SamplingConfig.wbic_warmup` and `SamplingConfig.wbic_samples` set the length of the WBIC run. They default to the main
 run's `warmup` and `samples`.

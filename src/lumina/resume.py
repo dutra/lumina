@@ -67,16 +67,45 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
-def next_step(run_dir, stage: str, finished: bool) -> str:
-    """The line a command prints when it leaves the run folder ``run_dir``: the command that continues it (the folder's
-    name cannot be derived from the run command), after ``stage`` ran to its end (``finished``) or stopped."""
+def next_step(run_dir, finished: bool) -> str:
+    """The line a command prints when it leaves the run folder ``run_dir`` (whose name cannot be derived from the run
+    command): how to continue it when it stopped before the end (``finished`` false), else what to run next given the
+    stages it now holds."""
+    from .io import artifacts
     run = shlex.quote(str(run_dir))
     if not finished:
         return f"[run] {run_dir} stopped before the end; continue it with: lumina resume {run}"
-    if stage == "init":
-        return f"[run] init stage done in {run_dir}; run its final stage with: lumina resume {run} --stage final"
-    return (f"[run] finished {run_dir}; lumina resume {run} reloads it and reruns the outputs stage, "
-            f"lumina outputs {run} reruns the outputs alone")
+    if artifacts.is_final_complete(Path(run_dir) / "final" / "artifacts"):
+        return f"[run] finished {run_dir}; rerun its outputs with: lumina outputs {run}"
+    return f"[run] init stage done in {run_dir}; run its final stage with: lumina resume {run} --stage final"
+
+
+def run_and_report(fit, run_dir, *, prog: str) -> int:
+    """Call ``fit()`` (the pipeline in the locked run folder ``run_dir``), print the elapsed time and the
+    :func:`next_step` line, and return the exit code: 0; 2 for a saved stage the run cannot continue
+    (``pipeline.SavedStageMismatch``: one line, no hint, since resuming again would fail the same way); 130 after
+    Ctrl-C.  Any other error is raised after the hint."""
+    from .pipeline import SavedStageMismatch
+    start = time.monotonic()
+
+    def done(finished):
+        print(f"[timing] elapsed={time.monotonic() - start:.2f}s", flush=True)
+        if finished is not None:
+            print(next_step(run_dir, finished), flush=True)
+    try:
+        fit()
+    except SavedStageMismatch as error:
+        done(None)
+        print(f"{prog}: {run_dir}: {error}", file=sys.stderr, flush=True)
+        return 2
+    except KeyboardInterrupt:
+        done(False)
+        return 130
+    except BaseException:
+        done(False)
+        raise
+    done(True)
+    return 0
 
 
 def settings_file(run_dir) -> Path | None:
@@ -192,7 +221,8 @@ def resume_config(run_dir, *, remap=(), overrides=(), draws=None, log=print):
 
 def main(argv=None) -> int:
     """``lumina resume``; returns the exit code: 2 for a usage error, a folder that is not a run, a refused
-    override, a missing file, a refused stage, or a run folder locked by another process."""
+    override, a missing file, a refused stage, a run folder locked by another process, or a saved stage the run cannot
+    continue (``pipeline.SavedStageMismatch``); 130 after Ctrl-C."""
     args = parser().parse_args(argv)
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-lumina")
     from .config import UnknownField
@@ -202,6 +232,8 @@ def main(argv=None) -> int:
     log = lambda text: print(text, flush=True)
     try:
         check_outputs_only(args.overrides)              # before anything starts: a fit setting is refused at once
+        if not args.run.exists():
+            raise FileNotFoundError(f"{args.run} does not exist")
         try:
             source = settings_file(args.run)
         except OSError as error:
@@ -240,13 +272,7 @@ def main(argv=None) -> int:
         return 2
     from .pipeline import run
     log(f"[resume] {args.run} (settings of {source.relative_to(args.run)}): {status}; running stage={args.stage}")
-    start = time.monotonic()
-    finished = False
     try:
-        run(config, stage=args.stage, saved_form=saved_form)
-        finished = True
+        return run_and_report(lambda: run(config, stage=args.stage, saved_form=saved_form), args.run, prog="lumina resume")
     finally:
         lock.release()
-        print(f"[timing] elapsed={time.monotonic() - start:.2f}s", flush=True)
-        log(next_step(args.run, args.stage, finished))
-    return 0

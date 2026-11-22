@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -257,7 +258,7 @@ def main(argv=None) -> int:
         try:
             lock = lock_run(args.run, log=log)
         except (ValueError, OSError) as error:  # RunLocked, or a folder that cannot be written
-            print(f"lumina outputs: {error}", flush=True)
+            print(f"lumina outputs: {error}", file=sys.stderr, flush=True)
             return 2
     try:
         return _pass(args, mode, log)
