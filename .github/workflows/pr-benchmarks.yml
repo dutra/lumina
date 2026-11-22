@@ -41,35 +41,66 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e benchmark-head
 
+      # Base and PR run in alternating rounds (base, PR, PR, base, base, PR, ...), each run a fresh process, so a slow
+      # spell of the shared runner lands on both sides instead of looking like a code change. The per-evaluation
+      # timings are milliseconds; the scatter between rounds is what limits the comparison, hence fewer repeats per run.
       - name: Run likelihood benchmarks
         env:
-          LENSCLUSTER_BENCH_REPEATS: "50"
+          LENSCLUSTER_BENCH_ROUNDS: "3"
+          LENSCLUSTER_BENCH_REPEATS: "20"
           LENSCLUSTER_BENCH_TRIALS: "3"
           LENSCLUSTER_BENCH_LBFGS_ITERS: "25"
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
         run: |
-          mkdir -p benchmark-artifacts
+          mkdir -p benchmark-artifacts/runs
           script=benchmark-head/benchmarks/lenscluster_pr_benchmark.py
+          base_sha="$(git -C benchmark-base rev-parse HEAD)"
+          head_sha="$(git -C benchmark-head rev-parse HEAD)"
 
-          # The base keeps its own dependency pins; the inputs come from the PR checkout so both runs see the same catalogs.
-          pip install -e benchmark-base
-          python "$script" run \
-            --output-dir benchmark-artifacts/base \
-            --label base \
-            --sha "${{ github.event.pull_request.base.sha || 'main' }}" \
-            --catalog-root benchmark-head \
-            || echo "::warning::Base benchmark failed; the comment will show PR timings only."
+          # The base keeps its own dependency pins. With the same pyproject.toml on both sides the installed dependencies
+          # serve both, and each run imports its own checkout through PYTHONPATH; otherwise every switch of side
+          # reinstalls that checkout first. Either way each run records the lumina it imported, which compare checks.
+          # The inputs come from the PR checkout so both sides see the same catalogs.
+          if cmp -s benchmark-base/pyproject.toml benchmark-head/pyproject.toml; then switch=pythonpath; else switch=reinstall; fi
+          echo "Switching between base and PR by ${switch}."
 
-          pip install -e benchmark-head
-          python "$script" run \
-            --output-dir benchmark-artifacts/head \
-            --label pr \
-            --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
-            --catalog-root benchmark-head
+          bench() {
+            local side="$1" round="$2" root sha
+            if [ "$side" = base ]; then root=benchmark-base; sha="$base_sha"; else root=benchmark-head; sha="$head_sha"; fi
+            if [ "$switch" = reinstall ] && [ "$installed" != "$root" ]; then
+              pip install -e "$root" || return 1
+              installed="$root"
+            fi
+            PYTHONPATH="$root/src" python "$script" run \
+              --output-dir "benchmark-artifacts/runs/$side-$round" \
+              --label "$side" \
+              --round "$round" \
+              --sha "$sha" \
+              --checkout "$root" \
+              --catalog-root benchmark-head
+          }
 
-          python "$script" compare \
-            --baseline-json benchmark-artifacts/base/benchmark.json \
-            --candidate-json benchmark-artifacts/head/benchmark.json \
+          installed=benchmark-head
+          base_failed=0
+          for round in $(seq 1 "$LENSCLUSTER_BENCH_ROUNDS"); do
+            # A base that fails once fails every round, so stop after the PR run of that round.
+            [ "$base_failed" = 0 ] || break
+            if [ $((round % 2)) = 1 ]; then order="base pr"; else order="pr base"; fi
+            for side in $order; do
+              if [ "$side" = pr ]; then
+                bench pr "$round"
+              elif ! bench base "$round"; then
+                base_failed=1
+                echo "::warning::Base benchmark failed in round ${round}; the comment will show PR timings only."
+              fi
+            done
+          done
+
+          PYTHONPATH=benchmark-head/src python "$script" compare \
+            --runs-dir benchmark-artifacts/runs \
+            --base-root benchmark-base \
+            --head-root benchmark-head \
+            --rounds "$LENSCLUSTER_BENCH_ROUNDS" \
             --output-dir benchmark-artifacts
           cat benchmark-artifacts/output >> "$GITHUB_STEP_SUMMARY"
 

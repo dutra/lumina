@@ -1,16 +1,27 @@
 """Likelihood and gradient timings on the FF-SIMS Hera model, for the PR benchmark comment.
 
-``run`` times one installed lumina and writes ``benchmark.json`` and a markdown ``output``; ``compare`` renders the
-base-versus-PR table that .github/workflows/publish-pr-benchmarks.yml posts on the pull request.  The workflow runs this
-script from the PR checkout against both installs, with ``--catalog-root`` on the PR checkout so the inputs are the same.
+``run`` times the lumina that Python imports, in one fresh process, and writes ``benchmark.json`` and a markdown
+``output``; the record keeps the imported ``lumina.__file__`` and the commit of its checkout.  ``compare`` reads the
+``benchmark.json`` of every run under ``--runs-dir`` and renders the base-versus-PR table that
+.github/workflows/publish-pr-benchmarks.yml posts on the pull request.
+
+The workflow runs base and PR in alternating rounds (base, PR, then PR, base, ...), each run a fresh process with
+``--catalog-root`` on the PR checkout so the inputs are the same.  ``compare`` first checks that every base run imported
+lumina from the base checkout and every PR run from the PR checkout, at the commit the run was given.  Base and PR of
+one round form a pair: the delta of a metric is the geometric mean over rounds of the PR/base ratio, its uncertainty the
+standard error of the log ratio between rounds combined with the spread of the trials within each run.  A row gets a
+warning when the slowdown is above 10%, more than twice its uncertainty, and every round is slower.  With fewer than two
+paired rounds the table shows PR timings only.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import statistics
+import subprocess
 import sys
 import tempfile
 import time
@@ -26,6 +37,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.optimize import minimize
 
+import lumina
 from lumina.config import (CosmologyConfig, DPIEHaloConfig, ImageConstraintsConfig, LensClusterSolverConfig, LensModelConfig,
                                 LikelihoodConfig, MemberPopulationConfig, ReferenceFrameConfig, RunPathsConfig, ShearHaloConfig)
 from lumina.likelihood.evaluator import Evaluator
@@ -36,6 +48,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MARKER = "<!-- lenscluster benchmark -->"
 # Name -> (likelihood_mode, gp_kernel): the library default and the grf_gp model of the cluster run.yaml files.
 LIKELIHOODS = {"smoothed": ("smoothed", "image_plane"), "grf_gp": ("gp_image_plane", "knee")}
+SIDES = {"base": "base", "pr": "PR"}
+MIN_PAIRED_ROUNDS = 2
+WARN_PERCENT = 10.0
 
 
 def _mean(values: list[float]) -> float:
@@ -44,16 +59,6 @@ def _mean(values: list[float]) -> float:
 
 def _stderr(values: list[float]) -> float:
     return float(statistics.stdev(values) / np.sqrt(len(values))) if len(values) > 1 else 0.0
-
-
-def _percent_delta(candidate: float, baseline: float) -> float:
-    return float(100.0 * (candidate - baseline) / baseline) if baseline else float("nan")
-
-
-def _percent_delta_stderr(candidate: float, baseline: float, candidate_stderr: float, baseline_stderr: float) -> float:
-    if baseline == 0.0:
-        return float("nan")
-    return float(100.0 * np.hypot(candidate_stderr / baseline, candidate * baseline_stderr / baseline**2))
 
 
 def _workflow_url() -> str:
@@ -130,92 +135,181 @@ def run_case(catalog_root: Path, likelihood: str, *, repeats: int, trials: int, 
             "timings": rows, "lbfgs_iterations": int(result.nit), "lbfgs_evaluations": int(result.nfev)}
 
 
-def run_benchmark(*, label: str, sha: str, catalog_root: Path, likelihoods: list[str], repeats: int, trials: int,
-                  lbfgs_iters: int) -> dict[str, Any]:
+def imported_lumina() -> tuple[str, str | None]:
+    """The imported ``lumina/__init__.py`` and the commit of the git checkout it sits in (None outside a checkout)."""
+    path = Path(lumina.__file__).resolve()
+    git = subprocess.run(["git", "-C", str(path.parent), "rev-parse", "HEAD"], capture_output=True, text=True)
+    return str(path), git.stdout.strip() if git.returncode == 0 else None
+
+
+def run_benchmark(*, label: str, round_index: int, sha: str | None, catalog_root: Path, likelihoods: list[str], repeats: int,
+                  trials: int, lbfgs_iters: int) -> dict[str, Any]:
+    lumina_file, lumina_commit = imported_lumina()
+    started_unix = time.time()
     start = time.perf_counter()
     cases = [run_case(catalog_root, name, repeats=repeats, trials=trials, lbfgs_iters=lbfgs_iters) for name in likelihoods]
-    return {"label": label, "sha": sha, "repeats": repeats, "trials": trials, "lbfgs_iters": lbfgs_iters,
-            "jax_version": jax.__version__, "python": platform.python_version(), "machine": platform.machine(),
-            "cases": cases, "total_seconds": time.perf_counter() - start}
+    return {"label": label, "round": round_index, "started_unix": started_unix, "sha": sha or lumina_commit,
+            "lumina_file": lumina_file, "lumina_commit": lumina_commit, "repeats": repeats, "trials": trials,
+            "lbfgs_iters": lbfgs_iters, "jax_version": jax.__version__, "python": platform.python_version(),
+            "machine": platform.machine(), "cases": cases, "total_seconds": time.perf_counter() - start}
 
 
-def _fmt_ms(row: dict[str, Any]) -> str:
-    return f"{row['ms_per_eval']:.3f} +/- {row['ms_per_eval_stderr']:.3f} ms"
+def metrics(record: dict[str, Any]) -> dict[tuple[str, str], tuple[float, float | None, str]]:
+    """(likelihood, metric) -> (value, standard error within the run or None, unit) for every row of the table."""
+    out: dict[tuple[str, str], tuple[float, float | None, str]] = {}
+    for case in record["cases"]:
+        for row in case["timings"]:
+            out[(case["likelihood"], row["name"])] = (row["ms_per_eval"], row["ms_per_eval_stderr"], "ms")
+            out[(case["likelihood"], f"{row['name']} compile")] = (row["compile_seconds"], None, "s")
+        for name, seconds in case["phases"].items():
+            out[(case["likelihood"], f"`{name}`")] = (seconds, None, "s")
+    out[("", "total benchmark")] = (record["total_seconds"], None, "s")
+    return out
 
 
-def _fmt_delta(candidate: float, baseline: float, candidate_stderr: float = 0.0, baseline_stderr: float = 0.0) -> str:
-    delta = _percent_delta(candidate, baseline)
-    stderr = _percent_delta_stderr(candidate, baseline, candidate_stderr, baseline_stderr)
-    flag = " :warning:" if delta > 10.0 and delta > 2.0 * stderr else ""
-    if not np.isfinite(stderr) or stderr <= 0.0:
-        return f"{delta:+.1f}%{flag}"
-    return f"{delta:+.1f}% +/- {stderr:.1f}%{flag}"
+def verify_checkout(record: dict[str, Any], root: Path) -> None:
+    """Exit unless the run imported lumina from ``root`` at the commit the run was given."""
+    where = f"{SIDES[record['label']]} run of round {record['round']}"
+    if not Path(record["lumina_file"]).resolve().is_relative_to(root.resolve()):
+        raise SystemExit(f"The {where} imported {record['lumina_file']}, which is not in {root}.")
+    if record["lumina_commit"] is None or record["lumina_commit"] != record["sha"]:
+        raise SystemExit(f"The {where} imported lumina at commit {record['lumina_commit']}, not {record['sha']}.")
 
 
-def _header(result: dict[str, Any]) -> list[str]:
-    case = result["cases"][0]
+def load_runs(runs_dir: Path, roots: dict[str, Path]) -> dict[str, dict[int, dict[str, Any]]]:
+    """label -> round -> record of every ``*/benchmark.json`` under ``runs_dir``, each checked against its checkout."""
+    runs: dict[str, dict[int, dict[str, Any]]] = {label: {} for label in SIDES}
+    for path in sorted(runs_dir.glob("*/benchmark.json")):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        verify_checkout(record, roots[record["label"]])
+        if record["round"] in runs[record["label"]]:
+            raise SystemExit(f"Two {SIDES[record['label']]} runs of round {record['round']} under {runs_dir}.")
+        runs[record["label"]][record["round"]] = record
+    for label, side in runs.items():
+        if len({record["sha"] for record in side.values()}) > 1:
+            raise SystemExit(f"The {SIDES[label]} runs were made at different commits.")
+    return runs
+
+
+def paired_delta(base: list[tuple[float, float | None]], pr: list[tuple[float, float | None]]) -> dict[str, Any] | None:
+    """Delta in percent of PR over base from per-round pairs of (value, standard error within the run or None).
+
+    The delta is the geometric mean of the per-round ratios; a mean of log ratios treats a slowdown and the matching
+    speedup alike, and it keeps a single outlier round visible rather than hiding it as a median of two or three would
+    (the every-round rule guards the warning against that round instead).  Its variance is the scatter of the log
+    ratios between rounds over n plus the within-run variances over n^2, so a lucky agreement of two rounds cannot shrink
+    the uncertainty below the timing noise inside the runs.
+    """
+    if any(b <= 0.0 or p <= 0.0 for (b, _), (p, _) in zip(base, pr)):
+        return None
+    logs = [math.log(p / b) for (b, _), (p, _) in zip(base, pr)]
+    within = [(pe / p) ** 2 + (be / b) ** 2 for (b, be), (p, pe) in zip(base, pr) if be is not None and pe is not None]
+    n = len(logs)
+    variance = statistics.variance(logs) / n + sum(within) / n**2
+    mean = statistics.fmean(logs)
+    delta = 100.0 * math.expm1(mean)
+    stderr = 100.0 * math.exp(mean) * math.sqrt(variance)
+    every_round_slower = all(value > 0.0 for value in logs)
+    return {"delta": delta, "stderr": stderr, "every_round_slower": every_round_slower,
+            "warn": delta > WARN_PERCENT and delta > 2.0 * stderr and every_round_slower}
+
+
+def _fmt_value(values: list[tuple[float, float | None]], unit: str) -> str:
+    """Mean over runs; ms rows add the standard error between runs, or the one within the run for a single run."""
+    mean = _mean([value for value, _ in values])
+    if unit != "ms":
+        return f"{mean:.2f} s"
+    stderr = _stderr([value for value, _ in values]) if len(values) > 1 else values[0][1] or 0.0
+    return f"{mean:.3f} +/- {stderr:.3f} ms"
+
+
+def _fmt_delta(delta: dict[str, Any] | None) -> str:
+    if delta is None:
+        return "n/a"
+    return f"{delta['delta']:+.1f}% +/- {delta['stderr']:.1f}%" + (" :warning:" if delta["warn"] else "")
+
+
+def _order(records: list[dict[str, Any]]) -> str:
+    return ", ".join(SIDES[record["label"]] for record in sorted(records, key=lambda record: record["started_unix"]))
+
+
+def _header(record: dict[str, Any], runs_line: str) -> list[str]:
+    case = record["cases"][0]
     return [MARKER, "### lumina PR benchmark", "",
             f"Model: FF-SIMS Hera ({case['n_images']} images in {case['n_systems']} systems, {case['n_members']} members, {case['n_unconstrained']} free parameters), "
-            f"`ubuntu-latest` CPU, {result['trials']} trials x {result['repeats']} evaluations, L-BFGS for {result['lbfgs_iters']} iterations.", ""]
+            f"`ubuntu-latest` CPU, {record['trials']} trials x {record['repeats']} evaluations per run, L-BFGS for {record['lbfgs_iters']} iterations.",
+            "", runs_line, ""]
 
 
-def render_markdown(result: dict[str, Any], *, workflow_url: str) -> str:
-    lines = _header(result) + [f"Commit `{result['sha'][:12]}`. No base result to compare against.", "",
-                               "| likelihood | metric | value |", "| --- | --- | ---: |"]
-    for case in result["cases"]:
-        for row in case["timings"]:
-            lines.append(f"| {case['likelihood']} | {row['name']} | {_fmt_ms(row)} |")
-            lines.append(f"| {case['likelihood']} | {row['name']} compile | {row['compile_seconds']:.2f} s |")
-        for name, seconds in case["phases"].items():
-            lines.append(f"| {case['likelihood']} | `{name}` | {seconds:.2f} s |")
+def render_markdown(records: list[dict[str, Any]], *, note: str, workflow_url: str) -> str:
+    """PR timings only: the mean over ``records``, runs of one commit."""
+    runs_line = (f"{len(records)} PR runs, each a fresh process." if len(records) > 1 else "One PR run.")
+    lines = _header(records[0], runs_line) + [f"Commit `{records[0]['sha'][:12]}`. {note}", "",
+                                              "| likelihood | metric | value |", "| --- | --- | ---: |"]
+    rows = [metrics(record) for record in records]
+    for key, (_, _, unit) in rows[0].items():
+        if all(key in row for row in rows):
+            lines.append(f"| {key[0]} | {key[1]} | {_fmt_value([row[key][:2] for row in rows], unit)} |")
     lines.extend(["", f"Run: {workflow_url}", ""])
     return "\n".join(lines)
 
 
-def render_comparison_markdown(baseline: dict[str, Any], candidate: dict[str, Any], *, workflow_url: str) -> str:
-    lines = _header(candidate) + ["| likelihood | metric | base | PR | delta |", "| --- | --- | ---: | ---: | ---: |",
-                                  f"| | commit | `{baseline['sha'][:12]}` | `{candidate['sha'][:12]}` | |"]
-    base_cases = {case["likelihood"]: case for case in baseline["cases"]}
-    for case in candidate["cases"]:
-        base = base_cases.get(case["likelihood"])
-        if base is None:
+def render_comparison_markdown(base_runs: dict[int, dict[str, Any]], pr_runs: dict[int, dict[str, Any]], *,
+                               planned_rounds: int, workflow_url: str) -> str:
+    """Base-versus-PR table over the rounds that have both runs (at least ``MIN_PAIRED_ROUNDS``)."""
+    rounds = sorted(set(base_runs) & set(pr_runs))
+    records = [base_runs[r] for r in rounds] + [pr_runs[r] for r in rounds]
+    planned = f" ({planned_rounds} planned)" if planned_rounds != len(rounds) else ""
+    runs_line = f"{len(rounds)} rounds{planned} of base and PR, each run a fresh process, in the order {_order(records)}."
+    base_rows = [metrics(base_runs[r]) for r in rounds]
+    pr_rows = [metrics(pr_runs[r]) for r in rounds]
+    lines = _header(pr_runs[rounds[0]], runs_line) + [
+        "| likelihood | metric | base | PR | delta |", "| --- | --- | ---: | ---: | ---: |",
+        f"| | commit | `{base_runs[rounds[0]]['sha'][:12]}` | `{pr_runs[rounds[0]]['sha'][:12]}` | |"]
+    for key, (_, _, unit) in pr_rows[0].items():
+        if not all(key in row for row in base_rows + pr_rows):
             continue
-        base_rows = {row["name"]: row for row in base["timings"]}
-        for row in case["timings"]:
-            b = base_rows.get(row["name"])
-            if b is None:
-                continue
-            lines.append(f"| {case['likelihood']} | {row['name']} | {_fmt_ms(b)} | {_fmt_ms(row)} | "
-                         f"{_fmt_delta(row['ms_per_eval'], b['ms_per_eval'], row['ms_per_eval_stderr'], b['ms_per_eval_stderr'])} |")
-            lines.append(f"| {case['likelihood']} | {row['name']} compile | {b['compile_seconds']:.2f} s | {row['compile_seconds']:.2f} s | "
-                         f"{_fmt_delta(row['compile_seconds'], b['compile_seconds'])} |")
-        for name, seconds in case["phases"].items():
-            if name in base["phases"]:
-                lines.append(f"| {case['likelihood']} | `{name}` | {base['phases'][name]:.2f} s | {seconds:.2f} s | "
-                             f"{_fmt_delta(seconds, base['phases'][name])} |")
-    lines.extend(["", f"| | total benchmark | {baseline['total_seconds']:.1f} s | {candidate['total_seconds']:.1f} s | "
-                      f"{_fmt_delta(candidate['total_seconds'], baseline['total_seconds'])} |",
-                  "", ":warning: marks a slowdown above 10% and twice its standard error. Timings on shared runners vary by a few percent.",
+        base = [row[key][:2] for row in base_rows]
+        pr = [row[key][:2] for row in pr_rows]
+        lines.append(f"| {key[0]} | {key[1]} | {_fmt_value(base, unit)} | {_fmt_value(pr, unit)} | {_fmt_delta(paired_delta(base, pr))} |")
+    lines.extend(["", "Each round times base and PR in fresh processes one after the other, alternating which goes first. "
+                      "The delta is the geometric mean over rounds of the PR/base ratio; its uncertainty combines the scatter of that "
+                      "ratio between rounds with the spread of the trials within each run. "
+                      f":warning: marks a slowdown above {WARN_PERCENT:.0f}% that is more than twice its uncertainty and that every round shows.",
                   "", f"Run: {workflow_url}", ""])
     return "\n".join(lines)
 
 
+def compare(runs_dir: Path, *, base_root: Path, head_root: Path, planned_rounds: int, workflow_url: str) -> str:
+    runs = load_runs(runs_dir, {"base": base_root, "pr": head_root})
+    if not runs["pr"]:
+        raise SystemExit(f"No PR run under {runs_dir}.")
+    paired = set(runs["base"]) & set(runs["pr"])
+    if len(paired) >= MIN_PAIRED_ROUNDS:
+        return render_comparison_markdown(runs["base"], runs["pr"], planned_rounds=planned_rounds, workflow_url=workflow_url)
+    note = ("No base result to compare against." if not runs["base"] else
+            f"Only {len(paired)} of {planned_rounds} rounds have a base run; a comparison needs {MIN_PAIRED_ROUNDS}.")
+    return render_markdown([runs["pr"][r] for r in sorted(runs["pr"])], note=note, workflow_url=workflow_url)
+
+
 def _run_command(args: argparse.Namespace) -> None:
+    if args.checkout is not None:
+        # Fail before the timings, so a side that cannot import its own checkout counts as a failed run.
+        lumina_file, lumina_commit = imported_lumina()
+        verify_checkout({"label": args.label, "round": args.round, "sha": args.sha or lumina_commit, "lumina_file": lumina_file,
+                         "lumina_commit": lumina_commit}, args.checkout)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    result = run_benchmark(label=args.label, sha=args.sha, catalog_root=args.catalog_root, likelihoods=args.likelihoods,
-                           repeats=args.repeats, trials=args.trials, lbfgs_iters=args.lbfgs_iters)
+    result = run_benchmark(label=args.label, round_index=args.round, sha=args.sha, catalog_root=args.catalog_root,
+                           likelihoods=args.likelihoods, repeats=args.repeats, trials=args.trials, lbfgs_iters=args.lbfgs_iters)
     (args.output_dir / "benchmark.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    (args.output_dir / "output").write_text(render_markdown(result, workflow_url=_workflow_url()), encoding="utf-8")
+    (args.output_dir / "output").write_text(render_markdown([result], note="No base result to compare against.",
+                                                            workflow_url=_workflow_url()), encoding="utf-8")
 
 
 def _compare_command(args: argparse.Namespace) -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    candidate = json.loads(args.candidate_json.read_text(encoding="utf-8"))
-    if args.baseline_json.exists():
-        baseline = json.loads(args.baseline_json.read_text(encoding="utf-8"))
-        text = render_comparison_markdown(baseline, candidate, workflow_url=_workflow_url())
-    else:
-        text = render_markdown(candidate, workflow_url=_workflow_url())
+    text = compare(args.runs_dir, base_root=args.base_root, head_root=args.head_root, planned_rounds=args.rounds,
+                   workflow_url=_workflow_url())
     (args.output_dir / "output").write_text(text, encoding="utf-8")
 
 
@@ -224,16 +318,20 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--output-dir", type=Path, required=True)
-    run_parser.add_argument("--label", default="benchmark")
-    run_parser.add_argument("--sha", default=os.getenv("GITHUB_SHA", "local"))
+    run_parser.add_argument("--label", choices=sorted(SIDES), default="pr")
+    run_parser.add_argument("--round", type=int, default=1)
+    run_parser.add_argument("--sha", default=None, help="commit the imported lumina must be at (default: whatever it is)")
+    run_parser.add_argument("--checkout", type=Path, default=None, help="refuse to run unless lumina is imported from this checkout")
     run_parser.add_argument("--catalog-root", type=Path, default=REPO_ROOT)
     run_parser.add_argument("--likelihoods", nargs="+", choices=sorted(LIKELIHOODS), default=["smoothed", "grf_gp"])
     run_parser.add_argument("--repeats", type=int, default=int(os.getenv("LENSCLUSTER_BENCH_REPEATS", "50")))
     run_parser.add_argument("--trials", type=int, default=int(os.getenv("LENSCLUSTER_BENCH_TRIALS", "3")))
     run_parser.add_argument("--lbfgs-iters", type=int, default=int(os.getenv("LENSCLUSTER_BENCH_LBFGS_ITERS", "25")))
     compare_parser = subparsers.add_parser("compare")
-    compare_parser.add_argument("--baseline-json", type=Path, required=True)
-    compare_parser.add_argument("--candidate-json", type=Path, required=True)
+    compare_parser.add_argument("--runs-dir", type=Path, required=True, help="holds one folder with a benchmark.json per run")
+    compare_parser.add_argument("--base-root", type=Path, required=True, help="checkout every base run must import lumina from")
+    compare_parser.add_argument("--head-root", type=Path, required=True, help="checkout every PR run must import lumina from")
+    compare_parser.add_argument("--rounds", type=int, default=int(os.getenv("LENSCLUSTER_BENCH_ROUNDS", "3")))
     compare_parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     _compare_command(args) if args.command == "compare" else _run_command(args)
