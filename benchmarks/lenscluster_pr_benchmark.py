@@ -7,11 +7,11 @@
 
 The workflow runs base and PR in alternating rounds (base, PR, then PR, base, ...), each run a fresh process with
 ``--catalog-root`` on the PR checkout so the inputs are the same.  ``compare`` first checks that every base run imported
-lumina from the base checkout and every PR run from the PR checkout, at the commit the run was given.  Base and PR of
-one round form a pair: the delta of a metric is the geometric mean over rounds of the PR/base ratio, its uncertainty the
-standard error of the log ratio between rounds combined with the spread of the trials within each run.  A row gets a
-warning when the slowdown is above 10%, more than twice its uncertainty, and every round is slower.  With fewer than two
-paired rounds the table shows PR timings only.
+lumina from the base checkout and every PR run from the PR checkout, at the commit the run was given.  Load on a shared
+runner mostly slows a run down, so each side's value of a row is its minimum over rounds (for the evaluation rows, of
+the median trial of each run) and the delta is the ratio of the two minima; the per-round PR/base ratios give its
+range.  Only the evaluation rows can get a warning: a delta above 10% with the PR more than 5% slower in every round.
+With fewer than two paired rounds the table shows PR timings only.
 """
 from __future__ import annotations
 
@@ -51,6 +51,8 @@ LIKELIHOODS = {"smoothed": ("smoothed", "image_plane"), "grf_gp": ("gp_image_pla
 SIDES = {"base": "base", "pr": "PR"}
 MIN_PAIRED_ROUNDS = 2
 WARN_PERCENT = 10.0
+# Every round must show the PR this much slower; quiet runs of the same code differ by a few percent.
+ROUND_MARGIN = 1.05
 
 
 def _mean(values: list[float]) -> float:
@@ -154,26 +156,38 @@ def run_benchmark(*, label: str, round_index: int, sha: str | None, catalog_root
             "machine": platform.machine(), "cases": cases, "total_seconds": time.perf_counter() - start}
 
 
-def metrics(record: dict[str, Any]) -> dict[tuple[str, str], tuple[float, float | None, str]]:
-    """(likelihood, metric) -> (value, standard error within the run or None, unit) for every row of the table."""
-    out: dict[tuple[str, str], tuple[float, float | None, str]] = {}
+def metrics(record: dict[str, Any]) -> dict[tuple[str, str], tuple[float, str, bool]]:
+    """(likelihood, metric) -> (value, unit, can warn) for every row of the table.
+
+    An evaluation row takes the median of the run's trials (each the mean time of ``repeats`` evaluations), which a
+    single odd trial cannot move: on the runner a trial can also come out 20% faster than the rest of its run.  Compile
+    times, phases and the total are single measurements.  Only the evaluation rows can get a warning.
+    """
+    out: dict[tuple[str, str], tuple[float, str, bool]] = {}
     for case in record["cases"]:
         for row in case["timings"]:
-            out[(case["likelihood"], row["name"])] = (row["ms_per_eval"], row["ms_per_eval_stderr"], "ms")
-            out[(case["likelihood"], f"{row['name']} compile")] = (row["compile_seconds"], None, "s")
+            trials = row["trial_ms_per_eval"]
+            median = statistics.median(trials) if trials and all(math.isfinite(value) for value in trials) else math.nan
+            out[(case["likelihood"], row["name"])] = (median, "ms", True)
+            out[(case["likelihood"], f"{row['name']} compile")] = (row["compile_seconds"], "s", False)
         for name, seconds in case["phases"].items():
-            out[(case["likelihood"], f"`{name}`")] = (seconds, None, "s")
-    out[("", "total benchmark")] = (record["total_seconds"], None, "s")
+            out[(case["likelihood"], f"`{name}`")] = (seconds, "s", False)
+    out[("", "total benchmark")] = (record["total_seconds"], "s", False)
     return out
 
 
-def verify_checkout(record: dict[str, Any], root: Path) -> None:
-    """Exit unless the run imported lumina from ``root`` at the commit the run was given."""
-    where = f"{SIDES[record['label']]} run of round {record['round']}"
-    if not Path(record["lumina_file"]).resolve().is_relative_to(root.resolve()):
-        raise SystemExit(f"The {where} imported {record['lumina_file']}, which is not in {root}.")
-    if record["lumina_commit"] is None or record["lumina_commit"] != record["sha"]:
-        raise SystemExit(f"The {where} imported lumina at commit {record['lumina_commit']}, not {record['sha']}.")
+def _valid(value: float | None) -> bool:
+    return value is not None and math.isfinite(value) and value > 0.0
+
+
+def check_imported(*, label: str, round_index: int, sha: str | None, lumina_file: str, lumina_commit: str | None,
+                   root: Path) -> None:
+    """Exit unless lumina was imported from ``root`` at commit ``sha`` (any commit when ``sha`` is None)."""
+    where = f"{SIDES[label]} run of round {round_index}"
+    if not Path(lumina_file).resolve().is_relative_to(root.resolve()):
+        raise SystemExit(f"The {where} imported {lumina_file}, which is not in {root}.")
+    if lumina_commit is None or (sha is not None and lumina_commit != sha):
+        raise SystemExit(f"The {where} imported lumina at commit {lumina_commit}, not {sha}.")
 
 
 def load_runs(runs_dir: Path, roots: dict[str, Path]) -> dict[str, dict[int, dict[str, Any]]]:
@@ -181,7 +195,10 @@ def load_runs(runs_dir: Path, roots: dict[str, Path]) -> dict[str, dict[int, dic
     runs: dict[str, dict[int, dict[str, Any]]] = {label: {} for label in SIDES}
     for path in sorted(runs_dir.glob("*/benchmark.json")):
         record = json.loads(path.read_text(encoding="utf-8"))
-        verify_checkout(record, roots[record["label"]])
+        if record.get("label") not in SIDES:
+            raise SystemExit(f"{path} has label {record.get('label')!r}, not one of {', '.join(SIDES)}.")
+        check_imported(label=record["label"], round_index=record["round"], sha=record["sha"], lumina_file=record["lumina_file"],
+                       lumina_commit=record["lumina_commit"], root=roots[record["label"]])
         if record["round"] in runs[record["label"]]:
             raise SystemExit(f"Two {SIDES[record['label']]} runs of round {record['round']} under {runs_dir}.")
         runs[record["label"]][record["round"]] = record
@@ -191,46 +208,51 @@ def load_runs(runs_dir: Path, roots: dict[str, Path]) -> dict[str, dict[int, dic
     return runs
 
 
-def paired_delta(base: list[tuple[float, float | None]], pr: list[tuple[float, float | None]]) -> dict[str, Any] | None:
-    """Delta in percent of PR over base from per-round pairs of (value, standard error within the run or None).
+def paired_delta(base: list[float | None], pr: list[float | None], *, can_warn: bool) -> dict[str, Any] | None:
+    """Delta of the PR minimum over the base minimum, in percent, from the values of the paired rounds in order.
 
-    The delta is the geometric mean of the per-round ratios; a mean of log ratios treats a slowdown and the matching
-    speedup alike, and it keeps a single outlier round visible rather than hiding it as a median of two or three would
-    (the every-round rule guards the warning against that round instead).  Its variance is the scatter of the log
-    ratios between rounds over n plus the within-run variances over n^2, so a lucky agreement of two rounds cannot shrink
-    the uncertainty below the timing noise inside the runs.
+    Shared runners mostly slow a run down, so the minimum over rounds is the estimate least touched by other load
+    (including the cold first run of the job).  ``low``/``high`` are the smallest and largest per-round PR/base ratio,
+    as percent changes.  A row that can warn does so when the delta is above WARN_PERCENT and the PR was more than
+    ROUND_MARGIN times the base in every round.  None when a value is missing, not finite or not positive.
     """
-    if any(b <= 0.0 or p <= 0.0 for (b, _), (p, _) in zip(base, pr)):
+    if len(base) != len(pr):
+        raise ValueError(f"{len(base)} base values but {len(pr)} PR values.")
+    if not all(_valid(value) for value in base + pr):
         return None
-    logs = [math.log(p / b) for (b, _), (p, _) in zip(base, pr)]
-    within = [(pe / p) ** 2 + (be / b) ** 2 for (b, be), (p, pe) in zip(base, pr) if be is not None and pe is not None]
-    n = len(logs)
-    variance = statistics.variance(logs) / n + sum(within) / n**2
-    mean = statistics.fmean(logs)
-    delta = 100.0 * math.expm1(mean)
-    stderr = 100.0 * math.exp(mean) * math.sqrt(variance)
-    every_round_slower = all(value > 0.0 for value in logs)
-    return {"delta": delta, "stderr": stderr, "every_round_slower": every_round_slower,
-            "warn": delta > WARN_PERCENT and delta > 2.0 * stderr and every_round_slower}
+    ratios = [p / b for b, p in zip(base, pr)]
+    delta = 100.0 * (min(pr) / min(base) - 1.0)
+    every_round_slower = all(ratio > ROUND_MARGIN for ratio in ratios)
+    return {"delta": delta, "low": 100.0 * (min(ratios) - 1.0), "high": 100.0 * (max(ratios) - 1.0),
+            "every_round_slower": every_round_slower, "warn": can_warn and delta > WARN_PERCENT and every_round_slower}
 
 
-def _fmt_value(values: list[tuple[float, float | None]], unit: str) -> str:
-    """Mean over runs; ms rows add the standard error between runs, or the one within the run for a single run."""
-    mean = _mean([value for value, _ in values])
-    if unit != "ms":
-        return f"{mean:.2f} s"
-    stderr = _stderr([value for value, _ in values]) if len(values) > 1 else values[0][1] or 0.0
-    return f"{mean:.3f} +/- {stderr:.3f} ms"
+def _fmt_value(values: list[float | None], unit: str) -> str:
+    """Minimum over runs, or n/a when a run lacks a usable value."""
+    if not values or not all(_valid(value) for value in values):
+        return "n/a"
+    return f"{min(values):.3f} ms" if unit == "ms" else f"{min(values):.2f} s"
 
 
 def _fmt_delta(delta: dict[str, Any] | None) -> str:
     if delta is None:
         return "n/a"
-    return f"{delta['delta']:+.1f}% +/- {delta['stderr']:.1f}%" + (" :warning:" if delta["warn"] else "")
+    return (f"{delta['delta']:+.1f}% (rounds {delta['low']:+.0f}% to {delta['high']:+.0f}%)"
+            + (" :warning:" if delta["warn"] else ""))
 
 
 def _order(records: list[dict[str, Any]]) -> str:
     return ", ".join(SIDES[record["label"]] for record in sorted(records, key=lambda record: record["started_unix"]))
+
+
+def _rows(records: list[dict[str, Any]]) -> tuple[list[dict], dict[tuple[str, str], tuple[str, bool]]]:
+    """metrics() of each record and every row any of them has, in first-seen order, with its unit and warn switch."""
+    rows = [metrics(record) for record in records]
+    keys: dict[tuple[str, str], tuple[str, bool]] = {}
+    for row in rows:
+        for key, (_, unit, can_warn) in row.items():
+            keys.setdefault(key, (unit, can_warn))
+    return rows, keys
 
 
 def _header(record: dict[str, Any], runs_line: str) -> list[str]:
@@ -238,18 +260,18 @@ def _header(record: dict[str, Any], runs_line: str) -> list[str]:
     return [MARKER, "### lumina PR benchmark", "",
             f"Model: FF-SIMS Hera ({case['n_images']} images in {case['n_systems']} systems, {case['n_members']} members, {case['n_unconstrained']} free parameters), "
             f"`ubuntu-latest` CPU, {record['trials']} trials x {record['repeats']} evaluations per run, L-BFGS for {record['lbfgs_iters']} iterations.",
-            "", runs_line, ""]
+            "", runs_line + " Each value is the minimum over runs, for the evaluation rows of each run's median trial. "
+            "n/a marks a row that a run lacks or timed as not a positive number.", ""]
 
 
 def render_markdown(records: list[dict[str, Any]], *, note: str, workflow_url: str) -> str:
-    """PR timings only: the mean over ``records``, runs of one commit."""
-    runs_line = (f"{len(records)} PR runs, each a fresh process." if len(records) > 1 else "One PR run.")
+    """PR timings only: the minimum over ``records``, runs of one commit."""
+    runs_line = f"{len(records)} PR runs, each a fresh process." if len(records) > 1 else "One PR run."
     lines = _header(records[0], runs_line) + [f"Commit `{records[0]['sha'][:12]}`. {note}", "",
                                               "| likelihood | metric | value |", "| --- | --- | ---: |"]
-    rows = [metrics(record) for record in records]
-    for key, (_, _, unit) in rows[0].items():
-        if all(key in row for row in rows):
-            lines.append(f"| {key[0]} | {key[1]} | {_fmt_value([row[key][:2] for row in rows], unit)} |")
+    rows, keys = _rows(records)
+    for key, (unit, _) in keys.items():
+        lines.append(f"| {key[0]} | {key[1]} | {_fmt_value([row.get(key, (None,))[0] for row in rows], unit)} |")
     lines.extend(["", f"Run: {workflow_url}", ""])
     return "\n".join(lines)
 
@@ -261,21 +283,22 @@ def render_comparison_markdown(base_runs: dict[int, dict[str, Any]], pr_runs: di
     records = [base_runs[r] for r in rounds] + [pr_runs[r] for r in rounds]
     planned = f" ({planned_rounds} planned)" if planned_rounds != len(rounds) else ""
     runs_line = f"{len(rounds)} rounds{planned} of base and PR, each run a fresh process, in the order {_order(records)}."
-    base_rows = [metrics(base_runs[r]) for r in rounds]
-    pr_rows = [metrics(pr_runs[r]) for r in rounds]
+    rows, keys = _rows(records)
+    base_rows, pr_rows = rows[:len(rounds)], rows[len(rounds):]
     lines = _header(pr_runs[rounds[0]], runs_line) + [
         "| likelihood | metric | base | PR | delta |", "| --- | --- | ---: | ---: | ---: |",
         f"| | commit | `{base_runs[rounds[0]]['sha'][:12]}` | `{pr_runs[rounds[0]]['sha'][:12]}` | |"]
-    for key, (_, _, unit) in pr_rows[0].items():
-        if not all(key in row for row in base_rows + pr_rows):
-            continue
-        base = [row[key][:2] for row in base_rows]
-        pr = [row[key][:2] for row in pr_rows]
-        lines.append(f"| {key[0]} | {key[1]} | {_fmt_value(base, unit)} | {_fmt_value(pr, unit)} | {_fmt_delta(paired_delta(base, pr))} |")
+    for key, (unit, can_warn) in keys.items():
+        base = [row.get(key, (None,))[0] for row in base_rows]
+        pr = [row.get(key, (None,))[0] for row in pr_rows]
+        lines.append(f"| {key[0]} | {key[1]} | {_fmt_value(base, unit)} | {_fmt_value(pr, unit)} | "
+                     f"{_fmt_delta(paired_delta(base, pr, can_warn=can_warn))} |")
     lines.extend(["", "Each round times base and PR in fresh processes one after the other, alternating which goes first. "
-                      "The delta is the geometric mean over rounds of the PR/base ratio; its uncertainty combines the scatter of that "
-                      "ratio between rounds with the spread of the trials within each run. "
-                      f":warning: marks a slowdown above {WARN_PERCENT:.0f}% that is more than twice its uncertainty and that every round shows.",
+                      "Other load on a shared runner slows runs down, so the delta compares the PR minimum with the base minimum; the "
+                      "range after it is the smallest and largest PR/base ratio of a single round. "
+                      f":warning: marks a log-likelihood or value+grad row whose delta is above {WARN_PERCENT:.0f}% and whose PR "
+                      f"run was more than {100 * (ROUND_MARGIN - 1):.0f}% slower than the base run in every round. Compile times, "
+                      "the setup phases, L-BFGS and the total are for information and never get a warning.",
                   "", f"Run: {workflow_url}", ""])
     return "\n".join(lines)
 
@@ -296,8 +319,8 @@ def _run_command(args: argparse.Namespace) -> None:
     if args.checkout is not None:
         # Fail before the timings, so a side that cannot import its own checkout counts as a failed run.
         lumina_file, lumina_commit = imported_lumina()
-        verify_checkout({"label": args.label, "round": args.round, "sha": args.sha or lumina_commit, "lumina_file": lumina_file,
-                         "lumina_commit": lumina_commit}, args.checkout)
+        check_imported(label=args.label, round_index=args.round, sha=args.sha, lumina_file=lumina_file,
+                       lumina_commit=lumina_commit, root=args.checkout)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     result = run_benchmark(label=args.label, round_index=args.round, sha=args.sha, catalog_root=args.catalog_root,
                            likelihoods=args.likelihoods, repeats=args.repeats, trials=args.trials, lbfgs_iters=args.lbfgs_iters)
