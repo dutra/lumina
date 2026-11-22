@@ -32,7 +32,7 @@ from ..io import store
 from .style import BLUE, GREEN, ORANGE, PAPER_STYLE
 
 STYLE = Path(__file__).with_name("style.mplstyle")
-GRID_POINT_BUDGET = 60_000      # most grid points: 1" on Hera's map (51k points), 1.5" on Ares's (41k)
+GRID_POINT_BUDGET = 60_000      # most grid points: 1" on Hera's map (51k points), 1.5" on Ares's (40k)
 GRID_STEPS_ARCSEC = (0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0)
 MAP_MARGIN_PIXELS = 2           # grid points stay this many map pixels inside the map's edge
 GRID_PAIRS = 4_000_000          # random grid-point pairs, the same for every draw and field
@@ -194,6 +194,15 @@ def _rows(panel, curve, draw, row, edges, s_l, s_t, counts):
                  S_L_arcsec=float(s_l[b]), S_T_arcsec=float(s_t[b])) for b in range(len(centres))]
 
 
+def parametric_deflection(draws, k: int, xy: np.ndarray, z_source: float) -> np.ndarray:
+    """Deflection (point, 2) of draw ``k``'s parametric lens alone at ``xy`` (any shape (..., 2)) for a source at
+    ``z_source``: the parametric part of ``ReportingDraws.lens``, without evaluating the field realization."""
+    import jax.numpy as jnp
+    e = draws.evaluator
+    packed = e.packed_state_for_z(e.physical(jnp.asarray(draws.samples[k])), z_source)
+    return np.asarray(e.total_fields_at(np.asarray(xy, dtype=float).reshape(-1, 2), packed, chunk=4096)[0], dtype=float)
+
+
 def relative_displacement_table(state, evaluator, draws, residual_draws: pd.DataFrame, true_table: pd.DataFrame,
                                 alpha_true, lens_map, *, log=print) -> tuple[pd.DataFrame, dict]:
     """The table of every curve (columns ``panel`` (images, grid), ``curve`` (truth, mass_field, gp, gp_analytic,
@@ -223,7 +232,7 @@ def relative_displacement_table(state, evaluator, draws, residual_draws: pd.Data
         row = int(draws.indices[k])
         for name, p in inputs.items():
             field = np.asarray(draws.field(k, p, z_ref)[0], dtype=float)
-            parametric = np.asarray(draws.lens(k, p, z_ref)[0], dtype=float) - field
+            parametric = parametric_deflection(draws, k, p, z_ref)
             if name == "grid":
                 n_nonfinite = max(n_nonfinite, int((~np.isfinite(parametric + field).all(1)).sum()))
             for curve, v in (("truth", truth[name] - parametric), ("mass_field", field)):
@@ -276,63 +285,65 @@ def render_relative_displacement(table: pd.DataFrame, path: Path) -> Path:
     left, right, bottom, top, gap = .55, .1, .45, .62, .1
     width, height = left + 2 * PANEL_IN + gap + right, bottom + PANEL_IN + top
     fig = plt.figure(figsize=(width, height))
-    axes = [fig.add_axes([(left + c * (PANEL_IN + gap)) / width, bottom / height, PANEL_IN / width, PANEL_IN / height])
-            for c in range(2)]
-    scatter = table[(table.panel == "images") & (table.curve == "image_position_scatter")]
+    try:
+        axes = [fig.add_axes([(left + c * (PANEL_IN + gap)) / width, bottom / height, PANEL_IN / width, PANEL_IN / height])
+                for c in range(2)]
+        scatter = table[(table.panel == "images") & (table.curve == "image_position_scatter")]
 
-    axes[1].sharey(axes[0])
-    alpha = .2
-    ymax = 0.
-    for ax, panel, label in zip(axes, ("images", "grid"), ("Image pairs", "Grid")):
-        # Colour is the component, line style truth (dashed, drawn on top) or mass field (solid, with its band).
-        for curve, style, z in (("mass_field", "-", 2), ("truth", "--", 4)):
-            for component, color in (("L", BLUE), ("T", ORANGE)):
-                r, values = _band(table, panel, curve, f"S_{component}_arcsec")
-                lo, med, hi = np.nanpercentile(values, [16, 50, 84], axis=1)
-                if curve == "mass_field":
-                    ax.fill_between(r, lo, hi, color=color, alpha=alpha, lw=0)
-                ymax = max(ymax, np.nanmax(hi if curve == "mass_field" else med))
-                ax.plot(r, med, color=color, ls=style, lw=1.2, zorder=z)
-        gp = "gp" if panel == "images" else "gp_analytic"
-        r, s_l = _band(table, panel, gp, "S_L_arcsec")
-        _, s_t = _band(table, panel, gp, "S_T_arcsec")
-        lo, med, hi = np.nanpercentile(isotropic(s_l, s_t), [16, 50, 84], axis=1)
-        ax.fill_between(r, lo, hi, color=GREEN, alpha=alpha, lw=0)
-        ax.plot(r, med, color=GREEN, lw=1.2)
-        ymax = max(ymax, np.nanmax(hi))
-        # The image position scatter exists only at the images: the same image-pair points in both panels.
-        s = scatter
-        value = isotropic(s.S_L_arcsec.to_numpy(), s.S_T_arcsec.to_numpy())
-        ax.plot(s.r_centre, value, ls="none", marker="o", ms=3.5, mfc="white", mec="k", mew=.9, zorder=5)
-        ymax = max(ymax, np.nanmax(value))
-        if panel == "images":
-            lo_r, hi_r = s.r_lo.min(), s.r_hi.max()
-        else:
-            lo_r = r.min()
-            hi_r = max(table[(table.panel == panel) & (table.curve == "truth")].r_hi.max(), s.r_centre.max())
-        ax.set_xscale("log")
-        ax.set_xlim(lo_r * .9, hi_r * 1.1)
-        # A panel spanning less than two decades (the image pairs) gets labels at 1, 2 and 5 of each decade.
-        subs = (1, 2, 5) if hi_r / lo_r < 100 else (1,)
-        ax.xaxis.set_major_locator(LogLocator(subs=subs))
-        ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
-        ax.xaxis.set_minor_locator(LogLocator(subs=[s for s in range(2, 10) if s not in subs]))
-        ax.xaxis.set_minor_formatter(NullFormatter())
-        ax.set_xlabel("Separation (arcsec)")
-        ax.text(.05, .95, label, transform=ax.transAxes, ha="left", va="top")
-    axes[0].set_ylim(0, ymax * 1.05)
-    axes[0].set_ylabel("Relative displacement (arcsec)")
-    axes[1].tick_params(labelleft=False)
-    handles = [Line2D([], [], color=".45", lw=1.2, ls="--"), Line2D([], [], color=".45", lw=1.2),
-               Line2D([], [], color=BLUE, lw=1.2), Line2D([], [], color=ORANGE, lw=1.2),
-               (Patch(color=GREEN, alpha=alpha, lw=0), Line2D([], [], color=GREEN, lw=1.2)),
-               Line2D([], [], ls="none", marker="o", ms=3.5, mfc="white", mec="k", mew=.9)]
-    labels = ["True lens minus parametric lens", "Mass-field realization", "Longitudinal", "Transverse", "Image-plane GP",
-              "Image position scatter (true lens)"]
-    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=((left + PANEL_IN + gap / 2) / width, 1.0), ncol=3,
-               frameon=False, handlelength=2.0, columnspacing=1.2, handletextpad=.5)
-    fig.savefig(path)
-    plt.close(fig)
+        axes[1].sharey(axes[0])
+        alpha = .2
+        ymax = 0.
+        for ax, panel, label in zip(axes, ("images", "grid"), ("Image pairs", "Grid")):
+            # Colour is the component, line style truth (dashed, drawn on top) or mass field (solid, with its band).
+            for curve, style, z in (("mass_field", "-", 2), ("truth", "--", 4)):
+                for component, color in (("L", BLUE), ("T", ORANGE)):
+                    r, values = _band(table, panel, curve, f"S_{component}_arcsec")
+                    lo, med, hi = np.nanpercentile(values, [16, 50, 84], axis=1)
+                    if curve == "mass_field":
+                        ax.fill_between(r, lo, hi, color=color, alpha=alpha, lw=0)
+                    ymax = max(ymax, np.nanmax(hi if curve == "mass_field" else med))
+                    ax.plot(r, med, color=color, ls=style, lw=1.2, zorder=z)
+            gp = "gp" if panel == "images" else "gp_analytic"
+            r, s_l = _band(table, panel, gp, "S_L_arcsec")
+            _, s_t = _band(table, panel, gp, "S_T_arcsec")
+            lo, med, hi = np.nanpercentile(isotropic(s_l, s_t), [16, 50, 84], axis=1)
+            ax.fill_between(r, lo, hi, color=GREEN, alpha=alpha, lw=0)
+            ax.plot(r, med, color=GREEN, lw=1.2)
+            ymax = max(ymax, np.nanmax(hi))
+            # The image position scatter exists only at the images: the same image-pair points in both panels.
+            s = scatter
+            value = isotropic(s.S_L_arcsec.to_numpy(), s.S_T_arcsec.to_numpy())
+            ax.plot(s.r_centre, value, ls="none", marker="o", ms=3.5, mfc="white", mec="k", mew=.9, zorder=5)
+            ymax = max(ymax, np.nanmax(value))
+            if panel == "images":
+                lo_r, hi_r = s.r_lo.min(), s.r_hi.max()
+            else:
+                lo_r = r.min()
+                hi_r = max(table[(table.panel == panel) & (table.curve == "truth")].r_hi.max(), s.r_centre.max())
+            ax.set_xscale("log")
+            ax.set_xlim(lo_r * .9, hi_r * 1.1)
+            # A panel spanning less than two decades (the image pairs) gets labels at 1, 2 and 5 of each decade.
+            subs = (1, 2, 5) if hi_r / lo_r < 100 else (1,)
+            ax.xaxis.set_major_locator(LogLocator(subs=subs))
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+            ax.xaxis.set_minor_locator(LogLocator(subs=[s for s in range(2, 10) if s not in subs]))
+            ax.xaxis.set_minor_formatter(NullFormatter())
+            ax.set_xlabel("Separation (arcsec)")
+            ax.text(.05, .95, label, transform=ax.transAxes, ha="left", va="top")
+        axes[0].set_ylim(0, ymax * 1.05)
+        axes[0].set_ylabel("Relative displacement (arcsec)")
+        axes[1].tick_params(labelleft=False)
+        handles = [Line2D([], [], color=".45", lw=1.2, ls="--"), Line2D([], [], color=".45", lw=1.2),
+                   Line2D([], [], color=BLUE, lw=1.2), Line2D([], [], color=ORANGE, lw=1.2),
+                   (Patch(color=GREEN, alpha=alpha, lw=0), Line2D([], [], color=GREEN, lw=1.2)),
+                   Line2D([], [], ls="none", marker="o", ms=3.5, mfc="white", mec="k", mew=.9)]
+        labels = ["True lens minus parametric lens", "Mass-field realization", "Longitudinal", "Transverse", "Image-plane GP",
+                  "Image position scatter (true lens)"]
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=((left + PANEL_IN + gap / 2) / width, 1.0), ncol=3,
+                   frameon=False, handlelength=2.0, columnspacing=1.2, handletextpad=.5)
+        fig.savefig(path)
+    finally:
+        plt.close(fig)
     return path
 
 
