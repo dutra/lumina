@@ -15,7 +15,7 @@ import numpy as np
 from ..config import LensClusterSolverConfig
 from ..likelihood.evaluator import Evaluator
 from ..core.model import ModelState
-from .search import multistart_map, prior_starts
+from .search import NoFiniteStart, multistart_map, prior_starts
 from ..core.state import build_state
 
 
@@ -195,8 +195,12 @@ def split_map(config: LensClusterSolverConfig, state: ModelState, evaluator: Eva
         for k, mode in enumerate(diverse):
             starts_k = np.stack([np.array(mode["theta"], dtype=float) if j == 0 else
                                  _with_relation(np.asarray(mode["theta"], dtype=float), member_starts[j], relation_index) for j in range(len(member_starts))])
-            extra = multistart_map(search_state, evaluator, starts_k, single, method=search.member_method, seed=seed + 2 + k, log=log,
-                                   active_sites=active, label=f"stage B, diverse {k + 1} (stage A {float(mode['log_posterior']):.1f})")
+            try:
+                extra = multistart_map(search_state, evaluator, starts_k, single, method=search.member_method, seed=seed + 2 + k, log=log,
+                                       active_sites=active, label=f"stage B, diverse {k + 1} (stage A {float(mode['log_posterior']):.1f})")
+            except NoFiniteStart:                                                    # an extra mode is optional; the best one is already fitted
+                log(f"[init] diverse carry: mode {k + 1} dropped, every one of its stage-B starts ended non-finite")
+                continue
             best = extra["modes"][0]
             if not best["degenerate"]:
                 best.update(diverse_origin=True, within_margin=True)
