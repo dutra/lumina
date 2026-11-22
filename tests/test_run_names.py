@@ -114,7 +114,6 @@ def test_every_new_run_is_a_new_folder(tmp_path):
     assert new_run(cluster, "d", run_label="mine", dry_run=True) == (cluster / "mine", None) and not cluster.exists()
     first, lock = new_run(cluster, "d", day=NOV21)
     assert first == cluster / "nov21a_d" and (first / run_lock.RUN_LOCK).is_file()
-    assert not (cluster / run_lock.CLUSTER_LOCK).exists()                 # held only while the folder is created
     second, other = new_run(cluster, "d", day=NOV21)                     # the same call again: another run
     assert second == cluster / "nov21b_d"
     lock.release(), other.release()
@@ -197,7 +196,7 @@ def test_the_same_command_twice_makes_two_runs(tmp_path, monkeypatch, capsys):
         else:
             if not artifacts.is_init_complete(run / "init" / "artifacts"):
                 _complete_init(run, config)
-            artifacts.save_config(run / "final" / "artifacts", config)
+            _complete_init(run, artifacts.load_config(run / "init" / "artifacts"), final=config, posterior=True)
 
     _quiet_command(monkeypatch, fake_run)
     results = tmp_path / "results"
@@ -218,7 +217,10 @@ def test_the_same_command_twice_makes_two_runs(tmp_path, monkeypatch, capsys):
     assert cli.main(_pasted(nxt)) == 0
     assert ran[-1] == (first.name, "final", 20)
     out = capsys.readouterr().out
-    assert f"[run] finished {first}; lumina resume {first} reloads it and reruns the outputs stage" in out
+    assert out.splitlines()[-1] == f"[run] finished {first}; rerun its outputs with: lumina outputs {first}"
+    # An init stage reloaded from a finished run: its final stage is not offered again.
+    assert cli.main(["resume", str(first), "--stage", "init"]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == f"[run] finished {first}; rerun its outputs with: lumina outputs {first}"
     # --stage final on the run command: a new folder has no init stage, so the resume form is named.
     assert cli.main([*base, "--stage", "final"]) == 2
     assert "lumina resume RUN_DIR --stage final" in capsys.readouterr().err
@@ -230,7 +232,7 @@ def test_the_same_command_twice_makes_two_runs(tmp_path, monkeypatch, capsys):
         assert f"{hera / 'mine'} already exists: --run-label names a new run.  Continue that run with: lumina resume {hera / 'mine'}" in capsys.readouterr().err
     assert cli.main([*base, "--dry-run"]) == 0
     assert f"would create {hera / 'nov21c_w500s250t7_allblocks'}" in capsys.readouterr().out
-    assert len(ran) == 4 and _folders(hera) == ["mine", "nov21a_w500s20t7_allblocks", "nov21b_w500s20t7_allblocks"]
+    assert len(ran) == 5 and _folders(hera) == ["mine", "nov21a_w500s20t7_allblocks", "nov21b_w500s20t7_allblocks"]
     assert not list(results.rglob("*.lock"))
 
 
@@ -251,13 +253,16 @@ def test_the_lock_is_released_and_the_resume_printed_after_a_normal_end_an_error
     _quiet_command(monkeypatch, fake_run)
     base = ["catalogs/hera", "--results", str(tmp_path / "results"), "--stage", "init"]
     assert cli.main(base) == 0 and not (outcome["run"] / run_lock.RUN_LOCK).exists()
+    # An error is raised after the hint; Ctrl-C ends with the hint alone and exit code 130.
     for error in (RuntimeError("inside the fit"), KeyboardInterrupt()):
         outcome["raise"] = error
         capsys.readouterr()
-        with pytest.raises(type(error)):
-            cli.main(base)
+        if isinstance(error, KeyboardInterrupt):
+            assert cli.main(base) == 130
+        else:
+            with pytest.raises(RuntimeError):
+                cli.main(base)
         assert not (outcome["run"] / run_lock.RUN_LOCK).exists()
-        assert not (outcome["run"].parent / run_lock.CLUSTER_LOCK).exists()
         line = capsys.readouterr().out.splitlines()[-1]
         assert line == f"[run] {outcome['run']} stopped before the end; continue it with: lumina resume {outcome['run']}"
         assert _pasted(line) == ["resume", str(outcome["run"])]
@@ -268,8 +273,11 @@ def test_the_lock_is_released_and_the_resume_printed_after_a_normal_end_an_error
     for error in (RuntimeError("inside the fit"), KeyboardInterrupt()):
         outcome["raise"] = error
         capsys.readouterr()
-        with pytest.raises(type(error)):
-            resume_main([str(run), "--stage", "init"])
+        if isinstance(error, KeyboardInterrupt):
+            assert resume_main([str(run), "--stage", "init"]) == 130
+        else:
+            with pytest.raises(RuntimeError):
+                resume_main([str(run), "--stage", "init"])
         assert not (run / run_lock.RUN_LOCK).exists()
         assert capsys.readouterr().out.splitlines()[-1].endswith(f"continue it with: lumina resume {run}")
 
@@ -294,8 +302,8 @@ def test_a_locked_run_is_refused(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     assert resume_main([str(run), "--stage", "init"]) == 2
     assert f"the run {run} is in use: locked by host {run_lock.host()} pid {holder} since 2026-11-21T10:00:00" in capsys.readouterr().err
-    assert outputs_main([str(run)]) == 2 and "is in use" in capsys.readouterr().out
-    assert outputs_main([str(run), "--render"]) == 2 and "is in use" not in capsys.readouterr().out   # no final stage
+    assert outputs_main([str(run)]) == 2 and "is in use" in capsys.readouterr().err
+    assert outputs_main([str(run), "--render"]) == 2 and "is in use" not in capsys.readouterr().err   # no final stage
     assert resume_main([str(run), "--dry-run"]) == 0 and f"currently locked by host {run_lock.host()}" in capsys.readouterr().out
     assert (run / run_lock.RUN_LOCK).is_file()                           # never removed by those who refused
     # Another host's lock cannot be checked: respected, with the file to delete.
@@ -308,6 +316,46 @@ def test_a_locked_run_is_refused(tmp_path, monkeypatch, capsys):
     assert resume_main([str(run), "--stage", "init"]) == 0
     assert f"[lock] took over the stale lock {run / run_lock.RUN_LOCK} of host {run_lock.host()} pid {dead}" in capsys.readouterr().out
     assert not (run / run_lock.RUN_LOCK).exists()
+
+
+def test_labels_that_would_break_the_names_are_refused(tmp_path, monkeypatch, capsys):
+    """A dot label is no run; a label of the assigned form takes its letter, or is refused when it is given."""
+    from lumina import cli
+    cluster = tmp_path / "results" / "toy"
+    _, lock = new_run(cluster, "d", run_label="nov22a_by_hand")
+    lock.release()
+    assert (cluster / ".names" / "nov22a").is_dir()
+    assert new_run(cluster, "d", day=NOV22)[0].name == "nov22b_d"            # the label's letter is not given again
+    with pytest.raises(RunRefused, match=r"--run-label nov22b_x: the letter nov22b is already given to a run of "):
+        new_run(cluster, "d", run_label="nov22b_x")
+    assert not (cluster / "nov22b_x").exists()
+    for label in ("nov22final", "nov22abc_x", "notes"):                     # not of the assigned form: no letter
+        new_run(cluster, "d", run_label=label)[1].release()
+    assert sorted(p.name for p in (cluster / ".names").iterdir()) == ["nov22a", "nov22b"]
+    monkeypatch.chdir(ROOT)
+    for label in (".names", ".hidden"):
+        with pytest.raises(SystemExit):
+            cli.main(["catalogs/hera", "--results", str(tmp_path / "results"), "--run-label", label])
+        assert "must not start with a dot (.names and other dot entries of a results folder are not runs)" in capsys.readouterr().err
+
+
+def test_resume_refuses_a_missing_folder_and_a_saved_stage_it_cannot_continue(tmp_path, monkeypatch, capsys):
+    from lumina import pipeline
+    from lumina.resume import main as resume_main
+    _quiet_command(monkeypatch, lambda config, stage="both", saved_form=None: (_ for _ in ()).throw(
+        pipeline.SavedStageMismatch("init")))
+    assert resume_main([str(tmp_path / "nowhere")]) == 2
+    assert capsys.readouterr().err == f"lumina resume: {tmp_path / 'nowhere'} does not exist\n"
+    from lumina import cli
+    config = cli.build_config("catalogs/hera", run_label="r", results=str(tmp_path / "results")).validate()
+    run = tmp_path / "results" / "hera" / "r"
+    _complete_init(run, config)
+    assert resume_main([str(run)]) == 2
+    captured = capsys.readouterr()
+    assert captured.err == (f"lumina resume: {run}: the saved init stage of this run folder does not match the settings "
+                            "it is resumed with (after a code change or a hand edit of its saved files, say), so it cannot "
+                            "be continued; start a new run\n")
+    assert "continue it with" not in captured.out and not (run / run_lock.RUN_LOCK).exists()
 
 
 def _dead_pid() -> int:
@@ -335,7 +383,7 @@ def _race_child(task):
 
 def test_identical_commands_launched_at_once_make_one_run_each(tmp_path):
     """Through the real command: N identical commands launched together make N runs, one letter each."""
-    count = 4
+    count = 6
     results = tmp_path / "results"
     context = multiprocessing.get_context("spawn")
     with context.Manager() as manager:
@@ -420,9 +468,14 @@ def test_lumina_resume_continues_a_run_with_its_own_settings(tmp_path, monkeypat
     assert resume_main([str(run), "--dry-run"]) == 0
     assert "final stage not started" in capsys.readouterr().out and not (run / "final").exists()
     assert resume_main([str(tmp_path / "nowhere")]) == 2
-    # A saved init stage the saved configuration cannot continue is refused by the pipeline, and the lock released.
-    with pytest.raises(ValueError, match="saved init stage was made with a different model"):
-        resume_main([str(copies["other_model"])])
+    # A saved init stage the saved configuration cannot continue: one line, exit 2, no hint to resume again.
+    capsys.readouterr()
+    assert resume_main([str(copies["other_model"])]) == 2
+    captured = capsys.readouterr()
+    assert captured.err == (f"lumina resume: {copies['other_model']}: the saved init stage of this run folder does not match the "
+                            "settings it is resumed with (after a code change or a hand edit of its saved files, say), so it "
+                            "cannot be continued; start a new run\n")
+    assert "continue it with" not in captured.out
     assert not (copies["other_model"] / run_lock.RUN_LOCK).exists()
     # Interrupted during the init stage: the init stage runs again from the start.
     assert "init stage not complete" in (resume_main([str(copies["in_init"]), "--dry-run"]) == 0 and capsys.readouterr().out)
@@ -454,7 +507,9 @@ def test_lumina_resume_continues_a_run_with_its_own_settings(tmp_path, monkeypat
     shutil.copytree(root, moved)
     shutil.rmtree(root)
     remapped = moved / "results" / "toy" / copies["remapped"].name
-    assert resume_main([str(remapped)]) == 2 and "--remap" in capsys.readouterr().err
+    err = (resume_main([str(remapped)]) == 2 and capsys.readouterr().err)
+    assert "not found; saved paths are relative to the folder the run was started in: run the command from there" in err
+    assert "or, for a run made elsewhere or moved, give --remap OLD=NEW" in err
     assert resume_main([str(remapped), "--remap", f"{root}={moved}"]) == 0
     assert artifacts.is_final_complete(remapped / "final" / "artifacts")
     for saved in (remapped / "init" / "artifacts" / artifacts.CONFIG_FILE, remapped / "final" / "artifacts" / artifacts.CONFIG_FILE,

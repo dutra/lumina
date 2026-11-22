@@ -28,7 +28,6 @@ import os
 import shlex
 import shutil
 import sys
-import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -56,8 +55,11 @@ def describe(config, profiles=()) -> str:
 
 
 def _segment(text: str) -> str:
-    if not text.strip() or text in {".", ".."} or "/" in text or "\\" in text:
+    if not text.strip() or "/" in text or "\\" in text:
         raise argparse.ArgumentTypeError("must be a nonempty single path segment")
+    if text.startswith("."):
+        raise argparse.ArgumentTypeError("must not start with a dot (.names and other dot entries of a results folder "
+                                         "are not runs)")
     return text
 
 
@@ -253,7 +255,7 @@ def main(argv=None) -> int:
 
 def _run_in(path, config, args, log) -> int:
     """The run of ``config`` in the new folder ``path`` (whose lock the caller holds)."""
-    from .resume import next_step
+    from .resume import run_and_report
     from .run_files import input_files
     log(f"[run] created {path} (if it stops, continue it with: lumina resume {shlex.quote(str(path))})")
     inputs = path / "inputs"            # the files the run was declared with, and the command
@@ -272,14 +274,9 @@ def _run_in(path, config, args, log) -> int:
           f"search={config.search.halo_method}+{config.search.member_method} n_starts={config.search.n_starts} "
           f"likelihood={config.likelihood.likelihood_mode}/{config.likelihood.gp_kernel} gp_blocks={config.likelihood.gp_blocks}",
           flush=True)
-    start = time.monotonic()
-    finished = False
-    try:
+
+    def fit():
         run(config, stage=args.stage)
-        finished = True
         if fast:
             _fast_warning(config)
-    finally:
-        print(f"[timing] elapsed={time.monotonic() - start:.2f}s")
-        log(next_step(path, args.stage, finished))
-    return 0
+    return run_and_report(fit, path, prog="lumina")

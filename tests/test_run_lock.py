@@ -6,7 +6,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
 
 import pytest
 
@@ -91,18 +90,6 @@ def test_a_lock_is_published_whole_and_release_never_raises(tmp_path):
     assert len(lines) == 1 and lines[0].startswith(f"[lock] WARNING could not release the lock {path}")
 
 
-def test_the_wait_for_a_lock_is_logged(tmp_path, monkeypatch):
-    path = tmp_path / ".names.lock"
-    _write(path, host=run_lock.host(), pid=os.getppid(), command="lumina catalogs/hera")
-    monkeypatch.setattr(run_lock, "WAIT_REPORT", 0.1)
-    lines = []
-    with pytest.raises(run_lock.RunLocked):
-        run_lock.acquire_waiting(path, what="the runs of x", wait=0.35, log=lines.append)
-    assert lines[0].startswith(f"[lock] waiting for the runs of x ({path}): locked by host {run_lock.host()} pid "
-                               f"{os.getppid()} since 2026-11-21T10:00:00 (lumina catalogs/hera); 0 s of at most 0.35 s")
-    assert 3 <= len(lines) <= 5
-
-
 def test_a_takeover_survives_what_others_do_underneath(tmp_path, monkeypatch):
     """The stale lock removed by another process, the guard file removed, or a fresh lock taken in between: no
     exception, and never two holders."""
@@ -149,20 +136,6 @@ def test_a_takeover_survives_what_others_do_underneath(tmp_path, monkeypatch):
     lock, holder = run_lock.try_acquire(path, log=lambda _: None)
     assert lock is None and holder.pid == os.getppid() and path.is_file()
     assert sorted(p.name for p in tmp_path.iterdir()) == ["run.lock"]
-
-
-def test_waiting_for_a_lock_times_out_with_its_holder(tmp_path):
-    path = tmp_path / ".names.lock"
-    _write(path, host=run_lock.host(), pid=os.getppid(), command="lumina catalogs/hera")
-    started = time.monotonic()
-    with pytest.raises(run_lock.RunLocked, match=r"gave up after 0\.3 s waiting for the runs of x: locked by host .*"
-                                                  r"\(lumina catalogs/hera\); wait for it to end, or if that process is gone"):
-        run_lock.acquire_waiting(path, what="the runs of x", wait=0.3)
-    assert time.monotonic() - started >= 0.3
-    # Released while waiting: taken.
-    threading.Timer(0.2, path.unlink).start()
-    with run_lock.acquire_waiting(path, what="the runs of x", wait=10):
-        assert run_lock.read_lock(path).pid == os.getpid()
 
 
 def test_one_of_many_takes_over_a_stale_lock(tmp_path):

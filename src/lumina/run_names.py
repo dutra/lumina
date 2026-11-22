@@ -11,8 +11,9 @@ Every run of the command is a new folder, so the same command run twice makes tw
 (:mod:`lumina.resume`) is the only way to continue an existing one.
 
 Letters are reserved by creating ``<results>/<name>/.names/<mon><day><letter>`` (an atomic directory creation); a
-reserved letter is never given again, even when its run folder is deleted.  The new folder is created and locked
-(``run.lock``) under the cluster's lock (``.names.lock``, :mod:`lumina.run_lock`).
+reserved letter is never given again, even when its run folder is deleted.  A hand-chosen label of that form
+(``--run-label nov22a_x``) reserves its letter the same way.  The run folder is created by another atomic directory
+creation and then locked (``run.lock``, :mod:`lumina.run_lock`), so two commands never share a folder or a letter.
 """
 from __future__ import annotations
 
@@ -124,20 +125,52 @@ def _exists_refusal(path: Path) -> RunRefused:
                       f"lumina resume {path}")
 
 
-def new_run(cluster_dir, description: str, *, run_label: str | None = None, dry_run: bool = False,
-            day: date | None = None, log=print, wait: float = run_lock.CLUSTER_LOCK_WAIT):
-    """``(path, lock)``: the folder of a new run of ``cluster_dir``, created and locked (``run.lock``) unless
-    ``dry_run`` (``lock`` is then None and nothing is written).  The folder is ``run_label`` when given, else the next
-    assigned name (:func:`reserve`; :func:`next_name` for a dry run).  It is created under the cluster's lock
-    (:func:`lumina.run_lock.acquire_waiting`, at most ``wait`` seconds); the caller releases the run's lock.
+# A name of the assigned form: <mon><day>, one or two letters, "_" and a description (the folders taken() counts).
+ASSIGNED_FORM = re.compile(rf"^((?:{'|'.join(MONTHS)})(?:[12][0-9]|3[01]|[1-9]))([a-z]{{1,2}})_.")
+
+
+def _reserve_label(cluster_dir: Path, label: str) -> None:
+    """Create the folder of the hand-chosen new run ``label``.  A label of the assigned form (``nov22a_x``) first
+    reserves its letter, so no assigned name takes it later; a letter already given is refused.
 
     Raises
     ------
     RunRefused
-        When the ``run_label`` folder exists (an existing run is continued with ``lumina resume``), ``.names`` is not
-        a folder, or the results folder cannot be written.
-    lumina.run_lock.RunLocked
-        When the cluster's lock stays held for ``wait`` seconds.
+        When the folder exists, or the label's letter is already given.
+    OSError
+        When the cluster folder cannot be written.
+    """
+    path = cluster_dir / label
+    if path.exists():
+        raise _exists_refusal(path)
+    form = ASSIGNED_FORM.match(label)
+    if form:
+        reserved = _reserved_dir(cluster_dir)
+        reserved.mkdir(parents=True, exist_ok=True)
+        try:
+            (reserved / f"{form.group(1)}{form.group(2)}").mkdir()
+        except FileExistsError:
+            raise RunRefused(f"--run-label {label}: the letter {form.group(1)}{form.group(2)} is already given to a run "
+                             f"of {cluster_dir} ({reserved}); choose another label") from None
+    try:
+        path.mkdir(parents=True)
+    except FileExistsError:
+        raise _exists_refusal(path) from None
+
+
+def new_run(cluster_dir, description: str, *, run_label: str | None = None, dry_run: bool = False,
+            day: date | None = None, log=print):
+    """``(path, lock)``: the folder of a new run of ``cluster_dir``, created and locked (``run.lock``) unless
+    ``dry_run`` (``lock`` is then None and nothing is written).  The folder is ``run_label`` when given
+    (:func:`_reserve_label`), else the next assigned name (:func:`reserve`; :func:`next_name` for a dry run).  Both
+    are created by an atomic directory creation, so two commands never get the same folder; the caller releases the
+    run's lock.
+
+    Raises
+    ------
+    RunRefused
+        When the ``run_label`` folder exists (an existing run is continued with ``lumina resume``) or its letter is
+        given, ``.names`` is not a folder, or the results folder cannot be written.
     """
     cluster_dir = Path(cluster_dir)
     if dry_run:
@@ -147,20 +180,11 @@ def new_run(cluster_dir, description: str, *, run_label: str | None = None, dry_
         return path, None
     try:
         cluster_dir.mkdir(parents=True, exist_ok=True)
-        guard = run_lock.acquire_waiting(cluster_dir / run_lock.CLUSTER_LOCK, what=f"the runs of {cluster_dir}",
-                                         wait=wait, log=log)
+        if run_label is None:
+            path = cluster_dir / reserve(cluster_dir, description, day=day)
+        else:
+            path = cluster_dir / run_label
+            _reserve_label(cluster_dir, run_label)
+        return path, run_lock.lock_run(path, log=log)
     except OSError as error:
         raise RunRefused(f"cannot write in the results folder {cluster_dir} ({error.strerror or error})") from None
-    with guard:
-        try:
-            if run_label is None:
-                path = cluster_dir / reserve(cluster_dir, description, day=day)
-            else:
-                path = cluster_dir / run_label
-                try:
-                    path.mkdir()
-                except FileExistsError:
-                    raise _exists_refusal(path) from None
-            return path, run_lock.lock_run(path, log=log)
-        except OSError as error:
-            raise RunRefused(f"cannot create a run in {cluster_dir} ({error.strerror or error})") from None

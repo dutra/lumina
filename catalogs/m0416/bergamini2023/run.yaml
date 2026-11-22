@@ -3,7 +3,7 @@
 name: m0416_bergamini2023
 priors: priors.yaml
 
-runtime: {seed: 12345, chains: 4, resume: true, numpyro_print_summary: true, nuts_chain_method: parallel}
+runtime: {seed: 12345, chains: 4, numpyro_print_summary: true, nuts_chain_method: parallel}
 
 likelihood:
   # The GRF of unmodelled mass with a knee spectrum plus the image-plane GP; see catalogs/hera/run.yaml for the priors.

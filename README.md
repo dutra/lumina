@@ -92,9 +92,9 @@ figures and the lens maps. The documentation defines every [output file](https:/
 and every [posterior parameter](https://kappaccino.readthedocs.io/en/latest/posterior.html) with its units.
 
 The `lumina` command runs a catalog folder (`lumina catalogs/hera`) and starts a new run folder each time, named
-once by its date, a letter and its settings (`results/hera/nov21a_w500s250t7_allblocks`). `lumina resume RUN_DIR` continues an
-existing run with its own saved settings, for example its final stage after `--stage init`
-([run files](docs/run-files.md)).
+once by its date, a letter and its settings (`results/hera/nov21a_w500s250t7_allblocks`). `lumina resume RUN_DIR`
+continues an existing run with its own saved settings, for example its final stage after `--stage init`. The saved
+paths are relative, so give both commands from the repository root ([run files](docs/run-files.md)).
 
 ## Mock validation
 

@@ -160,7 +160,7 @@ def test_single_stage_end_to_end(synthetic_config, monkeypatch):
     assert "Run summary" in table and "recovered / observed" in table and "total" in table
     assert "step size per chain" in table and "E-BFMI per chain" in table and "tree-depth cap" in table
     changed = replace(config, sampling=SamplingConfig(warmup=10, samples=12, max_tree_depth=4))
-    with pytest.raises(ValueError, match="different configuration"):
+    with pytest.raises(pipeline.SavedStageMismatch, match="saved final stage of this run folder does not match"):
         pipeline.run(changed)
 
 
