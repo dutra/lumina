@@ -425,7 +425,7 @@ draws the same figures either way.
 Every setting of the stage lives in the `outputs` section of the configuration
 ({class}`~lumina.config.OutputsConfig`): the settings the modules share at its top level, then one section per
 module, named after it, with its `enabled` switch and the module's own settings. The section never changes a fit:
-it is not part of the fit settings a resume compares and a run is matched by, and `lumina outputs --set` may change any of it.
+it is not part of the configuration a resume compares, and `lumina outputs --set` may change any of it.
 
 ```yaml
 outputs:
@@ -501,9 +501,8 @@ variants (`paths.figure_prefix=../../X` would write figures outside the run fold
 that pass only: `lumina outputs` never writes `final/artifacts/config.json`, whatever the pass mode and whether
 it succeeds or fails, so the next pass runs with the saved settings again unless it repeats them. What each module's
 compute used is kept in its completeness record (`settings`, with the draws), and a later pass warns about a module
-computed with other settings than its own (see [Settings of a compute](#settings-of-a-compute)). The run command
-differs: resuming a finished run (`lumina catalogs/hera --draws 8`, which finds the run with the same fit settings, or
-`lumina resume RUN --draws 8`) is a new run configuration, and it saves the
+computed with other settings than its own (see [Settings of a compute](#settings-of-a-compute)). `lumina resume`
+differs: resuming a finished run (`lumina resume RUN --draws 8`) is a new run configuration, and it saves the
 new `outputs` section in `final/artifacts/config.json` before the outputs stage runs and leaves the rest of the saved
 configuration alone. Every write of a `config.json` is atomic (a temporary file in the same folder, renamed over the
 old one), so a crash never leaves a truncated file. `--list` prints the modules
@@ -640,7 +639,7 @@ the settings check leaves out. Put the module class in a file of `src/lumina/out
 Three more places name every module: add an `autoclass` entry for the settings class to `docs/api/config.md`,
 describe the section in `docs/configuration.md` (the paragraph on `OutputsConfig`), and add the name to the list in
 `tests/test_output_modules.py::test_default_order_is_the_registry_order`, which hard-codes the registry order.
-Nothing else needs to change: the section is outside the fit settings with the rest of `outputs`, and `--set
+Nothing else needs to change: the section is outside what a resume compares with the rest of `outputs`, and `--set
 outputs.ggsl.FIELD=VALUE` already accepts it. The context (`ctx`) holds `config`, `state`,
 `posterior`, `audit`, `paths`, `stage`, `tables`, `figures`, `prefix`, `log`, `summary`, `products`, `mode`, `settings`,
 `completion` (product and render: the completeness record), `imaging(image_config)`, which loads each imaging variant

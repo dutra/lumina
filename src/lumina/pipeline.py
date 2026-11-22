@@ -620,70 +620,18 @@ def write_init_bic(state: ModelState, evaluator: Evaluator, theta: np.ndarray, d
 
 
 def resume_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """The fit settings of a configuration dictionary (``to_json_dict``): the part a resume compares, and that the
-    ``lumina`` command matches against the saved runs of a cluster (:mod:`lumina.run_names`).  All of it but the WBIC
-    settings, which may change between a finished run and its resume, the ``runtime`` fields that change only what is
-    printed or drawn or whether to resume (``resume``, ``skip_plots``, ``quiet``, ``numpyro_print_summary``), the run
-    folder (``paths.output_dir`` and ``paths.run_name``: a run is the same wherever it lives and whatever it is
-    called), and the sections that change only what is reported (``config.REPORT_ONLY_SECTIONS``: ``outputs``)."""
+    """The part of a configuration dictionary (``to_json_dict``) that a resume compares: all of it but the WBIC
+    settings, which may change between a finished run and its resume, ``runtime.resume`` and the run folder
+    (``paths.output_dir`` and ``paths.run_name``), which ``lumina resume`` sets to where the folder is now, and the
+    sections that change only what is reported (``config.REPORT_ONLY_SECTIONS``: ``outputs``)."""
     from .config import REPORT_ONLY_SECTIONS
-    dropped: dict[str, tuple[str, ...]] = {"sampling": ("wbic", "wbic_warmup", "wbic_samples"),
-                                           "runtime": ("resume", "skip_plots", "quiet", "numpyro_print_summary"),
+    dropped: dict[str, tuple[str, ...]] = {"sampling": ("wbic", "wbic_warmup", "wbic_samples"), "runtime": ("resume",),
                                            "paths": ("output_dir", "run_name")}
     payload = {key: value for key, value in payload.items() if key not in REPORT_ONLY_SECTIONS}
     for section, fields in dropped.items():
         if isinstance(payload.get(section), dict):
             payload[section] = {k: v for k, v in payload[section].items() if k not in fields}
     return payload
-
-
-class SavedStageMismatch(ValueError):
-    """A saved stage of the run folder was made with other settings than the run being resumed: the run cannot be
-    continued with them (a usage error of the command, not a bug)."""
-
-
-def saved_init_conflict(config: LensClusterSolverConfig, directory: Path) -> tuple[dict, dict] | None:
-    """``(saved, current)`` init signatures (:func:`lumina.io.artifacts.init_signature`) when ``directory`` holds a
-    complete init stage made with another signature than ``config``'s and ``runtime.resume`` would reuse it; None when
-    the init stage would be reused (the same signature) or run from the start (not complete, or ``runtime.resume``
-    false).  The comparison :func:`run_init` makes."""
-    if not (config.runtime.resume and artifacts.is_init_complete(directory)):
-        return None
-    saved = json.loads((directory / artifacts.INIT_SIGNATURE_FILE).read_text())
-    current = artifacts._jsonable(artifacts.init_signature(config))
-    return None if saved == current else (saved, current)
-
-
-def saved_final_conflict(config: LensClusterSolverConfig, directory: Path) -> tuple[dict, dict] | None:
-    """``(saved, current)`` fit settings (:func:`resume_payload`) when ``directory`` holds a complete final stage made
-    with other fit settings than ``config``'s and ``runtime.resume`` would reuse it; None when it would be reused or
-    sampled again (not complete: an interrupted final stage samples again with the current settings).  The comparison
-    :func:`run_final` makes."""
-    if not (config.runtime.resume and artifacts.is_final_complete(directory)):
-        return None
-    saved = resume_payload(artifacts.load_config(directory).to_json_dict())
-    current = resume_payload(config.to_json_dict())
-    return None if saved == current else (saved, current)
-
-
-def resume_conflicts(config: LensClusterSolverConfig, stage: str = "both") -> list[tuple[str, dict, dict]]:
-    """``(stage name, saved, current)`` of each saved stage of ``config``'s run folder that :func:`run` with ``stage``
-    would refuse to continue (:func:`saved_init_conflict`, and unless ``stage`` is ``"init"``
-    :func:`saved_final_conflict`); empty when the run can go on.  Whether ``stage="final"`` has a complete init stage
-    to start from is not checked here."""
-    paths = run_paths(config)
-    found = [("init", *conflict) for conflict in [saved_init_conflict(config, paths.init.artifacts)] if conflict]
-    if stage != "init":
-        found += [("final", *conflict) for conflict in [saved_final_conflict(config, paths.final.artifacts)] if conflict]
-    return found
-
-
-def _mismatch(stage: str, saved: dict, current: dict) -> SavedStageMismatch:
-    from .run_names import difference_lines
-    lines = "\n".join(difference_lines(saved, current))
-    what = ("another model, likelihood, member or search configuration or seed" if stage == "init" else "other fit settings")
-    return SavedStageMismatch(f"the saved {stage} stage of this run folder was made with {what} (saved -> current):\n"
-                              f"{lines}\nuse a new run folder")
 
 
 def _recorded(config: LensClusterSolverConfig, saved_form) -> LensClusterSolverConfig:
@@ -766,11 +714,9 @@ def run_init(config: LensClusterSolverConfig, *, saved_form=None) -> InitResult:
     Raises
     ------
     ValueError
-        If the config is invalid.
-    SavedStageMismatch
-        If a saved init is being resumed but was made with a different model,
-        likelihood, member, search configuration or seed
-        (:func:`saved_init_conflict`; use a new run folder).
+        If the config is invalid, or a saved init is being resumed but was made
+        with a different model, likelihood, member, search configuration or
+        seed (use a new run name).
     RuntimeError
         If the likelihood rejects the best mode after reclassification.
     """
@@ -791,9 +737,9 @@ def _run_init(config: LensClusterSolverConfig, saved_form=None) -> InitResult:
     _seed(config)
     try:
         if config.runtime.resume and artifacts.is_init_complete(paths.artifacts):
-            conflict = saved_init_conflict(recorded, paths.artifacts)
-            if conflict:
-                raise _mismatch("init", *conflict)
+            saved = json.loads((paths.artifacts / artifacts.INIT_SIGNATURE_FILE).read_text())
+            if saved != artifacts._jsonable(artifacts.init_signature(recorded)):
+                raise ValueError("The saved init stage was made with a different model, likelihood, member or search configuration; use a new run name.")
             log("[init] complete init stage found; loading the saved start")
             saved_classes = json.loads((paths.artifacts / artifacts.CLASSIFICATION_FILE).read_text())
             state = build_state(config, drop_member_ids=saved_classes.get("dropped_members", ()))
@@ -968,10 +914,8 @@ def run_final(config: LensClusterSolverConfig, init: InitResult, *, saved_form=N
     Raises
     ------
     ValueError
-        If the config is invalid.
-    SavedStageMismatch
-        If a saved final stage is being resumed but was made with different
-        fit settings (:func:`saved_final_conflict`; use a new run folder).
+        If the config is invalid, or a saved final stage is being resumed but
+        was made with a different configuration (use a new run name).
     """
     config = config.validate()
     recorded = _recorded(config, saved_form)
@@ -999,9 +943,9 @@ def run_final(config: LensClusterSolverConfig, init: InitResult, *, saved_form=N
 
             state, evaluator, uncertain_start = add_uncertain_images(config, state, evaluator, init.theta, refit=refit, log=log)
         if runtime.resume and artifacts.is_final_complete(stage.artifacts):
-            conflict = saved_final_conflict(recorded, stage.artifacts)
-            if conflict:
-                raise _mismatch("final", *conflict)
+            saved = artifacts.load_config(stage.artifacts)
+            if resume_payload(saved.to_json_dict()) != resume_payload(recorded.to_json_dict()):
+                raise ValueError("The saved final stage was made with a different configuration; use a new run name.")
             log("[final] complete posterior found; loading artifacts")
             posterior = artifacts.load_posterior(stage.artifacts)
             comparison_file = stage.artifacts / model_comparison.MODEL_COMPARISON_FILE
@@ -1015,7 +959,7 @@ def run_final(config: LensClusterSolverConfig, init: InitResult, *, saved_form=N
             audit = json.loads((stage.artifacts / artifacts.AUDIT_FILE).read_text())
             write_membership_table(state, evaluator, posterior.samples, stage.tables, log=log)
             if not runtime.skip_plots:
-                # The outputs section is outside the fit settings, so this pass may use other settings than the saved ones:
+                # The outputs section is outside what a resume compares, so this pass may use other settings than the saved ones:
                 # the saved configuration takes them, so that it describes the products this pass rewrites.
                 from dataclasses import replace
                 artifacts.save_config(stage.artifacts, replace(artifacts.load_config(stage.artifacts), outputs=recorded.outputs))
@@ -1121,9 +1065,6 @@ def run(config: LensClusterSolverConfig, stage: str = "both", *, saved_form=None
     ValueError
         If ``stage`` is not one of the three allowed values, or a stage raises
         it (see :func:`run_init` and :func:`run_final`).
-    SavedStageMismatch
-        If a saved stage was made with other settings
-        (:func:`resume_conflicts`).
     FileNotFoundError
         If ``stage="final"`` and the init stage is not complete.
     """

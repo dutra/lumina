@@ -676,9 +676,8 @@ class RuntimeConfig:
     numpyro_print_summary: bool = False
 
 
-# Sections that change only what is reported, never a fit (``OutputsConfig``): left out of the fit settings a resume
-# compares and the ``lumina`` command matches saved runs by (``pipeline.resume_payload``) and of the init signature
-# (``io.artifacts.init_signature``).
+# Sections that change only what is reported, never a fit (``OutputsConfig``): left out of the configuration a resume
+# compares (``pipeline.resume_payload``) and of the init signature (``io.artifacts.init_signature``).
 REPORT_ONLY_SECTIONS: tuple[str, ...] = ("outputs",)
 
 
@@ -1758,8 +1757,8 @@ class RGBOutputConfig:
 @dataclass(frozen=True)
 class OutputsConfig:
     """The outputs stage (:mod:`lumina.outputs`): the settings shared by its modules and one section per module
-    (``lumina outputs --list`` names them).  Nothing here changes a fit: the section is outside the fit settings a
-    resume compares and saved runs are matched by (``REPORT_ONLY_SECTIONS``), and ``lumina outputs --set`` may change any of it.
+    (``lumina outputs --list`` names them).  Nothing here changes a fit: the section is outside the configuration a
+    resume compares (``REPORT_ONLY_SECTIONS``), and ``lumina outputs --set`` may change any of it.
     ``runtime.skip_plots`` turns the whole stage off.
 
     One set of random posterior draws (over all chains, chosen with ``runtime.seed``) is evaluated once, each draw with
@@ -1863,7 +1862,7 @@ class LensClusterSolverConfig:
     likelihood : LikelihoodConfig, optional
         Likelihood and error model.  Default: ``LikelihoodConfig()``.
     outputs : OutputsConfig, optional
-        The outputs stage: its reporting draws and the settings of each output module.  Outside the fit settings.
+        The outputs stage: its reporting draws and the settings of each output module.  Outside what a resume compares.
         Default: ``OutputsConfig()``.
     partition : PartitionConfig or None, optional
         Uncertain images assigned to families jointly with the lens.  Default None (none).

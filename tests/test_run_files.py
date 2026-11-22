@@ -194,12 +194,6 @@ def test_command_line(monkeypatch, capsys, tmp_path):
     assert hera.paths.output_dir == "results/hera" and hera.paths.run_name is None
     assert cli.describe(hera) == "w500s250t7_allblocks" and cli.describe(fast, ["fast"]) == "w500s250t8_systemblocks_fast"
     assert cli.describe(cli.build_config("catalogs/hera", images="x/trusted.yaml")) == "w500s250t7_allblocks_trusted"
-    # A run's identity is its fit settings: a prior changed with --set changes it, turning on WBIC does not.
-    from lumina.run_names import fit_settings
-    prior = cli.build_config("catalogs/hera", overrides=["likelihood.lambda_b_prior=lognormal(10, 1) in [0.5, 80]"])
-    assert fit_settings(prior) != fit_settings(hera)
-    assert fit_settings(cli.build_config("catalogs/hera", overrides=["sampling.wbic=true"])) == fit_settings(hera)
-    assert fit_settings(cli.build_config("catalogs/hera", overrides=["runtime.skip_plots=true"])) == fit_settings(hera)
     seen = {}
     monkeypatch.setattr(cli, "build_config", lambda *a, **k: seen.update(k) or (_ for _ in ()).throw(SystemExit(0)))
     with pytest.raises(SystemExit):

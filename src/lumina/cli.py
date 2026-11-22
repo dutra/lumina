@@ -1,24 +1,22 @@
 """Run a cluster declared in a catalog folder: ``lumina <folder>`` (or ``python -m lumina <folder>``).
 
 The folder holds ``run.yaml`` and the ``priors.yaml`` it names (:mod:`lumina.run_files`).  Paths in them are
-resolved against the working directory, and saved runs are matched by those paths, so always run from the repository
-root::
+resolved against the working directory, so run from the repository root::
 
     lumina catalogs/hera --dry-run
     lumina catalogs/m0416/canucs2025 --profile fast
     lumina catalogs/tngc014/large --set sampling.warmup=1000 --set runtime.chains=8
 
-A new run goes to ``results/<name>/<mon><day><letter>_<description>``, e.g. ``results/hera/nov21a_w500s250t7_allblocks``:
-the date the folder is created, the next letter of that cluster and date, and :func:`describe` of the run.  The name is
-given once and never changes.  The same command run again resumes the saved run of the cluster with the same fit
-settings, whatever its name; when none has them, it creates the next name and logs the settings that differ from the
-closest saved run (:mod:`lumina.run_names`); ``--stage final`` also matches a run whose init stage matches and
-whose final stage has not started, whatever the sampling settings.  ``--run-label`` names the folder by hand instead
-(used when the pipeline would continue its saved stages), and ``--results`` moves the tree.  The files the run read
-and the command are copied to the run's ``inputs/`` folder the first time.  The run folder is locked (``run.lock``,
-:mod:`lumina.run_lock`) while the command works in it: a run another process holds is refused with exit code 2.
+Every run is a new folder, ``results/<name>/<mon><day><letter>_<description>``, e.g.
+``results/hera/nov21a_w500s250t7_allblocks``: the date the folder is created, the next letter of that cluster and
+date, and :func:`describe` of the run (:mod:`lumina.run_names`).  The same command run twice makes two runs.
+``--run-label`` names the new folder by hand (an existing one is refused), and ``--results`` moves the tree.  The
+files the run read and the command are copied to the run's ``inputs/`` folder.  The run folder is locked
+(``run.lock``, :mod:`lumina.run_lock`) while the command works in it.  The command prints the run folder when it
+starts and, when it ends, the ``lumina resume`` command that continues it.
 
-``lumina resume RUN_DIR`` continues a run folder with its own saved settings (:mod:`lumina.resume`), and
+``lumina resume RUN_DIR`` continues a run folder with its own saved settings (:mod:`lumina.resume`): it is the only
+way back into an existing run, e.g. ``lumina resume RUN_DIR --stage final`` after ``--stage init``, and
 ``lumina outputs RUN_DIR`` reruns the outputs stage of a finished run without fitting (:mod:`lumina.outputs.command`);
 a cluster folder literally named ``resume`` or ``outputs`` is given as ``./resume`` or ``./outputs``.
 """
@@ -27,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import sys
 import time
@@ -120,13 +119,9 @@ def parser() -> argparse.ArgumentParser:
                    help="override one field after the profiles, e.g. sampling.warmup=1000, runtime.skip_plots=true, "
                         "search.warm_start=results/<name>/<run>, sampling.wbic=true; repeatable")
     p.add_argument("--run-label", type=_segment, default=None,
-                   help="the run folder, exactly: created if absent, continued if the pipeline would continue its saved "
-                        "stages for --stage (each stage compared on its own), refused with the differences otherwise "
-                        "(default: the saved run of the cluster with the same fit settings, else a new "
-                        "<mon><day><letter>_<description>, e.g. nov21a_w500s250t7_allblocks)")
-    p.add_argument("--results", default="results", metavar="DIR",
-                   help="the results tree, DIR/<name>/<run>: where saved runs are looked for and new ones created "
-                        "(default results)")
+                   help="the name of the new run folder (default <mon><day><letter>_<description>, e.g. "
+                        "nov21a_w500s250t7_allblocks); an existing folder is refused: continue it with lumina resume")
+    p.add_argument("--results", default="results", metavar="DIR", help="the results tree, DIR/<name>/<run> (default results)")
     p.add_argument("--chains", type=_positive_int, metavar="N", help="NUTS chains, one CPU device each (runtime.chains)")
     p.add_argument("--seed", type=int, metavar="N", help="random seed of the search, the sampler and the reporting draws (runtime.seed)")
     p.add_argument("--starts", type=_positive_int, metavar="N", help="starts of the initial search (search.n_starts)")
@@ -149,11 +144,11 @@ def parser() -> argparse.ArgumentParser:
                         "unknown family: --set partition.catalog_path=CSV (null for the untrusted images of the catalog), "
                         "partition.redshift_grid=[Z_MIN,Z_MAX,POINTS]")
     p.add_argument("--stage", choices=("init", "final", "both"), default="both",
-                   help="the stages to run (default both); final needs a run with a completed init stage, and "
-                        "matches one whose init stage matches and whose final stage has not started")
+                   help="the stages to run in the new folder (default both); final is refused, as a new run has no "
+                        "init stage: the final stage of an existing run is lumina resume RUN_DIR --stage final")
     p.add_argument("--dry-run", action="store_true",
-                   help="print the run folder it would create or resume, why, and who holds it, classify the members "
-                        "and print the model's size; take no lock and write nothing")
+                   help="print the run folder it would create, classify the members and print the model's size; "
+                        "write nothing")
     return p
 
 
@@ -161,7 +156,7 @@ def build_config(cluster, *, profiles=(), overrides=(), run_label=None, images=N
                  member_profile=None, member_slope=None):
     """The configuration of a cluster folder with the profiles and overrides, writing to
     ``<results>/<name>/<run_label>`` (run_label None leaves ``paths.run_name`` None: the command assigns it,
-    :func:`lumina.run_names.choose_run`), with ``images`` in place of the image catalog of ``priors.yaml``.  ``member_profile`` ("dpie" or "power-law") sets the profile of every member population
+    :func:`lumina.run_names.new_run`), with ``images`` in place of the image catalog of ``priors.yaml``.  ``member_profile`` ("dpie" or "power-law") sets the profile of every member population
     (None keeps what ``priors.yaml`` declares), and ``member_slope`` holds the power-law slope fixed.
 
     Returns
@@ -204,9 +199,9 @@ def _fast_warning(config) -> None:
 
 
 def main(argv=None) -> int:
-    """Run (or dry-run) one cluster folder in the run folder :func:`lumina.run_names.choose_run` gives, or with
-    ``resume`` first continue a run folder (:func:`lumina.resume.main`), or with ``outputs`` first rerun the outputs
-    stage of a finished run (:func:`lumina.outputs.command.main`); returns the exit code."""
+    """Run (or dry-run) one cluster folder in a new run folder (:func:`lumina.run_names.new_run`), or with ``resume``
+    first continue a run folder (:func:`lumina.resume.main`), or with ``outputs`` first rerun the outputs stage of a
+    finished run (:func:`lumina.outputs.command.main`); returns the exit code."""
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv and argv[0] == "outputs":
         from .outputs.command import main as outputs_main
@@ -215,12 +210,16 @@ def main(argv=None) -> int:
         from .resume import main as resume_main
         return resume_main(argv[1:])
     args = parser().parse_args(argv)
+    if args.stage == "final":
+        print("lumina: --stage final needs a completed init stage, and a new run folder has none; run the final stage "
+              "of an existing run with: lumina resume RUN_DIR --stage final", file=sys.stderr, flush=True)
+        return 2
     args.overrides = [*_option_overrides(args), *args.overrides]
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-lumina")
     from .config import UnknownField
     from .cpu_runtime import configure_cpu_runtime, resolve_cpu_plan
     from .run_files import read_run
-    from .run_names import choose_run
+    from .run_names import new_run
     log = lambda text: print(text, flush=True)
     try:
         # The CPU devices are set before anything starts JAX (building a prior does).
@@ -233,42 +232,37 @@ def main(argv=None) -> int:
                               member_profile=args.member_profile, member_slope=args.member_slope,
                               run_label=args.run_label, images=args.images)
         description = describe(config, args.profile)
-        # Validated before a folder is chosen or created (the name is only a stand-in here).
+        # Validated before the folder is created (the name is only a stand-in here).
         config = replace(config, paths=replace(config.paths, run_name=args.run_label or description)).validate()
-        choice = choose_run(config, description, run_label=args.run_label, stage=args.stage, dry_run=args.dry_run, log=log)
+        path, lock = new_run(config.paths.output_dir, description, run_label=args.run_label, dry_run=args.dry_run, log=log)
     except (ValueError, UnknownField) as error:     # a bad run file, profile or --set value, a refused folder: a usage error
         print(f"lumina: {error}", file=sys.stderr, flush=True)
         return 2
-    try:
-        return _run_in(choice, config, args, cpu_plan, log)
-    finally:
-        choice.release()
-
-
-def _run_in(choice, config, args, cpu_plan, log) -> int:
-    """The dry run, or the run, of ``config`` in the folder ``choice`` (whose lock the caller holds)."""
-    from .pipeline import SavedStageMismatch
-    from .run_files import input_files
-    config = replace(config, paths=replace(config.paths, run_name=choice.name))
+    config = replace(config, paths=replace(config.paths, run_name=path.name))
     if args.dry_run:
         from .pipeline import dry_run
-        locked = f", currently locked by {choice.locked_by.holder()}" if choice.locked_by is not None else ""
-        log(f"[run] would {'resume' if choice.resume else 'create'} {choice.path}{locked}: {choice.reason}")
-        print(json.dumps({"dry_run": True, "run": {"path": str(choice.path), "resume": choice.resume, "reason": choice.reason,
-                                                   "locked_by": None if choice.locked_by is None else choice.locked_by.holder()},
-                          "cpu_plan": cpu_plan.to_dict(), **dry_run(config)}, indent=2, default=str))
+        log(f"[run] would create {path}")
+        print(json.dumps({"dry_run": True, "run": str(path), "cpu_plan": cpu_plan.to_dict(), **dry_run(config)},
+                         indent=2, default=str))
         return 0
-    log(f"[run] {'resuming' if choice.resume else 'created'} {choice.path}: {choice.reason}")
-    # The files the run was declared with, kept as first written: a resumed run has the same fit settings, so a later
-    # call never overwrites them.
-    inputs = choice.path / "inputs"
-    if not inputs.exists():
-        inputs.mkdir(parents=True)
-        for index, path in enumerate(input_files(args.cluster, args.profile)):
-            shutil.copy2(path, inputs / f"{index}_{path.name}")
-        (inputs / "command.json").write_text(json.dumps(
-            {"cluster": args.cluster, "profiles": args.profile, "overrides": args.overrides, "images": args.images,
-             "member_profile": args.member_profile, "member_slope": args.member_slope}, indent=2))
+    try:
+        return _run_in(path, config, args, log)
+    finally:
+        lock.release()
+
+
+def _run_in(path, config, args, log) -> int:
+    """The run of ``config`` in the new folder ``path`` (whose lock the caller holds)."""
+    from .resume import next_step
+    from .run_files import input_files
+    log(f"[run] created {path} (if it stops, continue it with: lumina resume {shlex.quote(str(path))})")
+    inputs = path / "inputs"            # the files the run was declared with, and the command
+    inputs.mkdir()
+    for index, source in enumerate(input_files(args.cluster, args.profile)):
+        shutil.copy2(source, inputs / f"{index}_{source.name}")
+    (inputs / "command.json").write_text(json.dumps(
+        {"cluster": args.cluster, "profiles": args.profile, "overrides": args.overrides, "images": args.images,
+         "member_profile": args.member_profile, "member_slope": args.member_slope}, indent=2))
     from .pipeline import run
     fast = "fast" in args.profile
     if fast:
@@ -279,13 +273,13 @@ def _run_in(choice, config, args, cpu_plan, log) -> int:
           f"likelihood={config.likelihood.likelihood_mode}/{config.likelihood.gp_kernel} gp_blocks={config.likelihood.gp_blocks}",
           flush=True)
     start = time.monotonic()
+    finished = False
     try:
         run(config, stage=args.stage)
+        finished = True
         if fast:
             _fast_warning(config)
-    except SavedStageMismatch as error:         # the run folder cannot be continued with these settings
-        print(f"lumina: {choice.path}: {error}", file=sys.stderr, flush=True)
-        return 2
     finally:
         print(f"[timing] elapsed={time.monotonic() - start:.2f}s")
+        log(next_step(path, args.stage, finished))
     return 0

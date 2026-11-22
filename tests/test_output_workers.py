@@ -1,5 +1,5 @@
-"""The output stage's worker threads: the draw map (order, errors, one worker), the setting left out of the fit settings
-a resume compares, and grids and image recovery identical with one and three threads."""
+"""The output stage's worker threads: the draw map (order, errors, one worker), the setting left out of the
+configuration a resume compares, and grids and image recovery identical with one and three threads."""
 from __future__ import annotations
 
 import json
@@ -68,18 +68,16 @@ def test_a_map_inside_a_worker_runs_serially_and_workers_must_be_positive():
     assert map_draws(lambda i: i, [], workers=4) == []
 
 
-# ----------------------------------------------------------------------------- the setting, the fit settings and a resume
-def test_outputs_workers_is_left_out_of_the_fit_settings_and_of_the_resume_comparison(synthetic_config, tmp_path):
+# ----------------------------------------------------------------------------- the setting and a resume
+def test_outputs_workers_is_left_out_of_the_resume_comparison(synthetic_config, tmp_path):
     from lumina.config import LensClusterSolverConfig
     from lumina.pipeline import resume_payload
-    from lumina.run_names import fit_settings
     from lumina.reporting.draws import reporting_draws
     base = synthetic_config
     assert base.outputs.workers == 4
     eight = replace(base, outputs=replace(base.outputs, workers=8)).validate()
-    assert fit_settings(eight) == fit_settings(base)
     assert resume_payload(eight.to_json_dict()) == resume_payload(base.to_json_dict())
-    assert fit_settings(replace(base, runtime=replace(base.runtime, seed=1))) != fit_settings(base)
+    assert resume_payload(replace(base, runtime=replace(base.runtime, seed=1)).to_json_dict()) != resume_payload(base.to_json_dict())
     for bad in (0, -2, 1.5, True):
         with pytest.raises(ValueError, match=r"outputs\.workers"):
             replace(base, outputs=replace(base.outputs, workers=bad)).validate()

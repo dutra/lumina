@@ -376,8 +376,7 @@ def test_every_module_has_its_own_section():
     assert disabled_modules(SimpleNamespace(outputs=OutputsConfig())) == ()
 
 
-def test_outputs_settings_leave_the_fit_settings_and_the_resume_alone(synthetic_config, tmp_path):
-    from lumina.run_names import fit_settings
+def test_outputs_settings_leave_the_resume_alone(synthetic_config, tmp_path):
     from lumina.config import ImageSolverConfig, ImagesOutputConfig, RGBDisplayConfig, RGBOutputConfig, TruthOutputConfig
     from lumina.pipeline import resume_payload
     base = synthetic_config
@@ -388,7 +387,6 @@ def test_outputs_settings_leave_the_fit_settings_and_the_resume_alone(synthetic_
                           rgb=RGBOutputConfig(enabled=False, image_dir="imaging", display=RGBDisplayConfig(q=2.0),
                                               fold_pair_max_separation_arcsec=1.0))
     chosen = replace(base, outputs=every).validate()
-    assert fit_settings(chosen) == fit_settings(base)
     assert resume_payload(chosen.to_json_dict()) == resume_payload(base.to_json_dict())
     assert artifacts.init_signature(chosen) == artifacts.init_signature(base)
     assert "outputs" not in resume_payload(base.to_json_dict()) and "outputs" not in artifacts.init_signature(base)
@@ -414,16 +412,10 @@ def test_outputs_settings_leave_the_fit_settings_and_the_resume_alone(synthetic_
 
 
 def test_outputs_section_from_run_files_and_set():
-    from lumina import cli
     from lumina.run_files import load_run
-    from lumina.run_names import fit_settings
     config = load_run("catalogs/hera", overrides=["outputs.rgb.enabled=false", "outputs.fail_fast=true", "outputs.workers=2"])
     assert not config.outputs.rgb.enabled and config.outputs.fail_fast and config.outputs.workers == 2
     assert config.outputs.rgb.image_dir.endswith("data/imaging/hera/ffsims")         # resolved against the file's folder
-    # The same fit settings, so the command resumes the same run (lumina.run_names).
-    assert (fit_settings(cli.build_config("catalogs/hera", overrides=["outputs.rgb.enabled=false", "outputs.draws=2", "outputs.image_draws=2",
-                                                                      "outputs.truth.deflection_true_fits=null"]))
-            == fit_settings(cli.build_config("catalogs/hera")))
     # The sections and fields before the outputs section are unknown keys, with no special message.
     with pytest.raises(ValueError, match="unknown keys"):
         load_run("catalogs/hera", overrides=["reporting.draws=8"])
@@ -602,7 +594,7 @@ def test_remap_and_report_overrides(synthetic_config, tmp_path):
             and moved.outputs.rgb.image_dir == f"{tmp_path}/data/imaging")
     assert sorted(line.split()[2].rstrip(":") for line in lines) == ["outputs.rgb.image_dir", "outputs.truth.kappa_true_fits"]
     assert remap_paths(config, [("/far/aw", "/x")], log=lambda _: None).outputs.truth.kappa_true_fits == "/far/away/data/kappa.fits"
-    # Any field of the outputs section may change; nothing else may, also outside the fit settings (paths, WBIC).
+    # Any field of the outputs section may change; nothing else may, also outside what a resume compares (paths, WBIC).
     changed = apply_overrides(config, ["outputs.truth.deflection_true_fits=defl.fits", "outputs.rgb.enabled=false",
                                        "outputs.workers=2", "outputs.truth.kappa_true_fits=other.fits", "outputs.draws=4"])
     assert changed.outputs.truth.deflection_true_fits == "defl.fits" and not changed.outputs.rgb.enabled

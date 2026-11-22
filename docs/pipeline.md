@@ -91,22 +91,16 @@ still run. Parameters the old run lacks start at the configured model.
 `RuntimeConfig.resume` (on by default) reuses work in the run directory:
 
 - A completed init is reused by any later final run whose model, likelihood, member and search configuration and
-  seed match ({func}`~lumina.pipeline.saved_init_conflict`), whatever its sampling settings.
-- A completed final stage is reloaded when the fit settings match ({func}`~lumina.pipeline.resume_payload`,
-  {func}`~lumina.pipeline.saved_final_conflict`): the whole configuration apart from the run folder
-  (`paths.output_dir`, `paths.run_name`), the WBIC settings, the `outputs` section (the settings of the outputs
-  stage) and the `runtime` fields that change only what is printed or drawn or whether to resume (`resume`,
-  `skip_plots`, `quiet`, `numpyro_print_summary`); none of these changes a fit. Turning on `SamplingConfig.wbic` for
-  a finished run adds the WBIC run without sampling the posterior again. A stage that is not complete runs again with
-  the current settings. A run with any other change in the same run folder is refused
-  ({class}`~lumina.pipeline.SavedStageMismatch`, with the settings that differ) rather than overwriting the saved
-  stage. The output pass of a reloaded stage reuses the image recovery, the grid maps and the aperture masses it
-  saved before (see {doc}`outputs`).
+  seed match, whatever its sampling settings.
+- A completed final stage is reloaded when the configuration matches ({func}`~lumina.pipeline.resume_payload`), apart
+  from the WBIC settings, the `outputs` section (the settings of the outputs stage, which never change a fit),
+  `runtime.resume` and the run folder (`paths.output_dir`, `paths.run_name`). Turning on `SamplingConfig.wbic` for a
+  finished run adds the WBIC run without sampling the posterior again. A run with any other change in the same run
+  folder is refused rather than overwriting the saved posterior. The output pass of a reloaded stage reuses the image
+  recovery, the grid maps and the aperture masses it saved before (see {doc}`outputs`).
 
-Neither comparison depends on the run's name or where its folder is, so a run folder can be moved or renamed. Use a
-new run folder for each changed configuration. The `lumina` command chooses it: it resumes the saved run of the
-cluster with the same fit settings and otherwise creates a new name, and `lumina resume RUN_DIR` continues a run
-folder with its own saved settings (see {doc}`run-files`).
+Use a new run folder for each changed configuration. The `lumina` command makes a new one for every run, and `lumina
+resume RUN_DIR` continues a run folder with its own saved settings (see {doc}`run-files`).
 
 ## CPU chains
 

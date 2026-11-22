@@ -1,9 +1,10 @@
-"""``lumina resume RUN_DIR``: continue a run folder with its own saved configuration, with no matching.
+"""``lumina resume RUN_DIR``: continue a run folder with its own saved configuration.
 
-Run it from the folder the run was started from (usually the repository root), as ``lumina outputs``::
+This is the only way back into an existing run folder: the run command always starts a new one.  Run it from the
+folder the run was started from (usually the repository root), as ``lumina outputs``::
 
     lumina resume results/hera/nov21a_w500s250t7_allblocks
-    lumina resume results/hera/nov21a_w500s250t7_allblocks --stage init
+    lumina resume results/hera/nov21a_w500s250t7_allblocks --stage final
     lumina resume RUN --set outputs.rgb.enabled=false --draws 64
     lumina resume RUN --remap /home/me/burkelenscluster=$PWD
     lumina resume RUN --dry-run
@@ -31,18 +32,20 @@ saved stages are compared in those terms, so the folder stays the same run with 
 folder may have been moved or renamed: the run writes where it is now.
 
 The run folder is locked (``run.lock``, :mod:`lumina.run_lock`) while the command works in it: a folder another
-process is working in is refused (exit 2), with that process's host, pid and start time.  A saved stage that this
-configuration cannot continue is refused the same way.
+process is working in is refused (exit 2), with that process's host, pid and start time.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import shlex
 import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+
+SHOWN_ERROR_LINES = 3               # lines of an error shown for a saved configuration that cannot be read
 
 
 def parser() -> argparse.ArgumentParser:
@@ -64,6 +67,84 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def next_step(run_dir, stage: str, finished: bool) -> str:
+    """The line a command prints when it leaves the run folder ``run_dir``: the command that continues it (the folder's
+    name cannot be derived from the run command), after ``stage`` ran to its end (``finished``) or stopped."""
+    run = shlex.quote(str(run_dir))
+    if not finished:
+        return f"[run] {run_dir} stopped before the end; continue it with: lumina resume {run}"
+    if stage == "init":
+        return f"[run] init stage done in {run_dir}; run its final stage with: lumina resume {run} --stage final"
+    return (f"[run] finished {run_dir}; lumina resume {run} reloads it and reruns the outputs stage, "
+            f"lumina outputs {run} reruns the outputs alone")
+
+
+def settings_file(run_dir) -> Path | None:
+    """The saved configuration a resume of ``run_dir`` runs with: ``final/artifacts/config.json`` once the final
+    stage started, else ``init/artifacts/config.json``; None when there is no ``init/artifacts/config.json`` (not a
+    run).
+
+    Raises
+    ------
+    OSError
+        When the folder cannot be read.
+    """
+    from .io.artifacts import CONFIG_FILE
+    run_dir = Path(run_dir)
+    init, final = run_dir / "init" / "artifacts" / CONFIG_FILE, run_dir / "final" / "artifacts" / CONFIG_FILE
+    if not init.is_file():
+        return None
+    return final if final.is_file() else init
+
+
+class SavedConfigUnreadable(ValueError):
+    """A saved ``config.json`` that is missing, cannot be read, is not JSON, or is not a configuration of this code."""
+
+
+def _shown(error: BaseException) -> str:
+    """An error as text: its type and at most :data:`SHOWN_ERROR_LINES` lines, never cut inside a line."""
+    if isinstance(error, OSError) and error.strerror:
+        return f"{type(error).__name__}: {error.strerror}"
+    lines = str(error).splitlines() or [""]
+    more = f" (... {len(lines) - SHOWN_ERROR_LINES} more lines)" if len(lines) > SHOWN_ERROR_LINES else ""
+    return f"{type(error).__name__}: {' / '.join(line.strip() for line in lines[:SHOWN_ERROR_LINES])}{more}"
+
+
+def load_saved_config(source: Path):
+    """The configuration saved in ``source`` (a ``config.json``).
+
+    Raises
+    ------
+    SavedConfigUnreadable
+        When it is missing, cannot be read, is not valid JSON, or is not a configuration this code can load (unknown,
+        missing or misnamed fields, a section that is not a mapping, a ``_class`` that is not a configuration class);
+        the message says which.  Any other error is a bug and propagates.
+    """
+    from dataclasses import fields
+    from .config import InvalidSection, LensClusterSolverConfig, MissingField, UnknownField
+    source = Path(source)
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise SavedConfigUnreadable(f"{source} is missing") from None
+    except OSError as error:
+        raise SavedConfigUnreadable(f"{source} cannot be read ({_shown(error)})") from None
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise SavedConfigUnreadable(f"{source} is not valid JSON ({_shown(error)})") from None
+    if not isinstance(payload, dict):
+        raise SavedConfigUnreadable(f"{source} is not a configuration this code can load (a JSON "
+                                    f"{type(payload).__name__}, not an object)")
+    try:
+        config = LensClusterSolverConfig.from_json_dict(payload)
+    except (UnknownField, MissingField, InvalidSection) as error:
+        raise SavedConfigUnreadable(f"{source} is not a configuration this code can load ({_shown(error)})") from None
+    absent = [f.name for f in fields(LensClusterSolverConfig) if f.name not in payload]
+    if absent:                          # config.json holds every section (to_json_dict); a section-less one is no run's
+        raise SavedConfigUnreadable(f"{source} is not a configuration this code can load (it lacks the section(s) "
+                                    f"{', '.join(absent)})")
+    return config
+
+
 def run_status(run_dir) -> str:
     """The state of ``run_dir`` in words (what a resume then runs is in the module docstring)."""
     from .io import artifacts
@@ -80,20 +161,20 @@ def run_status(run_dir) -> str:
 
 def resume_config(run_dir, *, remap=(), overrides=(), draws=None, log=print):
     """``(config, saved_form)``: the configuration a resume of ``run_dir`` runs with, the saved one
-    (:func:`lumina.run_names.settings_file`) with ``remap`` applied to its paths, the ``outputs`` ``overrides`` and
-    ``draws``, ``runtime.resume`` on, and the run folder where ``run_dir`` is now; and the function that gives a
-    configuration back with the remapped paths as saved (``pipeline.run(saved_form=...)``; None without a remap).
+    (:func:`settings_file`) with ``remap`` applied to its paths, the ``outputs`` ``overrides`` and ``draws``,
+    ``runtime.resume`` on, and the run folder where ``run_dir`` is now; and the function that gives a configuration
+    back with the remapped paths as saved (``pipeline.run(saved_form=...)``; None without a remap).
 
     Raises
     ------
     FileNotFoundError
         When ``run_dir`` holds no saved run, or a catalog of the model does not exist (the message names the field).
     ValueError
-        For an override outside ``outputs``, an unknown or invalid one, or a bad remap.
+        For an override outside ``outputs``, an unknown or invalid one, a bad remap, or a saved configuration this
+        code cannot load (:class:`SavedConfigUnreadable`).
     """
     from .io import artifacts
     from .outputs.saved_run import REMAP_HINT, apply_overrides, catalog_fields, missing_paths, relocate
-    from .run_names import load_saved_config, settings_file
     run_dir = Path(run_dir)
     source = settings_file(run_dir)
     if source is None:
@@ -111,15 +192,13 @@ def resume_config(run_dir, *, remap=(), overrides=(), draws=None, log=print):
 
 def main(argv=None) -> int:
     """``lumina resume``; returns the exit code: 2 for a usage error, a folder that is not a run, a refused
-    override, a missing file, a refused stage, a run folder locked by another process, or a saved stage the run's
-    configuration cannot continue (``pipeline.SavedStageMismatch``)."""
+    override, a missing file, a refused stage, or a run folder locked by another process."""
     args = parser().parse_args(argv)
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-lumina")
     from .config import UnknownField
     from .cpu_runtime import configure_cpu_runtime
     from .outputs.saved_run import check_outputs_only
     from .run_lock import lock_run, run_holder
-    from .run_names import settings_file
     log = lambda text: print(text, flush=True)
     try:
         check_outputs_only(args.overrides)              # before anything starts: a fit setting is refused at once
@@ -130,7 +209,10 @@ def main(argv=None) -> int:
         if source is None:
             raise FileNotFoundError(f"{args.run} is not a run folder (no init/artifacts/config.json)")
         # The CPU devices are set before anything starts JAX (reading the configuration builds priors).
-        saved = json.loads(source.read_text())
+        try:
+            saved = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, ValueError):               # reported by resume_config (load_saved_config)
+            saved = None
         runtime = saved.get("runtime") if isinstance(saved, dict) else None
         runtime = runtime if isinstance(runtime, dict) else {}         # a bad one is reported by resume_config
         if not args.dry_run:
@@ -156,15 +238,15 @@ def main(argv=None) -> int:
     except (ValueError, OSError) as error:          # RunLocked, or a folder that cannot be written
         print(f"lumina resume: {error}", file=sys.stderr, flush=True)
         return 2
-    from .pipeline import SavedStageMismatch, run
+    from .pipeline import run
     log(f"[resume] {args.run} (settings of {source.relative_to(args.run)}): {status}; running stage={args.stage}")
     start = time.monotonic()
+    finished = False
     try:
         run(config, stage=args.stage, saved_form=saved_form)
-    except SavedStageMismatch as error:             # the run folder cannot be continued: a usage error, not a bug
-        print(f"lumina resume: {args.run}: {error}", file=sys.stderr, flush=True)
-        return 2
+        finished = True
     finally:
         lock.release()
         print(f"[timing] elapsed={time.monotonic() - start:.2f}s", flush=True)
+        log(next_step(args.run, args.stage, finished))
     return 0
