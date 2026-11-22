@@ -734,7 +734,8 @@ class SearchConfig:
         Besides the stage-A modes within ``mode_margin``, up to this many more non-degenerate stage-A modes within
         ``diverse_carry_margin`` of the best go to stage B, picked by farthest-point sampling in the large-scale
         parameters.  Each gets its own stage B and polish; the chain-start step keeps it only if it lands within
-        ``mode_margin`` of the best on the NUTS target.  ``0`` turns this off.  Default ``8``.
+        ``mode_margin`` of the best on the NUTS target.  A diverse mode with no usable stage-B result (every start
+        non-finite, or every mode degenerate) is dropped with a log line.  ``0`` turns this off.  Default ``8``.
     diverse_carry_margin : float, optional
         Largest log-posterior gap to the best stage-A mode for a diverse-carry mode.  Default ``500.0``.
     adam_steps : int, optional

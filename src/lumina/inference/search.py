@@ -33,6 +33,10 @@ class NoFiniteStart(RuntimeError):
     """Every start of a multi-start search ended at a non-finite or invalid potential."""
 
 
+class AllModesDegenerate(RuntimeError):
+    """Every mode of a multi-start search is degenerate (median |det A| at the images above the limit)."""
+
+
 def prior_starts(state: ModelState, n_starts: int, seed: int) -> np.ndarray:
     """Latent starts: lens parameters drawn from the prior; offsets, sources and hyperparameters at their centres."""
     specs = state.parameter_specs
@@ -404,8 +408,8 @@ def multistart_map(state: ModelState, evaluator: Evaluator, starts: np.ndarray, 
         mode["degenerate"] = not (mode["median_abs_determinant"] <= limit)
     degenerate = [m for m in modes if m["degenerate"]]
     if len(degenerate) == len(modes):
-        raise RuntimeError(f"Every mode of the {label} is degenerate: median |det A| at the images above {limit:g} "
-                           f"(smallest {min(m['median_abs_determinant'] for m in modes):.3g}).")
+        raise AllModesDegenerate(f"Every mode of the {label} is degenerate: median |det A| at the images above {limit:g} "
+                                 f"(smallest {min(m['median_abs_determinant'] for m in modes):.3g}).")
     if degenerate:
         log(f"[{label}] {len(degenerate)} of {len(modes)} modes rejected as degenerate: median |det A| at the images above {limit:g} "
             f"(largest {max(m['median_abs_determinant'] for m in degenerate):.3g}, best rejected log posterior {-degenerate[0]['potential']:.2f})")
