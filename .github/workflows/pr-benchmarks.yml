@@ -42,12 +42,12 @@ jobs:
           pip install -e benchmark-head
 
       # Base and PR run in alternating rounds (base, PR, PR, base, base, PR, ...), each run a fresh process, so a slow
-      # spell of the shared runner lands on both sides instead of looking like a code change. The per-evaluation
-      # timings are milliseconds; the scatter between rounds is what limits the comparison, hence fewer repeats per run.
+      # spell of the shared runner lands on both sides instead of looking like a code change; compare takes the
+      # minimum of each side over the rounds.
       - name: Run likelihood benchmarks
         env:
           LENSCLUSTER_BENCH_ROUNDS: "3"
-          LENSCLUSTER_BENCH_REPEATS: "20"
+          LENSCLUSTER_BENCH_REPEATS: "50"
           LENSCLUSTER_BENCH_TRIALS: "3"
           LENSCLUSTER_BENCH_LBFGS_ITERS: "25"
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
@@ -91,7 +91,11 @@ jobs:
                 bench pr "$round"
               elif ! bench base "$round"; then
                 base_failed=1
-                echo "::warning::Base benchmark failed in round ${round}; the comment will show PR timings only."
+                if [ $((round - 1)) -ge 2 ]; then
+                  echo "::warning::Base benchmark failed in round ${round}; the comment compares the $((round - 1)) rounds before it."
+                else
+                  echo "::warning::Base benchmark failed in round ${round}; the comment will show PR timings only."
+                fi
               fi
             done
           done
