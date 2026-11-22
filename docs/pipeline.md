@@ -33,6 +33,8 @@ The init stage finds the start of the final inference. It takes about a minute o
    - *Stage B*: from each carried mode, the members, with the large-scale parameters frozen, from `member_starts` prior
      draws of the member block. Besides the best modes, up to `diverse_carry` more distinct stage-A modes are carried,
      because a mode that is poor with the members on the relation can be the best once they deviate.
+     A diverse mode with no usable stage-B result (every start non-finite, or every mode degenerate) is dropped with a
+     log line, and the search goes on.
 
    The end points are clustered into modes, and the modes that can seed chains are polished in full dimension with
    L-BFGS.

@@ -15,7 +15,7 @@ import numpy as np
 from ..config import LensClusterSolverConfig
 from ..likelihood.evaluator import Evaluator
 from ..core.model import ModelState
-from .search import NoFiniteStart, multistart_map, prior_starts
+from .search import AllModesDegenerate, NoFiniteStart, multistart_map, prior_starts
 from ..core.state import build_state
 
 
@@ -200,6 +200,9 @@ def split_map(config: LensClusterSolverConfig, state: ModelState, evaluator: Eva
                                        active_sites=active, label=f"stage B, diverse {k + 1} (stage A {float(mode['log_posterior']):.1f})")
             except NoFiniteStart:                                                    # an extra mode is optional; the best one is already fitted
                 log(f"[init] diverse carry: mode {k + 1} dropped, every one of its stage-B starts ended non-finite")
+                continue
+            except AllModesDegenerate:
+                log(f"[init] diverse carry: mode {k + 1} dropped, every one of its stage-B modes is degenerate")
                 continue
             best = extra["modes"][0]
             if not best["degenerate"]:

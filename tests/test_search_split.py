@@ -140,3 +140,33 @@ def test_a_diverse_mode_with_no_finite_start_is_dropped(synthetic_config, monkey
     monkeypatch.setattr(search_split, "multistart_map", primary_failing)
     with pytest.raises(NoFiniteStart):
         split_map(config, state, evaluator, seed=3, log=lambda *a, **k: None)
+
+
+def test_a_diverse_mode_whose_stage_b_modes_are_all_degenerate_is_dropped(synthetic_config, monkeypatch):
+    from lumina.inference import search_split
+    from lumina.inference.search import AllModesDegenerate
+    search = SearchConfig(n_starts=4, member_starts=2, lbfgs_max_iter=30, polish_max_iter=10)
+    config = replace(synthetic_config, search=search)
+    state = build_state(config)
+    evaluator = Evaluator(state)
+    primary = split_map(replace(config, search=replace(search, diverse_carry=0)), state, evaluator, seed=3, log=lambda *a, **k: None)
+    real = search_split.multistart_map
+
+    def degenerate_in(stage):                                                       # a limit below any |det A| makes every mode of that stage degenerate
+        def run(state, evaluator, starts, config, *args, label="", **kwargs):
+            if stage(label):
+                config = replace(config, max_median_abs_determinant=1e-300)
+            return real(state, evaluator, starts, config, *args, label=label, **kwargs)
+        return run
+
+    monkeypatch.setattr(search_split, "multistart_map", degenerate_in(lambda label: "diverse" in label))
+    monkeypatch.setattr(search_split, "diverse_modes", lambda *a, **k: [{"theta": primary["theta"], "log_posterior": 0.0}])
+    lines = []
+    result = split_map(config, state, evaluator, seed=3, log=lambda *a, **k: lines.append(str(a[0]) if a else ""))
+    assert np.allclose(result["theta"], primary["theta"], atol=1e-3)              # the primary-only result, up to optimizer noise
+    assert len(result["modes"]) == len(primary["modes"]) and not any(m.get("diverse_origin") for m in result["modes"])
+    assert any("diverse carry: mode 1 dropped, every one of its stage-B modes is degenerate" in line for line in lines)
+
+    monkeypatch.setattr(search_split, "multistart_map", degenerate_in(lambda label: label == "stage B"))   # the primary stage B all degenerate is still an error
+    with pytest.raises(AllModesDegenerate):
+        split_map(config, state, evaluator, seed=3, log=lambda *a, **k: None)
