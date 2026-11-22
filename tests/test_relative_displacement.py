@@ -478,3 +478,25 @@ def test_a_render_after_a_fail_fast_compute_reports_the_truth_figures_it_cannot_
         assert reasons[step] == f"compute step {step} did not run"
     for step in ("truth_residuals", "mass_profile", "kappa_mass_residuals"):
         assert reasons[step] == "compute step truth_maps did not run"
+
+
+def test_a_render_leaves_no_figure_open(tmp_path):
+    import matplotlib.pyplot as plt
+    before = plt.get_fignums()
+    path = rd.render_relative_displacement(synthetic_table(), tmp_path / "relative_displacement.pdf")
+    assert path.is_file() and plt.get_fignums() == before
+
+
+@pytest.mark.parametrize("failing", ["drawing", "save"])
+def test_a_render_that_fails_partway_raises_and_leaves_no_figure_open(tmp_path, monkeypatch, failing):
+    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("broken")
+
+    monkeypatch.setattr(*((rd, "_band", broken) if failing == "drawing" else (Figure, "savefig", broken)))
+    before = plt.get_fignums()
+    with pytest.raises(RuntimeError, match="broken"):
+        rd.render_relative_displacement(synthetic_table(), tmp_path / "relative_displacement.pdf")
+    assert plt.get_fignums() == before and not (tmp_path / "relative_displacement.pdf").exists()
