@@ -108,3 +108,35 @@ def test_sigma_gp_prior_is_truncated_at_one_arcsec(synthetic_config):
     spec = state.parameter_specs[state.sigma_gp_param_index]
     from lumina import priors
     assert priors.family(spec.latent_prior) == "TruncatedNormal" and np.isclose(priors.physical_bounds(spec.prior)[1], 1.0)
+
+
+def test_a_diverse_mode_with_no_finite_start_is_dropped(synthetic_config, monkeypatch):
+    from lumina.inference import search_split
+    from lumina.inference.search import NoFiniteStart
+    search = SearchConfig(n_starts=4, member_starts=2, lbfgs_max_iter=30, polish_max_iter=10)
+    config = replace(synthetic_config, search=search)
+    state = build_state(config)
+    evaluator = Evaluator(state)
+    reference = split_map(config, state, evaluator, seed=3, log=lambda *a, **k: None)
+    real = search_split.multistart_map
+
+    def failing(*args, label="", **kwargs):
+        if "diverse" in label:
+            raise NoFiniteStart("no finite start")
+        return real(*args, label=label, **kwargs)
+
+    monkeypatch.setattr(search_split, "multistart_map", failing)
+    monkeypatch.setattr(search_split, "diverse_modes", lambda *a, **k: [{"theta": reference["theta"], "log_posterior": 0.0}])
+    lines = []
+    result = split_map(config, state, evaluator, seed=3, log=lambda *a, **k: lines.append(str(a[0]) if a else ""))
+    assert np.allclose(result["theta"], reference["theta"], atol=1e-3)            # the same mode, up to optimizer noise
+    assert any("dropped" in line for line in lines)
+
+    def primary_failing(*args, label="", **kwargs):                                 # the primary stage B failing is still an error
+        if label == "stage B":
+            raise NoFiniteStart("no finite start")
+        return real(*args, label=label, **kwargs)
+
+    monkeypatch.setattr(search_split, "multistart_map", primary_failing)
+    with pytest.raises(NoFiniteStart):
+        split_map(config, state, evaluator, seed=3, log=lambda *a, **k: None)

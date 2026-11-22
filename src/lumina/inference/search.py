@@ -29,6 +29,10 @@ LATENT_SITES = ("member_velocity_offsets", "member_radius_offsets", "source_posi
 BAD_POTENTIAL = 1.0e29                      # potentials at or above this come from the invalid-model sentinel
 
 
+class NoFiniteStart(RuntimeError):
+    """Every start of a multi-start search ended at a non-finite or invalid potential."""
+
+
 def prior_starts(state: ModelState, n_starts: int, seed: int) -> np.ndarray:
     """Latent starts: lens parameters drawn from the prior; offsets, sources and hyperparameters at their centres."""
     specs = state.parameter_specs
@@ -390,7 +394,7 @@ def multistart_map(state: ModelState, evaluator: Evaluator, starts: np.ndarray, 
     final_g, potential = out["final"], out["potential"]
     finite = np.isfinite(potential) & np.isfinite(final_g).all(axis=1) & (potential < BAD_POTENTIAL)
     if not finite.any():
-        raise RuntimeError("Every multi-start optimization ended at a non-finite or invalid potential.")
+        raise NoFiniteStart("Every multi-start optimization ended at a non-finite or invalid potential.")
     modes, assignment = cluster_modes(final_g, potential, finite, starts_g, config.mode_parameter_tolerance)
     # A degenerate mode (median |det A| at the images above the limit: the lens demagnifies the images) cannot seed chains.
     limit = float(config.max_median_abs_determinant)
