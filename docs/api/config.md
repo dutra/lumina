@@ -12,7 +12,7 @@ Run files
 .. autofunction:: lumina.run_files.read_run
 .. autofunction:: lumina.run_files.parse_value
 .. autofunction:: lumina.cli.main
-.. autofunction:: lumina.run_names.choose_run
+.. autofunction:: lumina.run_names.new_run
 .. autofunction:: lumina.resume.main
 .. automodule:: lumina.run_lock
    :no-members:

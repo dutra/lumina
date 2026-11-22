@@ -31,9 +31,17 @@ From the launcher, set `sampling.wbic`:
 lumina catalogs/m0416/canucs2025 --run-label nfw --set sampling.wbic=true
 ```
 
-WBIC can be added to a finished run. Run the same configuration again under the same run name with `wbic=True` (or
-`--set sampling.wbic=true`). The saved posterior is reloaded and only the WBIC run is added. Changing any other setting under the same
-run name is still refused.
+WBIC can be added to a finished run from Python: run its saved configuration again with `wbic=True`. The saved
+posterior is reloaded and only the WBIC run is added. Changing any other setting in the same run folder is still
+refused. The command line has no route to it, since `lumina resume --set` changes only the `outputs` section.
+
+```python
+from pathlib import Path
+from lumina.io import artifacts
+
+saved = artifacts.load_config(Path("results/m0416_canucs2025/nov21a_w500s250t7_allblocks/final/artifacts"))
+run(replace(saved, sampling=replace(saved.sampling, wbic=True)))
+```
 
 `SamplingConfig.wbic_warmup` and `SamplingConfig.wbic_samples` set the length of the WBIC run. They default to the main
 run's `warmup` and `samples`.

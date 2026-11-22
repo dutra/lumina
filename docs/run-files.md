@@ -26,88 +26,97 @@ outputs stage of a finished run without fitting (see {doc}`outputs`). A cluster 
 
 ## Run names
 
-A new run goes to `results/<name>/<mon><day><letter>_<description>`, for example
-`results/hera/nov21a_w500s250t7_allblocks`, then `results/hera/nov21b_w500s250t8_systemblocks_fast` for the next run
-of Hera that day. `<mon><day>` is the local date the folder is created (lowercase three-letter month, day without a
-leading zero) and `<letter>` the next letter of that cluster and date (`a` to `z`, then `aa`, `ab`, ...), counting
-every run of the date whatever its description. The description gives the NUTS warmup, samples and tree depth, the
-GP blocks (or the likelihood when it is not the GRF), the image catalog when `--images` replaces it, `uncertain` with
-uncertain images, `powerlaw` with power-law members, and the profiles. The name is given once and never changes, so a
-change of a default, or of the package, never renames a run.
+Every run command starts a new run folder, `results/<name>/<mon><day><letter>_<description>`, for example
+`results/hera/nov21a_w500s250t7_allblocks`. Running the same command again makes a second run,
+`results/hera/nov21b_w500s250t7_allblocks`. `<mon><day>` is the local date the folder is created (lowercase
+three-letter month, day without a leading zero) and `<letter>` the next letter of that cluster and date (`a` to `z`,
+then `aa`, `ab`, ...), counting every run of the date whatever its description. The description gives the NUTS warmup,
+samples and tree depth, the GP blocks (or the likelihood when it is not the GRF), the image catalog when `--images`
+replaces it, `uncertain` with uncertain images, `powerlaw` with power-law members, and the profiles. The name is given
+once and never changes.
 
-The command resumes a saved run when one of the cluster has the same fit settings: the whole configuration except
-the run folder (`paths.output_dir`, `paths.run_name`), the WBIC settings, the `outputs` section, and the `runtime`
-fields that change only what is printed or drawn or whether to resume (`resume`, `skip_plots`, `quiet`,
-`numpyro_print_summary`), none of which changes a fit ({func}`lumina.pipeline.resume_payload`, the comparison the
-pipeline makes when it resumes a stage). `runtime.seed`, `runtime.chains` and `runtime.nuts_chain_method` are fit
-settings. The saved settings are those of `final/artifacts/config.json` once the final stage started, else of
-`init/artifacts/config.json`; the run's name plays no part, so a run named before this scheme (`...-3f9a1c`) matches
-too. Running the same command again therefore resumes its run, `--stage init` and later `--stage final` work on the
-same run, and a change under `outputs` (more draws, another truth map, a module switched off) or `--skip-plots`
-keeps the run. When several runs match, the newest is resumed and the others are named; the newest is the one whose
-`init/artifacts/config.json` was written last, which is when the run was created, or later when an interrupted init
-stage ran again. Any change of a fit setting, a prior set with `--set` included, creates the next name, and the
-command logs the settings that differ from the closest saved run (fewest differing settings, then the newest), at
-most 12, as `setting: saved -> current` (`(absent)` for a setting one side does not have), with the hint that
-`lumina resume` continues that run with its own settings. A run whose folder or saved configuration cannot be read
-(no permission, not JSON, or fields this code does not know) is reported with the reason and never matched. With
-`runtime.resume=false` no run is matched and every command creates a new one.
+A letter is reserved by creating `results/<name>/.names/<mon><day><letter>` (an atomic directory creation), so fits
+launched together get different letters, and a letter once given is not given again, even when its run folder is
+deleted. Folders named like an assigned name (`<mon><day>`, one or two letters, `_` and a description) take their
+letter too; a label made by hand such as `nov21final` takes none. Names carry no year, so on the same date of a later
+year the letters go on after those already given.
 
-`--stage final` compares the two stages separately, as the pipeline does. A run matches when its init stage is
-complete and is the one these settings would make (the init signature: model, members, scaling, likelihood, search
-and seed), and its final stage has not started, whatever the sampling settings; once its final stage has started,
-its fit settings must match too. So `lumina catalogs/hera --stage init` followed by `lumina catalogs/hera --stage final
---samples 400` samples from the saved init with 400 draws. `--stage final` never creates a run. When the run with the
-matching init has a final stage that started with other settings, the command refuses and lists them: an unfinished
-final stage can be sampled again in place with `--run-label` (replacing it), and a finished one is kept. No command
-starts a second final stage from a saved init; copy the run folder without its `final/` folder and run `--stage
-final` with `--run-label` on the copy.
+`--run-label NAME` names the new folder by hand. A folder that already exists is refused (exit code 2) with the
+`lumina resume` command that continues it. `--results DIR` moves the tree to `DIR/<name>/...`. `--dry-run` prints the
+folder it would create and creates nothing, not even a reserved letter. The files the run read and the command are
+copied to the run's `inputs/` folder.
 
-Catalog paths are compared as they are written in the configuration, relative to the working directory, and the
-default results tree `results` is relative to it too. Run every command from the repository root: from another folder
-(`cd catalogs && lumina tngc014/small --results ../results`) the paths read differently and no saved run matches;
-the command then says that the settings differ only by a path prefix. No fit setting holds an absolute path, so a
-run matches between machines where the repository sits at different absolute paths.
+The command prints the run folder when it starts and, when it ends, the command to run next:
 
-Only folders holding `init/artifacts/config.json` are runs. A new run's folder gets that file when it is created,
-before its model is built, so a command started a moment later already finds it. A letter is reserved by creating
-`results/<name>/.names/<mon><day><letter>` (an atomic directory creation), so fits launched in parallel get different
-letters, and a letter once given is not given again, even when its run folder is deleted: a new run takes the letter
-after the last one given that date. Folders named like an assigned name (`<mon><day>`, one or two letters, `_` and a
-description) take their letter too; a label made by hand such as `nov21final` or `nov21best_fit` takes none. Names
-carry no year, so on the same date of a later year the letters go on after those already given.
+```bash
+lumina catalogs/hera --stage init
+# [run] init stage done in results/hera/nov21a_w500s250t7_allblocks; run its final stage with:
+lumina resume results/hera/nov21a_w500s250t7_allblocks --stage final
+```
 
-`--run-label NAME` names the folder exactly: it is created if absent, and otherwise used when the pipeline would
-continue its saved stages for the requested `--stage`, the same comparison stage by stage (a complete init stage
-must have the same init signature, and for `both` or `final` a complete final stage the same fit settings; a stage
-that is not complete runs again with the current settings). So `--run-label L --stage final --set
-sampling.samples=400` runs the final stage of `L` from its saved init. When the pipeline would refuse, the command
-refuses before anything runs, listing the settings that differ for each stage (with `runtime.resume=false` the folder
-is reused as it is and the pipeline starts over in it). `--results DIR` moves the tree to `DIR/<name>/...`: saved runs
-are looked for only there. A `--run-label` folder whose init stage is not complete runs its init stage again from the
-start with the current settings, and the dry run says so. `--dry-run` prints the folder it would create or resume and why, and whether a running
-process holds it; it takes no lock and creates nothing, not even a reserved letter (a later real run may therefore get
-a later letter than the dry run printed). The files the run read and the command are copied to the run's `inputs/`
-folder when it is created.
+A run that stops early (an error, Ctrl-C) prints `lumina resume RUN_DIR`, and a finished run the `lumina resume` and
+`lumina outputs` commands that rerun its outputs. `--stage final` on the run command is refused, since a new folder
+has no init stage to start from.
+
+## Resuming a run folder
+
+`lumina resume RUN_DIR` is the only way back into an existing run. It continues the run with its own saved
+configuration (`final/artifacts/config.json` once the final stage started, else `init/artifacts/config.json`), so it
+works whatever the defaults or the run files say now:
+
+```bash
+lumina resume results/hera/nov21a_w500s250t7_allblocks                 # whatever stage is unfinished
+lumina resume results/hera/nov21a_w500s250t7_allblocks --stage final   # the final stage after --stage init
+lumina resume results/hera/nov21a_w500s250t7_allblocks --draws 64      # a finished run: its outputs again
+```
+
+A run whose init stage is complete and whose final stage never started runs its final stage. A run stopped during
+sampling samples again from the saved chain start, since sampling has no checkpoint. A run stopped in the init stage
+runs it again from the start. A finished run reloads its posterior and reruns the outputs stage; `lumina outputs
+RUN_DIR` reruns the outputs alone and saves no settings (see {doc}`outputs`). `--dry-run` prints the state of the run
+and what would run.
+
+`--set` and `--draws` change only the `outputs` section, checked as for `lumina outputs`; any fit setting is refused.
+Unlike `lumina outputs`, a resumed final stage saves the outputs settings it used into `final/artifacts/config.json`.
+`--remap OLD=NEW` relocates the saved paths of a run made on another machine, as for `lumina outputs`, for that command
+only: it is never saved. Every file the run writes (`config.json`, `init_signature.json`) keeps the paths as first
+saved, and the saved stages are compared in those terms, so later commands treat the folder the same with or without
+the remap. The outputs records of `final/results.h5` are the exception: the outputs stage of a remapped resume records
+the remapped truth-map paths it read (in `output_module_mass`, `output_module_truth`, `run_summary` and
+`magnification_recovery_provenance`), as `lumina outputs --remap` does, so a later pass without the remap warns that the
+outputs settings changed; nothing else follows from it. A remap that moves no saved path is a warning. The run writes
+where its folder is now, so a run folder can be moved or renamed.
+
+Since the fit settings come from the saved configuration, a run folder holds one fit. A second final stage from the
+same init stage, keeping the first, goes in a copy of the folder without its `final/`:
+
+```bash
+cp -R results/hera/nov21a_w500s250t7_allblocks results/hera/nov21a_w500s250t7_allblocks_second
+rm -rf results/hera/nov21a_w500s250t7_allblocks_second/final
+lumina resume results/hera/nov21a_w500s250t7_allblocks_second --stage final
+```
+
+The copy samples with the sampling settings of the init stage's saved configuration, those of the command that made
+the run, so it repeats the first final stage with the same seed. No command samples a saved init stage with other
+sampling settings (more draws, another tree depth or seed): that is a new run, which runs its init stage again.
+Turning on WBIC for a finished run is the same: the command line has no route to it, since `lumina resume --set`
+changes only `outputs` (see {doc}`model-comparison` for the Python route).
 
 ## Locks
 
 A process working in a run folder holds its lock, the file `run.lock` in that folder: `lumina <cluster>`, `lumina
 resume` and a `lumina outputs` pass that computes, from start to end. The file is written whole and published
 atomically (a temporary file linked into place), and holds the host name, the process id, the time it was taken and
-the command; it is removed when the command ends, also after an error or Ctrl-C. A command that meets a run locked by a running process refuses with exit code 2, names the host, the
-pid and since when, and creates nothing: the plain command when the run with its settings is locked (it does not
-start a duplicate run beside it), `--run-label` on a locked folder, `lumina resume` and `lumina outputs`. `lumina
-outputs --render` takes no lock and proceeds, since it only reads results already committed and draws figures. While
-a fit is writing the same run, a render pass can report a module as not computed yet (its compute has not committed),
-wait behind the fit for the store, or write the same PDF as the fit's outputs stage (the last one written stays).
+the command; it is removed when the command ends, also after an error or Ctrl-C. `lumina resume` and `lumina outputs`
+refuse a run locked by a running process with exit code 2, and name the host, the pid and since when. `lumina outputs
+--render` takes no lock and proceeds, since it only reads results already committed and draws figures. While a fit is
+writing the same run, a render pass can report a module as not computed yet (its compute has not committed), wait
+behind the fit for the store, or write the same PDF as the fit's outputs stage (the last one written stays).
 
-Looking for the run with the same settings and reserving a new name happen under a second, short-lived lock,
-`results/<name>/.names.lock`, which the command holds for that choice only (never while it fits) and waits for up to
-two minutes before it gives up with the holder's name; the wait is logged when it starts, with the holder, and every
-30 seconds. The chosen run is locked and a new run's settings are saved
-before that lock is released, so identical commands launched together make one run: the others find it locked and
-refuse. Commands with different settings get different letters.
+Reserving a new name and creating and locking its folder happen under a second, short-lived lock,
+`results/<name>/.names.lock`, which the command holds for that only (never while it fits) and waits for up to two
+minutes before it gives up with the holder's name; the wait is logged when it starts, with the holder, and every 30
+seconds.
 
 A lock whose process is gone (stopped with SIGTERM or SIGKILL, a crash, a reboot) is stale when it names this host
 (the same short host name, the part before the first dot, in any case, so `mac` and `mac.local` are one host) and that
@@ -115,31 +124,12 @@ process no longer runs: the next command takes it over and logs one line. A lock
 checked (the results tree may be mirrored between machines by a file-sync tool, and lock files travel with it), so it
 counts as held; the message names the file to delete when that process is known to be gone. An empty or cut-short lock
 file (which this code never writes) is reported as an incomplete lock file, with the file to delete. A process id
-reused by an unrelated process makes a stale lock look held: delete the file then.
+reused by an unrelated process makes a stale lock look held: delete the file then. A copy of a run folder made while a
+command works in it carries that command's `run.lock`; delete it in the copy.
 
 Locks and letters are per machine. Two commands started on two machines that mirror the same results tree do not see
-each other's lock or reserved letter until the sync tool copies them, so within that delay they can both start the
-same run, or reserve the same name; start the runs of one cluster on one machine.
-
-## Resuming a run folder
-
-`lumina resume RUN_DIR [--stage init|final|both] [--remap OLD=NEW] [--set outputs.FIELD=VALUE] [--draws N]
-[--dry-run]` continues a run with its own saved configuration, without any matching, so it works whatever the
-defaults or the run files say now. A run whose init is complete and whose final stage never started runs its final
-stage; a run interrupted during sampling samples again from the saved chain start (sampling has no checkpoint) with
-the final stage's saved settings; a run interrupted in the init stage runs it again; a finished run reloads its
-posterior and reruns the outputs stage, as any resume does. `--set` and `--draws` change only the `outputs` section,
-checked as for `lumina outputs`, and any fit setting is refused. Unlike `lumina outputs`, a resumed final stage saves
-the outputs settings it used into `final/artifacts/config.json`. `--remap OLD=NEW` relocates the saved paths of a run
-made on another machine, as for `lumina outputs`, for that command only: it is never saved. Every file the run
-writes (`config.json`, `init_signature.json`) keeps the paths as first saved, and the saved stages are compared in
-those terms, so later commands treat the folder the same with or without the remap. The outputs records of
-`final/results.h5` are the exception: the outputs stage of a remapped resume records the remapped truth-map paths it
-read (in `output_module_mass`, `output_module_truth`, `run_summary` and `magnification_recovery_provenance`), as
-`lumina outputs --remap` does, so a later pass without the remap warns that the outputs settings changed; nothing else
-follows from it. A remap that moves no saved path is a warning. The run writes where its folder is now. A run folder in use is refused (see Locks), and so is a saved
-stage the run's configuration cannot continue (the saved init made with another model, say): both are a one-line
-error with exit code 2.
+each other's lock or reserved letter until the sync tool copies them, so within that delay they can reserve the same
+name; start the runs of one cluster on one machine.
 
 ## Options
 
