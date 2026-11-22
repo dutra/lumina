@@ -159,6 +159,87 @@ def test_grid_over_the_map_within_budget():
     np.testing.assert_allclose(np.diff(mesh[0, :, 0]), step)
 
 
+def _write_map(path, ax, ay, *, half=20.0, n=81, z_lens=0.4, z_source=2.5):
+    """A deflection FITS in the format of ``diagnostics.true_lens``: ``ax``, ``ay`` functions of map-frame (x, y)
+    evaluated at the pixel centres.  Returns the pixel-centre axes."""
+    from astropy.io import fits
+    step = 2 * half / n
+    centres = -half + step / 2 + step * np.arange(n)
+    xm, ym = np.meshgrid(centres, centres)
+    header = fits.Header({"XMIN": -half, "XMAX": half, "YMIN": -half, "YMAX": half, "ZL": z_lens, "ZS": z_source})
+    fits.HDUList([fits.PrimaryHDU(ax(xm, ym), header=header), fits.ImageHDU(ay(xm, ym))]).writeto(path)
+    return centres
+
+
+def test_true_deflection_frame_amplitude_and_redshift(tmp_path):
+    from astropy.cosmology import FlatLambdaCDM
+    ax = lambda x, y: 0.3 + 0.02 * x + 0.004 * x ** 2          # not symmetric under x -> -x
+    ay = lambda x, y: -0.1 + 0.01 * y + 0.002 * x * y
+    centres = _write_map(tmp_path / "map.fits", ax, ay)
+    cosmology = FlatLambdaCDM(H0=70, Om0=0.3)
+    efficiency = lambda z: (cosmology.angular_diameter_distance_z1z2(0.4, z) / cosmology.angular_diameter_distance(z)).value
+    xm, ym = centres[[5, 30, 60, 70]], centres[[10, 40, 20, 75]]      # pixel centres: bilinear interpolation is exact
+    points = np.column_stack([-xm, ym])                               # model frame: x = -map x
+    for z_ref, amplitude in ((2.5, 1.0), (2.5, 0.98), (1.2, 1.03)):
+        alpha, _, scale = rd.true_deflection(tmp_path / "map.fits", cosmology, z_ref, amplitude)
+        expected_scale = amplitude * efficiency(z_ref) / efficiency(2.5)
+        assert np.isclose(scale, expected_scale, rtol=1e-12)
+        expected = expected_scale * np.column_stack([-ax(xm, ym), ay(xm, ym)])
+        np.testing.assert_allclose(alpha(points), expected, rtol=1e-10, atol=1e-12)
+    assert np.isnan(alpha(np.array([[25.0, 0.0]]))).all()             # outside the map
+
+
+def _binned_rms_separation(xy, edges):
+    i, j = np.triu_indices(len(xy), 1)
+    r = np.hypot(xy[j, 0] - xy[i, 0], xy[j, 1] - xy[i, 1])
+    sums, _ = np.histogram(r, edges, weights=r ** 2)
+    counts, _ = np.histogram(r, edges)
+    return np.sqrt(sums / counts)
+
+
+def test_convergence_is_longitudinal_and_rotation_transverse():
+    xy = _points(150, 10)
+    geometry = rd.pair_geometry(xy)
+    edges = rd.log_edges(geometry[2], geometry[2].min() * .999, geometry[2].max() * 1.001, 8)
+    expected = _binned_rms_separation(xy, edges)
+    k = 0.02
+    centred = xy - xy.mean(0)
+    s_l, s_t, _ = rd.relative_displacement(k * centred, geometry, edges)               # pure convergence
+    np.testing.assert_allclose(s_l, k * expected, rtol=1e-10)
+    np.testing.assert_allclose(s_t, 0, atol=1e-12)
+    rotation = k * np.column_stack([-centred[:, 1], centred[:, 0]])
+    s_l, s_t, _ = rd.relative_displacement(rotation, geometry, edges)                  # pure rotation
+    np.testing.assert_allclose(s_l, 0, atol=1e-12)
+    np.testing.assert_allclose(s_t, k * expected, rtol=1e-10)
+
+
+def test_parametric_deflection_is_the_lens_minus_its_field(synthetic_config):
+    """The parametric lens evaluated alone equals the draw's lens (parametric plus mass-field realization) minus the
+    realization, at points and on a meshgrid (the field's separable evaluation)."""
+    from dataclasses import replace
+    from lumina.core.state import build_state
+    from lumina.likelihood.evaluator import Evaluator
+    from lumina.reporting.draws import ReportingDraws
+    config = replace(synthetic_config, likelihood=replace(synthetic_config.likelihood, likelihood_mode="gp_image_plane",
+                                                          gp_kernel="knee", gp_blocks="all")).validate()
+    state = build_state(config)
+    evaluator = Evaluator(state, "gp_image_plane")
+    theta = np.asarray(state.initial_theta, dtype=float)
+    samples = np.stack([theta, theta + 1e-3 * np.random.default_rng(0).normal(size=theta.shape)])
+    posterior = SimpleNamespace(samples=samples, physical=np.stack([np.asarray(evaluator.physical(s)) for s in samples]))
+    draws = ReportingDraws(evaluator, posterior, 2, 0)
+    assert draws.has_field
+    z_ref = float(state.gp_reference_redshift)
+    images = np.column_stack([np.asarray(state.images.x_obs, float), np.asarray(state.images.y_obs, float)])
+    mesh = np.stack(np.meshgrid(np.linspace(-30, 30, 41), np.linspace(-25, 25, 37)), -1)
+    for k in range(len(draws)):
+        for p in (images, mesh):
+            field = np.asarray(draws.field(k, p, z_ref)[0], dtype=float)
+            assert np.abs(field).max() > 0.1                                           # a field that matters
+            expected = np.asarray(draws.lens(k, p, z_ref)[0], dtype=float) - field
+            np.testing.assert_allclose(rd.parametric_deflection(draws, k, p, z_ref), expected, rtol=0, atol=1e-12)
+
+
 
 # ----------------------------------------------------------------------------- the truth module's steps
 def synthetic_table():
